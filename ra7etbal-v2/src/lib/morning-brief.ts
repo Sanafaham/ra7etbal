@@ -26,6 +26,17 @@ import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForMorning } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+// PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
+// buildMorningBrief() and taskLabel() moved to shared/ so the server-side
+// attention read path can reuse the exact same task-attention rules
+// without pulling in this file's calendar.ts/automation-context.ts
+// imports (both browser-only). Imported here for local use and re-exported
+// below so every existing caller's import path (`./morning-brief`) and
+// behavior are unchanged.
+import { buildMorningBrief, taskLabel, isSameLocalDay } from "../../shared/carson-morning-brief-classifier.js";
+import type { MorningBriefData, RiskItem } from "../../shared/carson-morning-brief-classifier";
+export { buildMorningBrief, taskLabel };
+export type { MorningBriefData, RiskItem };
 
 /**
  * Whether a Waiting On Others item (delegation/followup) is materially
@@ -61,172 +72,9 @@ export function isMaterialWaitingItem(task: Task, now: Date): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-export interface MorningBriefData {
-  /** Owner-action items: pending personal tasks + reminders due today. */
-  needsAttention: Task[];
-  /**
-   * Active delegations / followups awaiting confirmation — including escalated.
-   * Escalated tasks are sorted first so highest-risk items surface earliest.
-   */
-  waitingOn: Task[];
-  /** Overdue reminders only (escalated delegations stay in waitingOn). */
-  overdueItems: Task[];
-  /** Tasks confirmed done since start of today (local midnight). */
-  recentCompletions: Task[];
-  /** Risk signals: long-pending tasks, per-person backlog. */
-  risks: RiskItem[];
-}
-
-export interface RiskItem {
-  task: Task;
-  /** Human-readable reason surfaced in the spoken brief. */
-  reason: string;
-}
-
-// ---------------------------------------------------------------------------
-// buildMorningBrief — structured data
-// ---------------------------------------------------------------------------
-
-export function buildMorningBrief(
-  tasks: Task[],
-  _people: Person[],
-  now = new Date(),
-  /**
-   * task ids that represent a routine (not escalated/failed) automation
-   * run — see automation-context.ts's AutomationDigest.routineAutomationTaskIds.
-   * A task linked to a routine automation obligation inherits that
-   * automation's relevance decision, so it's excluded here rather than
-   * treated as an ordinary owner task — the same underlying obligation
-   * must not bypass the automation relevance contract merely because it
-   * also has a task-table representation.
-   */
-  routineAutomationTaskIds?: Set<string>,
-): MorningBriefData {
-  const active = tasks.filter((t) => t.archived_at == null);
-  const nowMs = now.getTime();
-
-  // ── 3. Overdue items ─────────────────────────────────────────────────────
-  // Overdue reminders only. Escalated delegations remain in waitingOn so they
-  // are visible to the spoken brief sections that read waitingOn.
-  const overdueItems = active.filter((t) => {
-    if (t.status !== "pending") return false;
-    if (routineAutomationTaskIds?.has(t.id)) return false;
-    if (t.type === "reminder" && isReminderOverdue(t.due_at, now)) return true;
-    return false;
-  });
-  const overdueIds = new Set(overdueItems.map((t) => t.id));
-
-  // ── 2. Waiting on others ─────────────────────────────────────────────────
-  // All pending delegations/followups including escalated ones.
-  // Escalated items sort first so highest-risk surfaces earliest.
-  const waitingOn = active
-    .filter((t) => {
-      if (t.status !== "pending") return false;
-      if (overdueIds.has(t.id)) return false;
-      if (t.type === "delegation" && t.assigned_to) return true;
-      if (t.type === "followup") return true;
-      if (t.needs_follow_up && t.assigned_to) return true;
-      return false;
-    })
-    .sort((a, b) => {
-      // Escalated first, then oldest-created first
-      const aEsc = a.escalated_at != null ? 0 : 1;
-      const bEsc = b.escalated_at != null ? 0 : 1;
-      if (aEsc !== bEsc) return aEsc - bEsc;
-      return getDateValue(a.created_at) - getDateValue(b.created_at);
-    });
-  const waitingIds = new Set(waitingOn.map((t) => t.id));
-
-  // ── 1. Needs your attention ──────────────────────────────────────────────
-  // Owner tasks (unassigned or assigned to "me") + reminders due today.
-  const needsAttention = active.filter((t) => {
-    if (t.status !== "pending") return false;
-    if (overdueIds.has(t.id)) return false;
-    if (waitingIds.has(t.id)) return false;
-    // Automation-linked, routine state — the same obligation already got
-    // the automation relevance decision; a task representation must not
-    // bypass it. Failed/escalated-linked tasks are NOT in this set, so
-    // they remain eligible below as normal.
-    if (routineAutomationTaskIds?.has(t.id)) return false;
-
-    // Reminder due today (not yet overdue)
-    if (t.type === "reminder" && t.due_at) {
-      const due = new Date(t.due_at);
-      return !isReminderOverdue(t.due_at, now) && isSameLocalDay(due, now);
-    }
-
-    // Personal / owner task
-    const assignee = t.assigned_to?.trim().toLowerCase();
-    return !assignee || assignee === "me";
-  });
-
-  // ── 4. Recent completions (rolling 24 h) ─────────────────────────────────
-  // 24h rolling window so yesterday's confirmations always appear in morning.
-  const recentCutoff = new Date(nowMs - 24 * 60 * 60 * 1000);
-  const recentCompletions = tasks
-    .filter((t) => {
-      if (t.status !== "done" || !t.confirmed_at) return false;
-      const confirmedAt = new Date(t.confirmed_at);
-      return confirmedAt >= recentCutoff && confirmedAt <= now;
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime(),
-    );
-
-  // ── 5. Risks & bottlenecks ───────────────────────────────────────────────
-  const risks = buildRisks(waitingOn, nowMs);
-
-  return { needsAttention, waitingOn, overdueItems, recentCompletions, risks };
-}
-
-function buildRisks(waitingOn: Task[], nowMs: number): RiskItem[] {
-  const risks: RiskItem[] = [];
-  const MS_48H = 48 * 60 * 60 * 1000;
-  const MS_72H = 72 * 60 * 60 * 1000;
-
-  // Count tasks per person to detect bottlenecks
-  const perPerson = new Map<string, Task[]>();
-  for (const t of waitingOn) {
-    const name = t.assigned_to?.trim();
-    if (!name) continue;
-    const bucket = perPerson.get(name) ?? [];
-    bucket.push(t);
-    perPerson.set(name, bucket);
-  }
-
-  // Bottleneck: one person has 3+ pending tasks
-  const bottleneckNames = new Set<string>();
-  for (const [name, tasks] of perPerson.entries()) {
-    if (tasks.length >= 3) {
-      bottleneckNames.add(name);
-      risks.push({
-        task: tasks[0],
-        reason: `${tasks.length} tasks waiting on ${name}`,
-      });
-    }
-  }
-
-  // Long-pending: 72 h+ (not already flagged as bottleneck)
-  for (const t of waitingOn) {
-    const name = t.assigned_to?.trim() ?? "";
-    if (bottleneckNames.has(name)) continue;
-    const pendingMs = nowMs - new Date(t.created_at).getTime();
-    if (pendingMs >= MS_72H) {
-      const days = Math.floor(pendingMs / (24 * 60 * 60 * 1000));
-      risks.push({ task: t, reason: `pending for ${days} day${days === 1 ? "" : "s"}` });
-    } else if (pendingMs >= MS_48H) {
-      risks.push({ task: t, reason: "pending for over 2 days" });
-    }
-  }
-
-  // De-duplicate: keep at most 3 risk items to avoid overwhelming the brief
-  return risks.slice(0, 3);
-}
-
+// buildMorningBrief, MorningBriefData, RiskItem, buildRisks: see
+// shared/carson-morning-brief-classifier.js — imported and re-exported
+// above, pure relocation, no behavior change.
 // ---------------------------------------------------------------------------
 // buildMorningBriefSpoken — Morning Brief V3
 // ---------------------------------------------------------------------------
@@ -491,20 +339,6 @@ export function buildMorningBriefSpoken(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getDateValue(value: string | null): number {
-  if (!value) return 0;
-  const t = new Date(value).getTime();
-  return Number.isNaN(t) ? 0 : t;
-}
-
-function isSameLocalDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 function cap(value: string | null | undefined): string | null {
   const s = value?.trim();
   if (!s) return null;
@@ -524,68 +358,9 @@ function spokenDesc(raw: string): string {
   return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
 
-// Keyword → label map. Checked against the full description (lowercased).
-// First match wins; order matters — more specific patterns first.
-const LABEL_PATTERNS: Array<[RegExp, string]> = [
-  [/\bcat food\b/,                      "cat food task"],
-  [/\bflower|bouquet/,                  "flowers request"],
-  [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
-  [/\bdelivery|courier/,                "delivery task"],
-  [/\bbill|electric|utilities|utility/, "bill task"],
-  [/\bgroceries|grocery\b/,             "food task"],
-  [/\bfood\b/,                          "food task"],
-];
-
-// Strip leading imperative verbs that add no noun content.
-const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
-
-/**
- * Strips a leading vocative address that matches the task's own known
- * assignee ("Christopher, we have 6 guests…" on a task assigned to
- * Christopher). Deliberately not a generic name-detection heuristic — a
- * capitalized-word-plus-comma pattern would also match ordinary sentence
- * openers ("Please,", "Also,", "Note,") that are not names at all, and
- * would miss real multi-word/hyphenated/apostrophe names ("Mary Jane,",
- * "Anne-Marie,", "O'Connor,") that don't fit a single-token shape. The
- * assignee is already a known, trusted value on the task record — matching
- * it exactly needs no guessing and can never misfire on either front.
- */
-function stripLeadingVocative(s: string, assigneeName?: string | null): string {
-  const name = assigneeName?.trim();
-  if (!name) return s;
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return s.replace(new RegExp(`^${escaped},\\s+`, "i"), "");
-}
-
-/**
- * Returns a short spoken label for a task description.
- * Tries keyword matching first; falls back to stripping a leading vocative
- * address to the known assignee and/or leading verb, then truncating to a
- * clean noun phrase.
- */
-export function taskLabel(raw: string, assigneeName?: string | null): string {
-  const lower = raw.trim().toLowerCase();
-
-  for (const [pattern, label] of LABEL_PATTERNS) {
-    if (pattern.test(lower)) return label;
-  }
-
-  // Fallback: strip a leading vocative address to the known assignee, then
-  // a leading verb, lowercase, truncate.
-  let s = raw.trim().replace(/[.!?]+$/, "").trim();
-  s = stripLeadingVocative(s, assigneeName);
-  s = s.replace(LEADING_VERB, "").trim();
-  s = s.charAt(0).toLowerCase() + s.slice(1);
-
-  if (s.length <= 35) return s;
-  const cut = s.slice(0, 35);
-  const lastSpace = cut.lastIndexOf(" ");
-  // No ellipsis here — every caller appends its own sentence-final
-  // punctuation (e.g. "confirmed the ${what}."), and appending one here
-  // too produced "….", a doubled-punctuation artifact with no functional
-  // purpose in a spoken sentence (2026-08-21 incident).
-  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd();
-}
+// taskLabel, LABEL_PATTERNS, LEADING_VERB, stripLeadingVocative: see
+// shared/carson-morning-brief-classifier.js — imported and re-exported
+// above, pure relocation, no behavior change.
 
 // Alias so callers that used cleanDesc still work during migration.
 function cleanDesc(raw: string, assigneeName?: string | null): string {

@@ -1,5 +1,6 @@
 import googleCalendarHandler from "./google-calendar.js";
-import { createReadOnlyTurnCoordinator } from "./_carson-read-turn.js";
+import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator } from "./_carson-read-turn.js";
+import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
 
 const MAX_DEDUP_ENTRIES = 200;
 const completedTurns = new Map();
@@ -56,6 +57,13 @@ export async function interpretReadIntentWithClaude(transcript, fetchImpl = fetc
   return toolUse.input;
 }
 
+export async function fetchAttentionEvidenceThroughServerPath({ authorization }) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) throw new Error("Supabase server configuration is missing.");
+  return fetchAttentionSummaryForServer({ supabaseUrl, anonKey, authorization });
+}
+
 export async function readCalendarThroughExistingHandler({ authorization, range }, handler = googleCalendarHandler) {
   let statusCode = 200;
   let payload = null;
@@ -79,9 +87,11 @@ export function createCarsonTurnHandler({
   authenticate = requireUser,
   interpretIntent = interpretReadIntentWithClaude,
   readCalendar = readCalendarThroughExistingHandler,
+  fetchAttentionEvidence = fetchAttentionEvidenceThroughServerPath,
   dedupStore = completedTurns,
 } = {}) {
-  const coordinate = createReadOnlyTurnCoordinator({ interpretIntent, readCalendar });
+  const coordinateCalendar = createReadOnlyTurnCoordinator({ interpretIntent, readCalendar });
+  const coordinateAttention = createAttentionReadCoordinator({ fetchEvidence: fetchAttentionEvidence });
   return async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
     const accountId = await authenticate(req);
@@ -96,14 +106,24 @@ export function createCarsonTurnHandler({
       return res.status(cached.status).json({ ...cached, duplicate: true });
     }
 
-    const pendingResult = coordinate({
+    const ownerTurn = {
       accountId,
       authorization: req.headers?.authorization ?? req.headers?.Authorization ?? "",
       providerEventId,
       turnId,
       transcript,
       legacyClaimed: req.body?.legacyClaimed === true,
-    });
+    };
+
+    // Deterministic, model-free classification first (attention_summary_read).
+    // Only when it doesn't match this class does the existing Claude-based
+    // calendar_read path run — unchanged for every non-attention transcript.
+    const pendingResult = (async () => {
+      const attentionResult = await coordinateAttention(ownerTurn);
+      if (attentionResult.handled) return attentionResult;
+      return coordinateCalendar(ownerTurn);
+    })();
+
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);
     const result = await pendingResult;
     if (dedupKey && result.handled) {

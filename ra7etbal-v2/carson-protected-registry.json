@@ -12,7 +12,9 @@
       "id": "owner_whatsapp_canonical_routing",
       "contract": "Exactly one Supabase account may be bound to a given WhatsApp phone_number_id at any time. An inbound WhatsApp message is only trusted as an authoritative owner message when routing resolves to exactly one bound account; ambiguous (>1) or zero bindings fail closed, and an ambiguous binding logs a loud diagnostic instead of silently guessing.",
       "business_importance": "critical — this is the gate that decides whether an inbound reply is trusted as an owner decision at all",
-      "production_entry_points": ["api/whatsapp-webhook.js (POST handler, inbound Meta webhook)"],
+      "production_entry_points": [
+        "api/whatsapp-webhook.js (POST handler, inbound Meta webhook)"
+      ],
       "files_functions": [
         "api/whatsapp-webhook.js:recordWebhookHeartbeat",
         "api/whatsapp-webhook.js:upsertHealthState",
@@ -20,19 +22,33 @@
         "api/_owner-whatsapp-routing.js:resolveCanonicalOwner",
         "api/_owner-command-executor.js"
       ],
-      "shared_dependencies": ["api/_owner-whatsapp-routing.js"],
+      "shared_dependencies": [
+        "api/_owner-whatsapp-routing.js"
+      ],
       "db": {
-        "tables": ["whatsapp_health_state"],
-        "rpcs": ["carson_production_canary_health"],
+        "tables": [
+          "whatsapp_health_state"
+        ],
+        "rpcs": [
+          "carson_production_canary_health"
+        ],
         "migrations": [
           "supabase/migrations/20260622_whatsapp_health_state.sql",
           "supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql",
           "supabase/migrations/20260815_carson_canary_least_privilege.sql"
         ],
-        "data_repairs": ["supabase/data-repairs/20260813_whatsapp_health_state_phantom_bindings.sql"]
+        "data_repairs": [
+          "supabase/data-repairs/20260813_whatsapp_health_state_phantom_bindings.sql"
+        ]
       },
-      "external_boundaries": ["Meta/WhatsApp Cloud API webhook"],
-      "focused_tests": ["api/whatsapp-webhook.test.js", "api/_owner-whatsapp-routing.test.js", "api/whatsapp-health-state-writer-authority.test.js"],
+      "external_boundaries": [
+        "Meta/WhatsApp Cloud API webhook"
+      ],
+      "focused_tests": [
+        "api/whatsapp-webhook.test.js",
+        "api/_owner-whatsapp-routing.test.js",
+        "api/whatsapp-health-state-writer-authority.test.js"
+      ],
       "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -74,9 +90,20 @@
         "api/_staff-decision-message.js",
         "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js", "api/_staff-substitution-intent.js", "api/_inbound-staff-evidence.js"],
+      "shared_dependencies": [
+        "api/_whatsapp-delivery.js",
+        "api/_quality-review.js",
+        "api/_staff-substitution-intent.js",
+        "api/_inbound-staff-evidence.js"
+      ],
       "db": {
-        "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries", "household_rules"],
+        "tables": [
+          "staff_escalation_owner_decisions",
+          "quality_substitute_decisions",
+          "messages",
+          "whatsapp_deliveries",
+          "household_rules"
+        ],
         "rpcs": [
           "claim_task_escalation_owner_decision",
           "claim_escalation_owner_decision",
@@ -90,9 +117,13 @@
           "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql",
           "supabase/migrations/20260826_staff_escalation_proposed_photo.sql"
         ],
-        "data_repairs": ["supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"]
+        "data_repairs": [
+          "supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"
+        ]
       },
-      "external_boundaries": ["WhatsApp/Meta send"],
+      "external_boundaries": [
+        "WhatsApp/Meta send"
+      ],
       "focused_tests": [
         "api/task-confirm.test.js",
         "api/_escalation-notify.test.js",
@@ -111,7 +142,9 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-owner-alternative-approval.test.js"
+      ],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
@@ -125,7 +158,9 @@
         "supabase/migrations/verification/05_owner_notification_lease_post_rollback_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
-      "db_contract_workflows": [".github/workflows/staff-escalation-migration-verification.yml"],
+      "db_contract_workflows": [
+        ".github/workflows/staff-escalation-migration-verification.yml"
+      ],
       "production_canary_required": false,
       "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",
       "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg). Phase 4: real-PostgreSQL contract proof added for the task-based RPC chain (claim_substitute_decision -> reserve_custom_instruction, person_id threading into messages/whatsapp_deliveries, durability across task deletion; claim_task_escalation_owner_decision's own claim/duplicate/cross-account/unauthorized-execution contracts) — carson-tier1-db-contracts.yml, a required merge gate since Phase 6. Final gap-closure pass: api/_escalation-notify.test.js added to the required test:carson-protected suite, closing the last gap between this capability's focused_tests and the actual required CI gate — protected_suite flipped true.",
@@ -148,13 +183,21 @@
         "api/send-whatsapp-task.js",
         "api/task-confirm.js:handleGet"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "shared_dependencies": [
+        "api/_whatsapp-delivery.js"
+      ],
       "db": {
-        "tables": ["tasks", "messages", "whatsapp_deliveries"],
+        "tables": [
+          "tasks",
+          "messages",
+          "whatsapp_deliveries"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["WhatsApp/Meta send"],
+      "external_boundaries": [
+        "WhatsApp/Meta send"
+      ],
       "focused_tests": [
         "src/lib/delegations.test.ts",
         "src/lib/delegation-fast-path.test.ts",
@@ -165,7 +208,9 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-immediate-staff-delegation.test.js"
+      ],
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED — PR #49/#50/#52/#53 (communication-vs-delegation contract), PERMANENTLY LOCKED per RA7ETBAL_STATE.md",
@@ -188,13 +233,22 @@
         "api/_staff-comms-engine.js",
         "src/lib/staff-messages.ts"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/anthropic.js"],
+      "shared_dependencies": [
+        "api/_whatsapp-delivery.js",
+        "api/anthropic.js"
+      ],
       "db": {
-        "tables": ["messages", "whatsapp_deliveries"],
+        "tables": [
+          "messages",
+          "whatsapp_deliveries"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["WhatsApp/Meta send", "Anthropic API (via the authenticated /api/anthropic proxy — classification judgment)"],
+      "external_boundaries": [
+        "WhatsApp/Meta send",
+        "Anthropic API (via the authenticated /api/anthropic proxy — classification judgment)"
+      ],
       "focused_tests": [
         "src/lib/carson-protected-behaviors.test.ts",
         "src/lib/communication-vs-delegation.model.test.ts",
@@ -209,7 +263,9 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-direct-staff-communication.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-direct-staff-communication.test.js"
+      ],
       "production_canary_required": false,
       "rollback_risk": "high — documented history of narrow-classifier regressions across four PRs (#49/#50/#52/#53) plus this rewrite's own incident; the classification judgment now depends on a live model call with a fail-safe default (see unresolved)",
       "verification_status": "PRODUCTION VERIFIED for the pre-2026-08-16 owner-target-phrase contract (PERMANENTLY LOCKED per RA7ETBAL_STATE.md). The 2026-08-16 architecture rewrite (model-backed semantic classifier, replacing the fixed owner-target regex) is implemented and test-verified against every previously-protected phrase plus new grammatical-form coverage, but NOT YET merged/production-verified — pending owner review.",
@@ -222,7 +278,9 @@
       "id": "automation_execution_confirmation",
       "contract": "Scheduled/automation-run WhatsApp sends (one-time delegations, one-time direct messages) execute correctly, confirm correctly against the originating task, and produce Communication-History-reachable evidence (person_id populated) — matching the same identity discipline as live-conversation sends.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; root cause of Incident 4 (automation-runner Communication History linkage gap)",
-      "production_entry_points": ["api/process-delegation-escalations.js (scheduled job)"],
+      "production_entry_points": [
+        "api/process-delegation-escalations.js (scheduled job)"
+      ],
       "files_functions": [
         "api/process-delegation-escalations.js:processAutomation",
         "api/process-delegation-escalations.js:processMessageAutomation",
@@ -235,14 +293,33 @@
         "src/lib/one-time-automation-routing.ts",
         "api/_automation-run-confirmation-sync.js"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/send-whatsapp-task.js"],
+      "shared_dependencies": [
+        "api/_whatsapp-delivery.js",
+        "api/send-whatsapp-task.js"
+      ],
       "db": {
-        "tables": ["automation_runs", "automations", "whatsapp_deliveries", "tasks"],
-        "rpcs": ["carson_production_canary_health"],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql", "supabase/migrations/20260822_automation_run_task_completion_reconciliation.sql"],
-        "data_repairs": ["supabase/data-repairs/20260813_automation_delivery_person_id_backfill.sql"]
+        "tables": [
+          "automation_runs",
+          "automations",
+          "whatsapp_deliveries",
+          "tasks"
+        ],
+        "rpcs": [
+          "carson_production_canary_health"
+        ],
+        "migrations": [
+          "supabase/migrations/20260812_durable_person_id_communication_history.sql",
+          "supabase/migrations/20260815_carson_canary_least_privilege.sql",
+          "supabase/migrations/20260822_automation_run_task_completion_reconciliation.sql"
+        ],
+        "data_repairs": [
+          "supabase/data-repairs/20260813_automation_delivery_person_id_backfill.sql"
+        ]
       },
-      "external_boundaries": ["WhatsApp/Meta send", "Upstash QStash scheduler"],
+      "external_boundaries": [
+        "WhatsApp/Meta send",
+        "Upstash QStash scheduler"
+      ],
       "focused_tests": [
         "api/automation-run-confirmation-sync.test.js",
         "api/automation-run-task-completion-reconciliation.test.js",
@@ -257,7 +334,9 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-one-time-scheduled-delegation.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-one-time-scheduled-delegation.test.js"
+      ],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_canary_least_privilege_verification.sql",
         "supabase/migrations/verification/carson_canary_least_privilege_post_rollback_verification.sql"
@@ -293,13 +372,22 @@
         "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)",
         "api/_owner-command-executor.js:invokeSendWhatsappTask (in-process caller of the default-exported handler; attaches the internal-secret header)"
       ],
-      "shared_dependencies": ["api/send-whatsapp-task.js"],
+      "shared_dependencies": [
+        "api/send-whatsapp-task.js"
+      ],
       "db": {
-        "tables": ["tasks", "people", "messages"],
+        "tables": [
+          "tasks",
+          "people",
+          "messages"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["WhatsApp/Meta send", "Supabase Auth (JWT verification via /auth/v1/user)"],
+      "external_boundaries": [
+        "WhatsApp/Meta send",
+        "Supabase Auth (JWT verification via /auth/v1/user)"
+      ],
       "focused_tests": [
         "api/send-whatsapp-task.auth-boundary.test.js",
         "api/process-delegation-escalations.testmode-auth.test.js",
@@ -321,7 +409,11 @@
       "id": "reminders",
       "contract": "Owner reminders are created, scheduled via QStash, delivered on time via push and/or WhatsApp, and their completion is recorded truthfully with idempotent, non-duplicate delivery.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
-      "production_entry_points": ["api/qstash-reminder.js", "api/send-due-reminder-pushes.js", "api/send-push-for-task.js"],
+      "production_entry_points": [
+        "api/qstash-reminder.js",
+        "api/send-due-reminder-pushes.js",
+        "api/send-push-for-task.js"
+      ],
       "files_functions": [
         "api/qstash-reminder.js:handleNotificationReceipt",
         "api/_reminder-delivery.js:recordDeliveryEvent / signReminderReceipt / verifyReminderReceipt",
@@ -330,9 +422,16 @@
         "src/lib/qstash-reminder.ts",
         "src/lib/parse-voice-time.ts"
       ],
-      "shared_dependencies": ["api/_owner-reminder-whatsapp.js", "public/sw.js"],
+      "shared_dependencies": [
+        "api/_owner-reminder-whatsapp.js",
+        "public/sw.js"
+      ],
       "db": {
-        "tables": ["tasks", "reminder_delivery_events", "whatsapp_deliveries"],
+        "tables": [
+          "tasks",
+          "reminder_delivery_events",
+          "whatsapp_deliveries"
+        ],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260730_reminder_delivery_observability.sql",
@@ -341,7 +440,11 @@
           "supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql"
         ]
       },
-      "external_boundaries": ["Upstash QStash", "Web Push/VAPID", "WhatsApp/Meta send"],
+      "external_boundaries": [
+        "Upstash QStash",
+        "Web Push/VAPID",
+        "WhatsApp/Meta send"
+      ],
       "focused_tests": [
         "src/lib/reminders.test.ts",
         "src/lib/reminder-time.test.ts",
@@ -359,7 +462,9 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-reminder-lifecycle.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-reminder-lifecycle.test.js"
+      ],
       "db_contract_tests": [
         "supabase/migrations/verification/server_authoritative_reminder_rls_bootstrap.sql",
         "supabase/migrations/verification/server_authoritative_reminder_rls_fixture.sql",
@@ -368,7 +473,9 @@
         "supabase/migrations/verification/owner_reminder_whatsapp_claim_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/server-authoritative-reminder-rls-verification.yml",
-      "db_contract_workflows": [".github/workflows/owner-reminder-whatsapp-claim-verification.yml"],
+      "db_contract_workflows": [
+        ".github/workflows/owner-reminder-whatsapp-claim-verification.yml"
+      ],
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md",
@@ -378,26 +485,43 @@
       "id": "owner_completion_push",
       "contract": "When a delegated task is completed, the owner receives a push notification, and the durable evidence lifecycle (reminder_delivery_events) records true device-stage delivery — with the completion-push receipt's dueAt bound exactly to the canonical tasks.confirmed_at value the same request persisted, never an independently generated timestamp.",
       "business_importance": "critical — root cause of Incident 2",
-      "production_entry_points": ["api/task-confirm.js (completion push send)", "api/qstash-reminder.js (notification-receipt handler)"],
+      "production_entry_points": [
+        "api/task-confirm.js (completion push send)",
+        "api/qstash-reminder.js (notification-receipt handler)"
+      ],
       "files_functions": [
         "api/task-confirm.js:sendOwnerPush",
         "api/qstash-reminder.js:handleNotificationReceipt",
         "public/sw.js"
       ],
-      "shared_dependencies": ["api/_reminder-delivery.js"],
+      "shared_dependencies": [
+        "api/_reminder-delivery.js"
+      ],
       "db": {
-        "tables": ["tasks", "reminder_delivery_events"],
+        "tables": [
+          "tasks",
+          "reminder_delivery_events"
+        ],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260730_reminder_delivery_observability.sql",
           "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql"
         ]
       },
-      "external_boundaries": ["Web Push/VAPID", "browser Service Worker callback"],
-      "focused_tests": ["api/task-confirm.test.js", "api/qstash-reminder.test.js", "public/sw.test.js"],
+      "external_boundaries": [
+        "Web Push/VAPID",
+        "browser Service Worker callback"
+      ],
+      "focused_tests": [
+        "api/task-confirm.test.js",
+        "api/qstash-reminder.test.js",
+        "public/sw.test.js"
+      ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-immediate-staff-delegation.test.js"
+      ],
       "production_canary_required": false,
       "production_canary": {
         "classification": "B",
@@ -411,7 +535,10 @@
       "id": "needs_you_waiting_handled_state",
       "contract": "Needs You is a decision queue, not an ownership queue: only tasks the extraction pipeline classified as type === 'decision' (plus always-surfaced cancelled tasks and quality-review intervention items) appear in Needs You. Waiting and Handled counts and the bottom-nav badge all read the single shared buildDailyBrief().needsAttention classifier so the three surfaces cannot drift.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; PROTECTED per RA7ETBAL_STATE.md (PR #59)",
-      "production_entry_points": ["src/routes/Home.tsx", "src/routes/Updates.tsx"],
+      "production_entry_points": [
+        "src/routes/Home.tsx",
+        "src/routes/Updates.tsx"
+      ],
       "files_functions": [
         "src/lib/daily-brief.ts:buildDailyBrief / isNeedsYouTask / isWaitingInterventionTask",
         "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel",
@@ -419,7 +546,9 @@
       ],
       "shared_dependencies": [],
       "db": {
-        "tables": ["tasks"],
+        "tables": [
+          "tasks"
+        ],
         "rpcs": [],
         "migrations": []
       },
@@ -434,7 +563,11 @@
       ],
       "protected_suite": true,
       "golden_journey_required": false,
-      "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js", "api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-direct-staff-communication.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-immediate-staff-delegation.test.js",
+        "api/golden-journey-owner-alternative-approval.test.js",
+        "api/golden-journey-direct-staff-communication.test.js"
+      ],
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED, PROTECTED — PR #59",
@@ -444,16 +577,30 @@
       "id": "communication_history",
       "contract": "Every durable staff/owner WhatsApp communication event — live-conversation or automation-scheduled — is reachable via get_communication_history by person_id, with correct calendar-date and clock-time-in-account-timezone display, and remains reachable after the originating task is deleted (Clear History).",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; root cause of Incident 4",
-      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (get_communication_history tool)"],
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (get_communication_history tool)"
+      ],
       "files_functions": [
         "src/lib/carson-communication-history.ts:buildCommunicationHistory / lookupCommunicationHistory / formatCommunicationHistoryAnswer / resolvePersonForCommunicationHistory",
         "src/lib/history-timestamp.ts"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "shared_dependencies": [
+        "api/_whatsapp-delivery.js"
+      ],
       "db": {
-        "tables": ["staff_messages", "personal_contact_replies", "messages", "whatsapp_deliveries", "staff_escalation_owner_decisions"],
-        "rpcs": ["claim_escalation_owner_decision"],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"]
+        "tables": [
+          "staff_messages",
+          "personal_contact_replies",
+          "messages",
+          "whatsapp_deliveries",
+          "staff_escalation_owner_decisions"
+        ],
+        "rpcs": [
+          "claim_escalation_owner_decision"
+        ],
+        "migrations": [
+          "supabase/migrations/20260812_durable_person_id_communication_history.sql"
+        ]
       },
       "external_boundaries": [],
       "focused_tests": [
@@ -463,7 +610,13 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-direct-staff-communication.test.js", "api/golden-journey-communication-history-durability.test.js", "api/golden-journey-communication-history-cross-writer.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-owner-alternative-approval.test.js",
+        "api/golden-journey-one-time-scheduled-delegation.test.js",
+        "api/golden-journey-direct-staff-communication.test.js",
+        "api/golden-journey-communication-history-durability.test.js",
+        "api/golden-journey-communication-history-cross-writer.test.js"
+      ],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
@@ -487,7 +640,10 @@
       "id": "whatsapp_delivery_person_identity_continuity",
       "contract": "Every application-layer WhatsApp delivery record carries the correct, durable person_id when a legitimate identity is resolvable, using a fail-closed rule (an identity conflict between two derivation sources yields null, never a guess) — this is the shared substrate underneath owner_decision_lifecycle, automation_execution_confirmation, and communication_history, not a separate product feature.",
       "business_importance": "critical — this is the shared infrastructure whose incomplete rollout caused Incidents 3 and 4",
-      "production_entry_points": ["api/send-whatsapp-task.js", "api/_whatsapp-delivery.js"],
+      "production_entry_points": [
+        "api/send-whatsapp-task.js",
+        "api/_whatsapp-delivery.js"
+      ],
       "files_functions": [
         "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext",
         "api/whatsapp-webhook.js:updateWhatsappDeliveryStatus",
@@ -496,11 +652,21 @@
       ],
       "shared_dependencies": [],
       "db": {
-        "tables": ["whatsapp_deliveries", "messages"],
-        "rpcs": ["carson_production_canary_health"],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql"]
+        "tables": [
+          "whatsapp_deliveries",
+          "messages"
+        ],
+        "rpcs": [
+          "carson_production_canary_health"
+        ],
+        "migrations": [
+          "supabase/migrations/20260812_durable_person_id_communication_history.sql",
+          "supabase/migrations/20260815_carson_canary_least_privilege.sql"
+        ]
       },
-      "external_boundaries": ["Meta/WhatsApp Cloud API"],
+      "external_boundaries": [
+        "Meta/WhatsApp Cloud API"
+      ],
       "focused_tests": [
         "api/_whatsapp-delivery.test.js",
         "api/whatsapp-webhook.test.js",
@@ -510,7 +676,12 @@
       ],
       "protected_suite": true,
       "golden_journey_required": false,
-      "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js", "api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-communication-history-durability.test.js"],
+      "golden_journey_tests": [
+        "api/golden-journey-immediate-staff-delegation.test.js",
+        "api/golden-journey-owner-alternative-approval.test.js",
+        "api/golden-journey-one-time-scheduled-delegation.test.js",
+        "api/golden-journey-communication-history-durability.test.js"
+      ],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
@@ -540,7 +711,9 @@
       "files_functions": [],
       "shared_dependencies": [],
       "db": {
-        "tables": ["all RLS-protected tables — see supabase/migrations/*.sql for individual policies"],
+        "tables": [
+          "all RLS-protected tables — see supabase/migrations/*.sql for individual policies"
+        ],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/verification/server_authoritative_reminder_rls_bootstrap.sql",
@@ -570,16 +743,27 @@
       "id": "push_lifecycle",
       "contract": "Push subscription installation, dedupe, delivery, and completion-receipt handling are correct and idempotent — including installation identity, atomic replacement, dedupe-failure propagation (never false success), and the 'This device' badge in the notification-devices panel.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
-      "production_entry_points": ["public/sw.js", "api/send-push-for-task.js", "api/send-due-reminder-pushes.js", "src/lib/notifications.ts"],
+      "production_entry_points": [
+        "public/sw.js",
+        "api/send-push-for-task.js",
+        "api/send-due-reminder-pushes.js",
+        "src/lib/notifications.ts"
+      ],
       "files_functions": [
         "src/lib/push-notifications.ts",
         "src/lib/notifications.ts:listOwnerNotifications / dismissOwnerNotification",
         "public/sw.js",
         "src/lib/push-subscription-rotation.ts"
       ],
-      "shared_dependencies": ["api/_reminder-delivery.js", "api/_owner-notifications.js"],
+      "shared_dependencies": [
+        "api/_reminder-delivery.js",
+        "api/_owner-notifications.js"
+      ],
       "db": {
-        "tables": ["push_subscriptions", "owner_notifications"],
+        "tables": [
+          "push_subscriptions",
+          "owner_notifications"
+        ],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260810_push_subscription_installation_identity.sql",
@@ -587,7 +771,9 @@
           "supabase/migrations/20260821_owner_notifications_task_completion_reconciliation.sql"
         ]
       },
-      "external_boundaries": ["Web Push/VAPID"],
+      "external_boundaries": [
+        "Web Push/VAPID"
+      ],
       "focused_tests": [
         "src/lib/push-notifications.test.ts",
         "src/lib/push-notifications.device-management.test.ts",
@@ -617,7 +803,9 @@
       "id": "hosting_operations",
       "contract": "A fresh hosting/guest-arrival instruction uses the captured owner transcript as its authoritative source and supersedes older hosting state. Once a hosting operation is awaiting clarification, contextual and action-like replies such as 'Plan it for 8 PM' belong to that same operation and retain its operation id, occasion, date, location, and authority; only an explicit introduction of a different hosting event may supersede it. Hosting completeness is independent of proposal/execution authority: occasion, date, time, location, guest count, and an explicit dietary-restriction state must be resolved; explicit 'at home' is a valid location and no guest count may be defaulted or inherited. `executeProposedPlan` independently re-derives completeness immediately before any idempotency claim, task/message persistence, Waiting/follow-up state, or external delivery and fails closed with the canonical clarification when anything is missing. A known person is not automatically an eligible assignee: autonomous hosting selection may use only an explicitly non-family person with an operational staff role or staff relationship, and the execution boundary must resolve the exact person id/name within the authenticated owner account and re-check that eligibility before any task/message persistence or external delivery; notes, communication history, phone reachability, and WhatsApp consent never confer staff eligibility. An ineligible assignment fails the whole plan closed without substitution or partial send, while explicit owner-named direct communication remains a separate permitted path. Exactly one complete plan executes exactly once; delivery results are truthful; late callbacks, reconnects, and session shutdown cannot restore or execute an older operation.",
       "business_importance": "critical — Tier 1. Classified 2026-08-15 from direct evidence, not from the capability's name or prior documentation: `executeProposedPlan` sends real WhatsApp messages to real staff and creates real task/message rows (`src/lib/save.ts:savePending`, `src/lib/delivery.ts:deliverTaskMessage`, `src/lib/direct-messages.ts:sendDirectMessageRecord`) — the identical blast-radius shape as `staff_delegation`/`automation_execution_confirmation`, both already Tier 1. A real production incident (PRs #68/#69, documented in RA7ETBAL_STATE.md's 'Hosting plan integrity guards' entry) had Carson orally claim a two-recipient hosting proposal was sent when `execute_instruction` was never called to persist it, then falsely tell the owner both recipients received instructions — the exact 'silently fail while Carson claims success' failure class this entire hardening project exists to catch, on this capability specifically. `RA7ETBAL_STATE.md`'s own 'Type to Carson is advisory-only' product decision (2026-07-25) already groups 'hosting plans' with reminders/delegations/staff messages/calendar events as voice-only, state-changing execution; its 'protected systems' list separately names hosting alongside delegations and owner decisions. 216+ pre-existing tests in ops-intelligence.test.ts already cover idempotency, truthful per-recipient delivery, and worker-role correctness — this capability has been protected in engineering practice all along, just never formalized in this registry or the required CI gate.",
-      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception; handlePendingPlanTurn/executeProposedPlan call sites; legacy maybeSendImpliedDinnerDelegation authority removed)"],
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception; handlePendingPlanTurn/executeProposedPlan call sites; legacy maybeSendImpliedDinnerDelegation authority removed)"
+      ],
       "files_functions": [
         "src/lib/ops-intelligence.ts:resolveHostingOperationRecall / answerHostingOperationRecall / loadLatestCompletedHostingOperation",
         "src/lib/ops-intelligence.ts:buildHostingEventBrief / evaluateHostingPlanningGate / normalizeHostingClarificationAnswer",
@@ -625,13 +813,28 @@
         "src/lib/ops-intelligence.ts:executeProposedPlan completeness and person-eligibility boundaries / rejectProposedPlan / handlePendingPlanTurn",
         "src/lib/ops-intelligence.ts:buildDeterministicGuestPreparationTasks / hasLeadingConfirmationLanguage"
       ],
-      "shared_dependencies": ["src/lib/save.ts", "src/lib/delivery.ts", "src/lib/direct-messages.ts", "src/lib/delegation-message.ts", "src/lib/carson-consequential-result.ts", "api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "shared_dependencies": [
+        "src/lib/save.ts",
+        "src/lib/delivery.ts",
+        "src/lib/direct-messages.ts",
+        "src/lib/delegation-message.ts",
+        "src/lib/carson-consequential-result.ts",
+        "api/anthropic.js",
+        "src/lib/anthropic-client.ts"
+      ],
       "db": {
-        "tables": ["carson_pending_operations", "tasks", "messages"],
+        "tables": [
+          "carson_pending_operations",
+          "tasks",
+          "messages"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["ElevenLabs voice model", "WhatsApp/Meta send"],
+      "external_boundaries": [
+        "ElevenLabs voice model",
+        "WhatsApp/Meta send"
+      ],
       "focused_tests": [
         "src/lib/ops-intelligence.test.ts",
         "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts"
@@ -670,11 +873,19 @@
         "src/lib/carson-transcript-turn-state.ts"
       ],
       "db": {
-        "tables": ["carson_pending_operations", "tasks", "messages", "whatsapp_deliveries"],
+        "tables": [
+          "carson_pending_operations",
+          "tasks",
+          "messages",
+          "whatsapp_deliveries"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["ElevenLabs voice model", "WhatsApp/Meta send"],
+      "external_boundaries": [
+        "ElevenLabs voice model",
+        "WhatsApp/Meta send"
+      ],
       "focused_tests": [
         "src/lib/carson-consequential-result.test.ts",
         "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts",
@@ -719,11 +930,17 @@
         "src/lib/anthropic-client.ts"
       ],
       "db": {
-        "tables": ["tasks", "messages"],
+        "tables": [
+          "tasks",
+          "messages"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["WhatsApp/Meta send", "Anthropic API (via api/anthropic.js)"],
+      "external_boundaries": [
+        "WhatsApp/Meta send",
+        "Anthropic API (via api/anthropic.js)"
+      ],
       "focused_tests": [
         "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts"
       ],
@@ -749,14 +966,24 @@
         "src/lib/carson-summarize.ts",
         "src/lib/carson-fact-extract.ts"
       ],
-      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "shared_dependencies": [
+        "api/anthropic.js",
+        "src/lib/anthropic-client.ts"
+      ],
       "db": {
-        "tables": ["carson_memory", "carson_facts"],
+        "tables": [
+          "carson_memory",
+          "carson_facts"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
-      "focused_tests": ["src/lib/carson-summarize.test.ts"],
+      "external_boundaries": [
+        "Anthropic API (via api/anthropic.js)"
+      ],
+      "focused_tests": [
+        "src/lib/carson-summarize.test.ts"
+      ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -773,16 +1000,27 @@
       "id": "weekly_planning",
       "contract": "Weekly planning output (produced from carson_memory/task history via the Anthropic proxy) reflects the owner's actual data and does not fabricate tasks, people, or commitments that were not actually present in the underlying records.",
       "business_importance": "medium — an incorrect weekly plan misleads the owner's planning but performs no WhatsApp send, task creation, or other external state change.",
-      "production_entry_points": ["src/lib/weekly-planning.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"],
-      "files_functions": ["src/lib/weekly-planning.ts"],
-      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "production_entry_points": [
+        "src/lib/weekly-planning.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"
+      ],
+      "files_functions": [
+        "src/lib/weekly-planning.ts"
+      ],
+      "shared_dependencies": [
+        "api/anthropic.js",
+        "src/lib/anthropic-client.ts"
+      ],
       "db": {
         "tables": [],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
-      "focused_tests": ["src/lib/weekly-planning.test.ts"],
+      "external_boundaries": [
+        "Anthropic API (via api/anthropic.js)"
+      ],
+      "focused_tests": [
+        "src/lib/weekly-planning.test.ts"
+      ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -798,15 +1036,26 @@
       "id": "people_behavioral_insights",
       "contract": "Behavioral insights about staff/people (produced via the Anthropic proxy from historical task/communication data) reflect the owner's actual data and do not fabricate behavior patterns, incidents, or characterizations of a real named person that did not actually occur.",
       "business_importance": "medium-high — a fabricated behavioral characterization of a real named staff member is a more sensitive failure mode than a generic wrong-fact bug (reputational/interpersonal risk to a real person), but still performs no WhatsApp send, task creation, or other external state change on its own.",
-      "production_entry_points": ["src/lib/people-behavior.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"],
-      "files_functions": ["src/lib/people-behavior.ts"],
-      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "production_entry_points": [
+        "src/lib/people-behavior.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"
+      ],
+      "files_functions": [
+        "src/lib/people-behavior.ts"
+      ],
+      "shared_dependencies": [
+        "api/anthropic.js",
+        "src/lib/anthropic-client.ts"
+      ],
       "db": {
-        "tables": ["people"],
+        "tables": [
+          "people"
+        ],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
+      "external_boundaries": [
+        "Anthropic API (via api/anthropic.js)"
+      ],
       "focused_tests": [],
       "protected_suite": false,
       "golden_journey_required": false,
@@ -834,11 +1083,18 @@
       ],
       "shared_dependencies": [],
       "db": {
-        "tables": ["google_oauth_states"],
+        "tables": [
+          "google_oauth_states"
+        ],
         "rpcs": [],
-        "migrations": ["supabase/migrations/20260816_google_oauth_states.sql"]
+        "migrations": [
+          "supabase/migrations/20260816_google_oauth_states.sql"
+        ]
       },
-      "external_boundaries": ["Google OAuth consent + token exchange", "Supabase REST (service-role-only access to google_oauth_states)"],
+      "external_boundaries": [
+        "Google OAuth consent + token exchange",
+        "Supabase REST (service-role-only access to google_oauth_states)"
+      ],
       "focused_tests": [
         "api/google-calendar.oauth-state.test.js",
         "src/components/settings/SettingsModal.google-calendar-oauth.test.ts"
@@ -864,11 +1120,20 @@
       "contract": "RA7ETBAL_STATE.md must never silently regress a previously CLOSED/PROTECTED/PRODUCTION VERIFIED (or otherwise closed-class, per scripts/state-doc-integrity.mjs's real-vocabulary classifier) section's status back to an open/neutral status without an explicit, genuinely new, dated \"**Correction (date): explanation**\" / \"**Update (date): explanation**\" / \"**Reopened\" marker in the same change — codifying a convention the file already used on its own before this was mechanically enforced. A previously closed-class section disappearing entirely has no such marker-based exception at all: the heading must be kept (even briefly, with an explicit correction paragraph) rather than deleted.",
       "business_importance": "process-critical — root cause of the historical stale-state incident (commit 7b83a0089876ac784fbd3b9c98a0c5816581fb94, a normal PR whose branch was cut before an earlier closure had landed on main, not a direct push; corrected by Phase 0/5 investigation)",
       "production_entry_points": [],
-      "files_functions": ["../RA7ETBAL_STATE.md", "scripts/state-doc-integrity.mjs"],
+      "files_functions": [
+        "../RA7ETBAL_STATE.md",
+        "scripts/state-doc-integrity.mjs"
+      ],
       "shared_dependencies": [],
-      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
       "external_boundaries": [],
-      "focused_tests": ["scripts/state-doc-integrity.test.mjs"],
+      "focused_tests": [
+        "scripts/state-doc-integrity.test.mjs"
+      ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -886,11 +1151,21 @@
       "contract": "A production canary run must be checking the deployment that is actually serving production traffic — the exact expected githubCommitSha, readyState READY, target production, no aliasError, and the canonical www.ra7etbal.com alias present — never silently report PASS against a stale or wrong deployment. New in Phase 7; process-infrastructure, not a Carson product behavior (same category as stale_state_doc_integrity above).",
       "business_importance": "process-critical — every other production canary check in this registry is meaningless if it silently ran against the wrong deployment",
       "production_entry_points": [],
-      "files_functions": ["scripts/carson-production-canary.mjs:evaluateDeploymentIdentity"],
+      "files_functions": [
+        "scripts/carson-production-canary.mjs:evaluateDeploymentIdentity"
+      ],
       "shared_dependencies": [],
-      "db": { "tables": [], "rpcs": [], "migrations": [] },
-      "external_boundaries": ["Vercel deployments API"],
-      "focused_tests": ["scripts/carson-production-canary.test.mjs"],
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": [
+        "Vercel deployments API"
+      ],
+      "focused_tests": [
+        "scripts/carson-production-canary.test.mjs"
+      ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -921,8 +1196,15 @@
         "../carson-known-good-release.json"
       ],
       "shared_dependencies": [],
-      "db": { "tables": [], "rpcs": [], "migrations": [] },
-      "external_boundaries": ["Vercel deployments API", "git history"],
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": [
+        "Vercel deployments API",
+        "git history"
+      ],
       "focused_tests": [
         "scripts/carson-migration-classifier.test.mjs",
         "scripts/carson-rollback-eligibility.test.mjs",
@@ -936,7 +1218,7 @@
       "verification_status": "Phase 8: implemented and bootstrapped against real evidence — carson-known-good-release.json's first entry (SHA e3218bbcdfdd2fa695f5545b175c1b2420f04154) was built from a live Vercel deployment check and live read-only Supabase queries, not fabricated. The migration classifier was run against all real production migrations; spot-checked against known real CI-verified rollbacks (3) and a known real destructive migration (the server-authoritative-reminder RLS policy). The rollback dry-run tool was proven against real git history spanning a genuine rollback-sensitive migration. workflow_dispatch-only CI added (carson-rollback-dry-run.yml) — never runs on PRs, never mutates anything.",
       "unresolved": [
         "The migration classifier is a text-pattern heuristic, not a real DDL parser — PL/pgSQL function bodies (CREATE FUNCTION ... AS $$ ... $$) are not statement-parsed and always fall back to class 5 (unknown), even when a human would judge them safe. This is a deliberate fail-closed default, not a bug, but it means several real migrations that ARE probably additive are conservatively blocked from automated rollback eligibility rather than confirmed safe.",
-      "Only migrations from the current release window were exercised against real CI-verification evidence during Phase 8; the classifier itself runs over all 77+ real migration files, but no attempt was made to hand-verify every historical classification beyond spot-checks.",
+        "Only migrations from the current release window were exercised against real CI-verification evidence during Phase 8; the classifier itself runs over all 77+ real migration files, but no attempt was made to hand-verify every historical classification beyond spot-checks.",
         "No automatic mechanism updates carson-known-good-release.json after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR after re-running the canary + eligibility check.",
         "Executing an actual rollback (redeploying an old Vercel deployment, and/or applying rollback SQL to production) is explicitly NOT automated by this capability — it remains a deliberate human/operator action, per this repository's standing safety rules on destructive operations."
       ]
@@ -946,17 +1228,30 @@
       "contract": "A supported read-only Carson turn has one account-bound authoritative owner transcript, one strict structured intent, one policy decision, one invocation of an existing read capability, one evidence object, and one canonical owner result. Unsupported intents remain owned by the legacy conversational path. Once this coordinator handles a turn, no legacy/model response may independently claim or contradict its result. The Stage 1 capability is limited to calendar reads and cannot perform writes or consequential actions.",
       "business_importance": "high — this is the first bounded proof of the Corrected Path C brain boundary and prevents split ownership, malformed model output, cross-account reuse, duplicate provider events, and unsupported-intent leakage before any consequential capability is admitted",
       "production_entry_points": [
-        "api/carson-turn.js"
+        "api/carson-turn.js",
+        "src/components/home/ElevenLabsAgentWidget.tsx (sendTypedMessage — attention_summary_read interception only, 2026-08-28)"
       ],
       "files_functions": [
         "api/carson-turn.js:createCarsonTurnHandler / interpretReadIntentWithClaude / readCalendarThroughExistingHandler",
         "api/_carson-read-turn.js:createReadOnlyTurnCoordinator / validateStructuredIntent / normalizeCalendarEvidence / renderCalendarOwnerResult",
-        "src/lib/carson-turn-client.ts:dispatchCarsonReadTurn"
+        "src/lib/carson-turn-client.ts:dispatchCarsonReadTurn",
+        "api/carson-turn.js:fetchAttentionEvidenceThroughServerPath (2026-08-28 addition — Second Brain typed hard-grounding slice)",
+        "api/_carson-read-turn.js:createAttentionReadCoordinator (2026-08-28 addition — deterministic, non-LLM classification for attention_summary_read)",
+        "api/_carson-attention-evidence.js:fetchAttentionEvidenceForServer / fetchAttentionSummaryForServer (2026-08-28 addition, new file)",
+        "shared/carson-morning-brief-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
+        "shared/carson-unresolved-captures-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
+        "shared/carson-attention-summary.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
+        "shared/automation-support-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
+        "shared/carson-attention-intent-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)"
       ],
       "shared_dependencies": [
         "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
       ],
-      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
       "external_boundaries": [
         "Anthropic Messages API strict tool output",
         "Supabase Auth /auth/v1/user",
@@ -965,7 +1260,10 @@
       "focused_tests": [
         "api/_carson-read-turn.test.js",
         "api/carson-turn.test.js",
-        "src/lib/carson-turn-client.test.ts"
+        "src/lib/carson-turn-client.test.ts",
+        "api/_carson-attention-evidence.test.js",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
+        "src/lib/reminder-time-shared-parity.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -977,9 +1275,10 @@
       "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback",
       "verification_status": "Stage 1 code-only proof registered 2026-08-19. Its highest test exercises the composed API boundary through the real Supabase-authentication code, strict Claude intent code, Calendar adapter, and real existing googleCalendarHandler, with only external Supabase/Anthropic/Google HTTP responses mocked. The Calendar adapter supplies the real GET path's status/json/setHeader response contract. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
       "unresolved": [
-        "The live ElevenLabs widget is deliberately not wired to this route in Stage 1, so production voice traffic remains on the existing path until a separately approved cutover.",
+        "The live ElevenLabs widget was not wired to this route in Stage 1 (calendar_read only). As of 2026-08-28, the TYPED channel is wired for attention_summary_read only (ElevenLabsAgentWidget.tsx sendTypedMessage) — voice and calendar_read both remain on their pre-existing paths, unchanged.",
         "Deduplication is bounded and process-local because Stage 1 is read-only. It prevents duplicate calls within one warm instance, including concurrent duplicate events, but is not durable across instances and is explicitly insufficient for future consequential actions.",
-        "Only Calendar read is admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary."
+        "Calendar read and attention_summary_read (2026-08-28) are the only intents admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary.",
+        "2026-08-28: attention_summary_read was wired into this route/coordinator specifically for the typed channel (ElevenLabsAgentWidget.tsx sendTypedMessage intercepts before conversation.sendUserMessage()). Voice is explicitly untouched and continues to rely solely on the existing client-side carson-attention-intent-guard.ts backstop. This is a deliberate, approved channel split — see RA7ETBAL_STATE.md for the architecture decision record — not a partial/incomplete rollout."
       ]
     },
     {
@@ -1000,8 +1299,21 @@
         "src/lib/quality-lifecycle.ts:isQualityOwnerReviewStatus (owner-decision-required signal — read-only, pre-existing, already used by daily-brief.ts/needs-you-timestamp.ts for the same purpose)"
       ],
       "shared_dependencies": [],
-      "db": { "tables": ["tasks", "automations", "automation_runs", "automation_runs.task_id (FK into tasks, used read-only for relevance inheritance)", "staff_messages", "staff_escalation_owner_decisions"], "rpcs": [], "migrations": [] },
-      "external_boundaries": ["ElevenLabs dashboard first-message template ({{opening_line}}) — confirmed via commit 7cc9c6e9 (2026-06-12) to speak this variable verbatim, not a model paraphrase; not independently re-verified against the live dashboard this session (no ElevenLabs API key available)."],
+      "db": {
+        "tables": [
+          "tasks",
+          "automations",
+          "automation_runs",
+          "automation_runs.task_id (FK into tasks, used read-only for relevance inheritance)",
+          "staff_messages",
+          "staff_escalation_owner_decisions"
+        ],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": [
+        "ElevenLabs dashboard first-message template ({{opening_line}}) — confirmed via commit 7cc9c6e9 (2026-06-12) to speak this variable verbatim, not a model paraphrase; not independently re-verified against the live dashboard this session (no ElevenLabs API key available)."
+      ],
       "focused_tests": [
         "src/lib/carson-opening.test.ts",
         "src/lib/carson-material-items.test.ts",
@@ -1029,7 +1341,8 @@
       "business_importance": "high — first Second Brain vertical-slice proof that Production Carson can answer an operational question from live, structured, evidence-only retrieval rather than the frozen session-start ra7etbal_state/daily_brief snapshot or model inference; Phase 1 closes a real architectural gap where anything the owner entrusted to Notes/To-dos was permanently invisible to every Carson operational surface (confirmed by forensic review: zero references to carson_notes/carson_todos in morning-brief.ts, night-sweep.ts, daily-brief.ts, or the pre-Phase-1 carson-operations-center.ts) — explicitly scoped read-only-plus-dedup-write and additive; Morning Brief, Night Sweep, Needs You, Waiting, and History are deliberately untouched in this phase pending live production evidence",
       "production_entry_points": [
         "src/components/home/ElevenLabsAgentWidget.tsx (get_items_needing_attention clientTool; act_on_note's four conversion branches)",
-        "src/routes/Inbox.tsx (Discuss with Carson button; Make Task / Delegate / Add to Calendar / Remind Me conversion handlers)"
+        "src/routes/Inbox.tsx (Discuss with Carson button; Make Task / Delegate / Add to Calendar / Remind Me conversion handlers)",
+        "api/carson-turn.js (typed channel only, 2026-08-28 — server-owned hard-grounding boundary; see carson_read_only_turn_coordinator)"
       ],
       "files_functions": [
         "src/lib/carson-operations-center.ts:fetchAttentionEvidence / renderAttentionSummary / fetchAttentionSummary",
@@ -1041,7 +1354,13 @@
         "src/components/home/ElevenLabsAgentWidget.tsx:get_items_needing_attention clientTool entry; actOnNote's task/reminder/delegate/calendar dismissCarsonNote wiring; deterministic attention-routing guard wiring in onMessage (attentionIntentForCurrentTranscriptRef / attentionToolRanForCurrentTranscriptRef / attentionGuardResultRef / lastAttentionTurnWasGroundedRef)",
         "src/routes/Inbox.tsx:handleMakeTask / handleDelegateSubmit / handleCalendarSubmit / handleRemindSubmit dismissCarsonNote wiring; handleSendToCarson (Discuss with Carson)",
         "src/lib/carson-status-policy.ts:CARSON_STATUS_POLICY's Status answer structure section — routes the general live-attention question class to get_items_needing_attention instead of answering from its own template/context (2026-08-25 production-failure fix)",
-        "src/lib/carson-attention-intent-guard.ts:matchesAttentionIntent / matchesAttentionFollowUp / resolveAttentionGuardedMessage — deterministic, code-level backstop that substitutes a live get_items_needing_attention-equivalent result for the model's own reply when the tool did not actually run for a matching turn (2026-08-25 production-failure fix)"
+        "src/lib/carson-attention-intent-guard.ts:matchesAttentionIntent / matchesAttentionFollowUp / resolveAttentionGuardedMessage — deterministic, code-level backstop that substitutes a live get_items_needing_attention-equivalent result for the model's own reply when the tool did not actually run for a matching turn (2026-08-25 production-failure fix)",
+        "api/_carson-attention-evidence.js:fetchAttentionEvidenceForServer / fetchAttentionSummaryForServer (2026-08-28 — server-side port of this capability's exact queries, authenticated with the caller's own JWT, never service-role; see carson_read_only_turn_coordinator for the coordinator/routing layer)",
+        "shared/carson-morning-brief-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
+        "shared/carson-unresolved-captures-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
+        "shared/carson-attention-summary.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
+        "shared/automation-support-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
+        "shared/carson-attention-intent-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)"
       ],
       "shared_dependencies": [
         "src/lib/tasks.ts:listTasks (existing, owner-scoped via RLS)",
@@ -1050,7 +1369,14 @@
         "src/lib/morning-brief.ts:buildMorningBrief / taskLabel (existing, canonical relevance classifier — reused, not reimplemented)"
       ],
       "db": {
-        "tables": ["tasks", "staff_messages", "automations", "automation_runs", "carson_notes", "carson_todos"],
+        "tables": [
+          "tasks",
+          "staff_messages",
+          "automations",
+          "automation_runs",
+          "carson_notes",
+          "carson_todos"
+        ],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260824_carson_notes_todos_attention_lifecycle.sql"
@@ -1075,7 +1401,12 @@
         "src/components/home/ElevenLabsAgentWidget.act-on-note-dedup.test.ts",
         "src/lib/carson-attention-intent-guard.test.ts",
         "src/lib/carson-status-policy.test.ts",
-        "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts",
+        "api/_carson-attention-evidence.test.js",
+        "api/_carson-read-turn.test.js",
+        "api/carson-turn.test.js",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
+        "src/lib/reminder-time-shared-parity.test.ts"
       ],
       "protected_suite": false,
       "golden_journey_required": false,
@@ -1095,7 +1426,8 @@
         "carsonCanHandle and safeToIgnore evidence fields are always empty — no existing signal supports either classification yet; revisit only if a real data signal emerges, not by inventing heuristics.",
         "The action-wording heuristic (ACTION_LEAD_PATTERN) is a shallow, bounded, explicit verb list — not semantic understanding. A note phrased without a leading action verb but genuinely actionable (or vice versa) will be misclassified. This is a documented, deliberate Phase 1 limitation, not an oversight — true semantic classification would require either an LLM classification pass or materially more architecture, explicitly deferred per product decision.",
         "Morning Brief, Night Sweep, Needs You, Waiting, and History remain untouched by this Phase 1 addition per explicit product scope — proactive resurfacing through those surfaces is Phase 2, gated on live production evidence from this Phase 1 pull-based (get_items_needing_attention only) slice.",
-        "No production canary and no live owner acceptance test have been performed as of this registration — both remain required before this capability can be marked PRODUCTION VERIFIED."
+        "No production canary and no live owner acceptance test have been performed as of this registration — both remain required before this capability can be marked PRODUCTION VERIFIED.",
+        "2026-08-28, Second Brain typed hard-grounding slice: for the TYPED channel only, tool invocation is now code-enforced rather than model/prompt-controlled — the app classifies the utterance deterministically (matchesAttentionIntent/matchesAttentionFollowUp) before ever calling conversation.sendUserMessage(), retrieves evidence server-side via api/carson-turn.js (JWT-scoped, RLS-authoritative, never service-role), and displays the canonical result directly, skipping ElevenLabs entirely for this class. This closes the grounding gap named above for typed only. VOICE IS UNCHANGED: it still relies solely on the pre-existing client-side carson-attention-intent-guard.ts backstop (post-hoc substitution, not pre-generation prevention) — the model/prompt-controlled limitation described above still fully applies to voice. This was an explicit, approved scope decision (Custom LLM / full pre-generation voice control was evaluated and deliberately not pursued — see RA7ETBAL_STATE.md), not an oversight."
       ]
     }
   ]

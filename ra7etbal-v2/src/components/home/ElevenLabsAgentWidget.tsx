@@ -130,7 +130,12 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
-import { matchesAttentionIntent, matchesAttentionFollowUp, resolveAttentionGuardedMessage } from "../../lib/carson-attention-intent-guard";
+import {
+  matchesAttentionIntent,
+  matchesAttentionFollowUp,
+  resolveAttentionGuardedMessage,
+  ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
+} from "../../lib/carson-attention-intent-guard";
 import { reduceCarsonTranscriptTurn, type CarsonTranscriptTurnState } from "../../lib/carson-transcript-turn-state";
 import {
   buildCanonicalConsequentialSpeechPayload,
@@ -7656,6 +7661,62 @@ export default function ElevenLabsAgentWidget({
             }
           }
         }
+      }
+
+      // Second Brain typed hard-grounding boundary (2026-08-28). For this one
+      // narrow question class, the app already knows — before ElevenLabs ever
+      // sees this text — that a live, grounded answer is mandatory. Per the
+      // approved architecture: classify → mandatory server-side retrieval →
+      // canonical result → display → contextual update for continuity. The
+      // typed model is never given a chance to compose its own answer for
+      // this class: sendUserMessage() below is skipped entirely, not merely
+      // corrected afterward the way carson-attention-intent-guard.ts still
+      // does for voice (which cannot avoid the model generating a turn at
+      // all). Voice is intentionally untouched by this block.
+      const typedAttentionIntent =
+        matchesAttentionIntent(savedMessage.content) ||
+        (matchesAttentionFollowUp(savedMessage.content) && lastTurnWasAttentionIntentRef.current);
+      if (typedAttentionIntent) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        let ownerResult: string = ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
+        try {
+          const { data: attentionSessionData } = await supabase.auth.getSession();
+          const attentionJwt = attentionSessionData?.session?.access_token;
+          if (attentionJwt) {
+            const response = await fetch("/api/carson-turn", {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: `Bearer ${attentionJwt}` },
+              body: JSON.stringify({
+                turnId: clientMessageId,
+                providerEventId: clientMessageId,
+                transcript: savedMessage.content,
+              }),
+            });
+            const result = await response.json().catch(() => null);
+            if (result?.handled && typeof result.ownerResult === "string") {
+              ownerResult = result.ownerResult;
+            }
+          }
+        } catch {
+          // Fail closed to the honest fallback already set above — this
+          // question class must never fall through to a free-form model
+          // answer, whether the cause is no session, a network error, or an
+          // unexpected server response.
+        }
+        lastTurnWasAttentionIntentRef.current = true;
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: ownerResult,
+          clearPendingPhotos: true,
+        });
+        // Contextual update only, sent only after the canonical result
+        // exists — informs the live session for continuity (e.g. a later
+        // "why did you say that?"); explicitly must not and cannot trigger
+        // another user-facing response for this already-answered turn.
+        conversationRef.current?.sendContextualUpdate(
+          `Carson already answered an attention-check question directly (not through you): "${ownerResult}" This is already resolved — do not re-answer, re-check, or reference searching/checking anything for it.`,
+        );
+        return;
       }
 
       // Final deterministic gate before the free-form typed model ever runs.

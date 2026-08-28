@@ -56,39 +56,18 @@
  * total-failure phrasing for consistency — never the model's prose.
  */
 
-// Matches the exact trigger phrases ATTENTION SUMMARY / DAILY BRIEF AND
-// STATUS already define, plus the close variants named in the 2026-08-25
-// investigation ("what's on my plate", "am I clear").
-const ATTENTION_INTENT_PATTERN =
-  /\b(?:what needs my attention|what('?s| is) pending|what am i waiting on|what('?s| is) on my plate|am i clear|what('?s| is) outstanding|anything pending)\b/i;
-
-// Only meaningful as a continuation of an attention exchange — the caller
-// gates this on the immediately preceding turn having been a grounded
-// attention answer (matchesAttentionIntent or a prior matchesAttentionFollowUp
-// that resolved grounded). Never treated as attention-scoped on its own.
-const ATTENTION_FOLLOWUP_PATTERN =
-  /^\s*(?:what else|anything else|is that everything|what else is pending)\s*\??\s*$/i;
-
-export function matchesAttentionIntent(utterance: string): boolean {
-  return ATTENTION_INTENT_PATTERN.test(utterance);
-}
-
-export function matchesAttentionFollowUp(utterance: string): boolean {
-  return ATTENTION_FOLLOWUP_PATTERN.test(utterance);
-}
-
-/**
- * Returned in place of the model's own reply when attention intent was
- * detected but no grounded evidence was available for this turn. Reuses
- * fetchAttentionSummary()'s own total-failure phrasing (carson-operations-center.ts)
- * for consistency — this is the same honest "couldn't check" contract the
- * tool itself already uses, not new copy invented here. Contains no
- * process-narration language (CARSON_STATUS_POLICY already bans "One
- * moment", "Let me", "checking", etc. — this string was written to comply,
- * not merely to avoid the literal banned words).
- */
-export const ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE =
-  "I couldn't check what needs your attention right now — the live check didn't complete.";
+// PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
+// matchesAttentionIntent, matchesAttentionFollowUp, and
+// ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE moved to shared/ so the
+// server-side typed hard-grounding path classifies the exact same way.
+// Re-exported here so every existing caller's import path
+// (`./carson-attention-intent-guard`) and behavior are unchanged.
+import {
+  matchesAttentionIntent,
+  matchesAttentionFollowUp,
+  ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
+} from "../../shared/carson-attention-intent-classifier.js";
+export { matchesAttentionIntent, matchesAttentionFollowUp, ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE };
 
 export interface ResolveAttentionGuardedMessageInput {
   /** The agent's own separately-generated reply for this turn. */
