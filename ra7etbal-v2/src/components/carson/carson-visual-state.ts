@@ -17,6 +17,18 @@ export interface CarsonVisualSignals {
   outcome: CarsonVisualOutcome;
 }
 
+export function shouldShowCarsonVoiceTranscript({
+  status,
+  channel,
+  hasMessage,
+}: {
+  status: CarsonVisualSignals["status"];
+  channel: CarsonVisualSignals["channel"];
+  hasMessage: boolean;
+}): boolean {
+  return channel === "voice" && status !== "connected" && hasMessage;
+}
+
 export function deriveCarsonVisualState({
   status,
   channel,

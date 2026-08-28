@@ -4,6 +4,7 @@ import CarsonTypedChat from "./CarsonTypedChat";
 import CarsonVisualCore from "../carson/CarsonVisualCore";
 import {
   deriveCarsonVisualState,
+  shouldShowCarsonVoiceTranscript,
   type CarsonVisualOutcome,
 } from "../carson/carson-visual-state";
 import { getCarsonCallUrl, getCarsonWhatsAppUrl } from "../../lib/carson-channels";
@@ -8362,8 +8363,12 @@ export default function ElevenLabsAgentWidget({
         </p>
       )}
 
-      {/* Latest Carson response — persists after session ends, clears on next session start */}
-      {channel === "voice" && lastCarsonMessage && (
+      {/* Keep the Core primary while voice is live; restore the finalized response after teardown. */}
+      {shouldShowCarsonVoiceTranscript({
+        status,
+        channel,
+        hasMessage: Boolean(lastCarsonMessage),
+      }) && lastCarsonMessage && (
         <div className="mt-2 max-w-[280px] rounded-2xl border border-charcoal/10 bg-white/90 px-3.5 py-2.5 shadow-sm">
           <p className="text-[12px] leading-relaxed text-ink/70">{lastCarsonMessage}</p>
         </div>

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { deriveCarsonVisualState, type CarsonVisualSignals } from "./carson-visual-state";
+import {
+  deriveCarsonVisualState,
+  shouldShowCarsonVoiceTranscript,
+  type CarsonVisualSignals,
+} from "./carson-visual-state";
 
 const base: CarsonVisualSignals = {
   status: "connected",
@@ -26,5 +30,35 @@ describe("deriveCarsonVisualState", () => {
   it("keeps disconnected and text sessions visually idle", () => {
     expect(deriveCarsonVisualState({ ...base, status: "idle" })).toBe("idle");
     expect(deriveCarsonVisualState({ ...base, channel: "text", turnPhase: "acting" })).toBe("idle");
+  });
+});
+
+describe("shouldShowCarsonVoiceTranscript", () => {
+  it("keeps the Carson Core primary during an active voice session", () => {
+    expect(
+      shouldShowCarsonVoiceTranscript({
+        status: "connected",
+        channel: "voice",
+        hasMessage: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("restores the finalized response after the voice session ends", () => {
+    expect(
+      shouldShowCarsonVoiceTranscript({ status: "idle", channel: "voice", hasMessage: true }),
+    ).toBe(true);
+    expect(
+      shouldShowCarsonVoiceTranscript({ status: "error", channel: "voice", hasMessage: true }),
+    ).toBe(true);
+  });
+
+  it("does not affect typed chat or render an empty response", () => {
+    expect(
+      shouldShowCarsonVoiceTranscript({ status: "idle", channel: "text", hasMessage: true }),
+    ).toBe(false);
+    expect(
+      shouldShowCarsonVoiceTranscript({ status: "idle", channel: "voice", hasMessage: false }),
+    ).toBe(false);
   });
 });
