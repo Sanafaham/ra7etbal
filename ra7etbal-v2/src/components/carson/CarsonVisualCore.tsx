@@ -213,7 +213,7 @@ export default function CarsonVisualCore({
         ref={canvasRef}
         className={
           immersive
-            ? "relative min-h-[260px] w-full flex-1 sm:min-h-[320px]"
+            ? "relative h-[clamp(260px,38dvh,340px)] w-full flex-none"
             : "relative h-[176px] w-full sm:h-[210px]"
         }
         aria-hidden="true"
