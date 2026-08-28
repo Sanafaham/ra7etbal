@@ -7767,11 +7767,13 @@ export default function ElevenLabsAgentWidget({
       // The typed model is never given a chance to compose its own factual
       // answer for anything the server actually claims: sendUserMessage()
       // below is skipped for every claimed turn. Voice is untouched.
-      // Retained as a named, readable signal even though it no longer gates
-      // admission itself (the server re-derives it independently) — kept
-      // for readability/parity with the server's own fast-path check.
+      // No longer gates admission itself (the server re-derives it
+      // independently and decides via Stage 1) — but still used below as a
+      // local signal for the network/session-failure fallback decision:
+      // known-attention-shaped turns keep the original honest
+      // fail-closed contract on failure; novel Stage-1-only candidates
+      // fall through cleanly instead (see the catch block below).
       const isDirectTypedAttentionIntent = matchesAttentionIntent(savedMessage.content);
-      void isDirectTypedAttentionIntent;
       const hasActiveGroundedAttentionContext =
         lastTurnWasAttentionIntentRef.current && lastAttentionTurnWasGroundedRef.current;
       const typedAttentionCandidate = true;
@@ -7833,10 +7835,17 @@ export default function ElevenLabsAgentWidget({
             }
           }
         } catch {
-          // Fail closed to the honest fallback already set above — this
-          // question class must never fall through to a free-form model
-          // answer, whether the cause is no session, a network error, or an
-          // unexpected server response.
+          // Every typed message now reaches this block (2026-08-28 Stage 1
+          // correction), so a network/session failure here no longer means
+          // "this was definitely an attention question" the way it did when
+          // only regex/context-matched candidates got this far. Only fail
+          // closed to the honest attention-unavailable message when there
+          // was already local evidence this WAS an attention-shaped turn
+          // (matches the original, still-protected contract for that case);
+          // otherwise fall through to the normal typed path rather than
+          // showing a confusing, wrong "couldn't check what needs your
+          // attention" answer to an ordinary message (CodeRabbit finding).
+          notAttention = !isDirectTypedAttentionIntent && !hasActiveGroundedAttentionContext;
         }
 
         if (notAttention) {
@@ -7862,6 +7871,15 @@ export default function ElevenLabsAgentWidget({
           // truly grounded outcome for THIS turn marks the predecessor as
           // grounded for the next turn's admission/continuation decision.
           lastAttentionTurnWasGroundedRef.current = isAttentionCapability && typedGroundingStatus === "grounded";
+          if (!isAttentionCapability) {
+            // A claimed non-attention result (e.g. calendar_read) ends any
+            // prior attention conversation just as cleanly as an explicit
+            // not_attention would — stale previously-surfaced-evidence
+            // context must not silently persist across an intervening
+            // unrelated turn (CodeRabbit finding).
+            previouslySurfacedEvidenceIdsRef.current = [];
+            priorAttentionObjectiveRef.current = null;
+          }
           if (isAttentionCapability && typedGroundingStatus === "grounded") {
             // Accumulate across the whole conversation (deduped) — lets a
             // later "anything else?" reasoning call know everything already

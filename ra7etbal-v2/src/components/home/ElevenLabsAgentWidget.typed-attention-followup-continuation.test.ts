@@ -44,13 +44,13 @@ describe("ElevenLabsAgentWidget — typed attention conversation-state continuit
     expect(attentionBlock).not.toMatch(/accountId|userId|user_id|task_id|email|phone/i);
   });
 
-  it("resets lastAttentionTurnWasGroundedRef and the conversation-state refs at the same session lifecycle points (3 pre-existing reset sites), plus one new not_attention reset", () => {
+  it("resets lastAttentionTurnWasGroundedRef and the conversation-state refs at the same session lifecycle points (3 pre-existing reset sites, plus the not_attention reset); the conversation-state refs additionally reset once more whenever a claimed result's capability isn't attention_summary_read (2026-08-28 CodeRabbit finding — stale surfaced-evidence context must not persist across an intervening non-attention turn)", () => {
     const groundedResets = SOURCE.split("lastAttentionTurnWasGroundedRef.current = false;").length - 1;
     const surfacedResets = SOURCE.split("previouslySurfacedEvidenceIdsRef.current = [];").length - 1;
     const objectiveResets = SOURCE.split("priorAttentionObjectiveRef.current = null;").length - 1;
     expect(groundedResets).toBe(4);
-    expect(surfacedResets).toBe(4);
-    expect(objectiveResets).toBe(4);
+    expect(surfacedResets).toBe(5);
+    expect(objectiveResets).toBe(5);
   });
 
   it("does not alter any voice-only (requestedChannel === \"voice\") code path", () => {

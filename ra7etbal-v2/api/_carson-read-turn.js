@@ -327,6 +327,19 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       return { handled: false, status: 200, code: "not_attention" };
     }
 
+    // For a contrast decision, both the selected AND contrasted sets are
+    // actually rendered/shown to the owner (renderAttentionDecision renders
+    // both clauses) — surfacedEvidenceIds must reflect everything the owner
+    // actually saw, not just the primary selection, or a later "what else?"
+    // could re-surface an item already shown in the contrasted clause
+    // (CodeRabbit finding).
+    const surfacedEvidenceIds = Array.from(
+      new Set([
+        ...validated.decision.selectedEvidenceIds,
+        ...(validated.decision.contrastedEvidenceIds ?? []),
+      ]),
+    );
+
     return {
       handled: true,
       status: 200,
@@ -336,7 +349,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       groundingStatus: "grounded",
       evidence,
       ownerResult: renderAttentionDecision(evidence, validated.decision),
-      surfacedEvidenceIds: validated.decision.selectedEvidenceIds,
+      surfacedEvidenceIds,
       responseIntent: validated.decision.responseIntent,
     };
   };

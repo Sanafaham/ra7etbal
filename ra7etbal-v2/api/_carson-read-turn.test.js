@@ -315,6 +315,25 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     // Genuinely different shape from a plain "list" of the same selection —
     // both sets are visible, each under its own true category.
     expect(result.ownerResult).not.toBe(FALLBACK_RENDER);
+    // Both rendered sets must count as surfaced (CodeRabbit finding) — a
+    // later "what else?" must not re-surface the contrasted items either,
+    // since they were genuinely shown to the owner in this response.
+    expect(new Set(result.surfacedEvidenceIds)).toEqual(new Set(["task-3", "task-1"]));
+  });
+
+  it("[8-contrast-empty-selection] a contrast decision with an empty selectedEvidenceIds (everything is in the contrasted set) still marks the contrasted items as surfaced", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "contrast",
+      selectedEvidenceIds: [],
+      contrastedEvidenceIds: ["task-1", "task-2"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "What can wait?" });
+
+    expect(result.handled).toBe(true);
+    expect(new Set(result.surfacedEvidenceIds)).toEqual(new Set(["task-1", "task-2"]));
   });
 
   it("[5] 'Why does that need me?' may reference an already-surfaced authorized id via explain", async () => {
