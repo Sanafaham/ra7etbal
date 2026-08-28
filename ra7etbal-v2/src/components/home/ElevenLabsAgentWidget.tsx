@@ -1538,6 +1538,17 @@ export default function ElevenLabsAgentWidget({
   // a FAILED-to-ground first turn still gets its own fresh, independent
   // grounding attempt, instead of inheriting the first turn's failure.
   const lastTurnWasAttentionIntentRef = useRef(false);
+  // Second Brain stateful reasoning (2026-08-28) — typed channel only.
+  // Accumulates evidence ids actually surfaced to the owner across the
+  // whole active attention conversation (deduped), sent as non-authoritative
+  // context to the reasoning model so it can avoid pointlessly repeating
+  // itself. Cleared whenever the attention context ends (session
+  // teardown/error, or a not_attention decision).
+  const previouslySurfacedEvidenceIdsRef = useRef<string[]>([]);
+  // The last responseIntent the server actually used, kept as a short,
+  // minimal label — never a transcript — passed through as conversational
+  // context only.
+  const priorAttentionObjectiveRef = useRef<string | null>(null);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -5546,6 +5557,8 @@ export default function ElevenLabsAgentWidget({
       attentionGuardResultRef.current = null;
       lastAttentionTurnWasGroundedRef.current = false;
       lastTurnWasAttentionIntentRef.current = false;
+      previouslySurfacedEvidenceIdsRef.current = [];
+      priorAttentionObjectiveRef.current = null;
 
       if (conv) {
         if (activeChannelRef.current === "voice") {
@@ -6929,6 +6942,8 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
+          previouslySurfacedEvidenceIdsRef.current = [];
+          priorAttentionObjectiveRef.current = null;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -6992,6 +7007,8 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
+          previouslySurfacedEvidenceIdsRef.current = [];
+          priorAttentionObjectiveRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
@@ -7663,46 +7680,52 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
-      // Second Brain typed hard-grounding boundary (2026-08-28). For this one
-      // narrow question class, the app already knows — before ElevenLabs ever
-      // sees this text — that a live, grounded answer is mandatory. Per the
-      // approved architecture: classify → mandatory server-side retrieval →
-      // canonical result → display → contextual update for continuity. The
-      // typed model is never given a chance to compose its own answer for
-      // this class: sendUserMessage() below is skipped entirely, not merely
-      // corrected afterward the way carson-attention-intent-guard.ts still
-      // does for voice (which cannot avoid the model generating a turn at
-      // all). Voice is intentionally untouched by this block.
-      const isTypedAttentionFollowUp =
-        matchesAttentionFollowUp(savedMessage.content) && lastTurnWasAttentionIntentRef.current;
-      const typedAttentionIntent = matchesAttentionIntent(savedMessage.content) || isTypedAttentionFollowUp;
-      if (typedAttentionIntent) {
-        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+      // Second Brain stateful reasoning boundary (2026-08-28 correction).
+      // Admission is NOT gated on a growing regex of follow-up phrasings —
+      // that would mean adding a new pattern for every new way someone
+      // might continue the conversation, exactly what this layer exists to
+      // stop. Instead: a DIRECT match (matchesAttentionIntent) always
+      // admits deterministically, no model call. Once there is ACTIVE
+      // GROUNDED ATTENTION CONTEXT (the immediately preceding turn was a
+      // grounded attention_summary_read), ANY new typed message is a
+      // candidate — the server's reasoning model decides, from fresh
+      // evidence, whether it continues the topic or is unrelated
+      // (not_attention), never a client-side regex. The typed model is
+      // never given a chance to compose its own factual answer for this
+      // class: sendUserMessage() below is skipped for every admitted turn.
+      // Voice is intentionally untouched by this block.
+      const isDirectTypedAttentionIntent = matchesAttentionIntent(savedMessage.content);
+      const hasActiveGroundedAttentionContext =
+        lastTurnWasAttentionIntentRef.current && lastAttentionTurnWasGroundedRef.current;
+      const typedAttentionCandidate = isDirectTypedAttentionIntent || hasActiveGroundedAttentionContext;
+      if (typedAttentionCandidate) {
         let ownerResult: string = ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
         let typedGroundingStatus: string | null = null;
+        let notAttention = false;
+        let surfacedEvidenceIds: string[] = [];
+        let responseIntent: string | null = null;
         try {
           const { data: attentionSessionData } = await supabase.auth.getSession();
           const attentionJwt = attentionSessionData?.session?.access_token;
           if (attentionJwt) {
-            // 2026-08-28 follow-up fix: the server is stateless and has no
-            // memory of the prior turn, so a genuine follow-up ("What
-            // else?") needs the widget's own continuity signal to avoid
-            // being rejected as unsupported_intent. This is classification
-            // context ONLY — never an operational fact, never identity,
-            // never an authorization/bypass token. The server still
-            // independently re-checks matchesAttentionFollowUp() on the
-            // transcript itself (see api/_carson-read-turn.js) and always
-            // performs a fresh authenticated retrieval; this field can only
-            // ever cause a rejection to instead become a fresh, real
-            // attention_summary_read — it can never substitute for one.
-            // Only sent when the prior turn actually grounded
-            // (lastAttentionTurnWasGroundedRef) — a follow-up to a
-            // failed-to-ground turn is not represented as continuing a
-            // successful one.
-            const continuationContext =
-              isTypedAttentionFollowUp && lastAttentionTurnWasGroundedRef.current
-                ? { previousCapability: "attention_summary_read", previousGroundingStatus: "grounded" }
-                : {};
+            // previousCapability/previousGroundingStatus/
+            // previouslySurfacedEvidenceIds/priorObjective: minimal,
+            // non-security conversational-continuity context only — never
+            // an operational fact, never identity, never an
+            // authorization/bypass token. The server independently
+            // re-derives everything that matters (fresh retrieval,
+            // evidence-id validation) and this context can only ever
+            // ADMIT a turn into a fresh, real attention_summary_read or
+            // inform the reasoning model's classification — it can never
+            // substitute for retrieval or influence tenant scoping.
+            const conversationStateContext = hasActiveGroundedAttentionContext
+              ? {
+                  previousCapability: "attention_summary_read",
+                  previousGroundingStatus: "grounded",
+                  previouslySurfacedEvidenceIds: previouslySurfacedEvidenceIdsRef.current,
+                  priorObjective: priorAttentionObjectiveRef.current,
+                }
+              : {};
             const response = await fetch("/api/carson-turn", {
               method: "POST",
               headers: { "content-type": "application/json", authorization: `Bearer ${attentionJwt}` },
@@ -7710,12 +7733,16 @@ export default function ElevenLabsAgentWidget({
                 turnId: clientMessageId,
                 providerEventId: clientMessageId,
                 transcript: savedMessage.content,
-                ...continuationContext,
+                ...conversationStateContext,
               }),
             });
             const result = await response.json().catch(() => null);
-            if (result?.handled && typeof result.ownerResult === "string") {
+            if (result?.code === "not_attention") {
+              notAttention = true;
+            } else if (result?.handled && typeof result.ownerResult === "string") {
               ownerResult = result.ownerResult;
+              if (Array.isArray(result.surfacedEvidenceIds)) surfacedEvidenceIds = result.surfacedEvidenceIds;
+              if (typeof result.responseIntent === "string") responseIntent = result.responseIntent;
             }
             if (typeof result?.groundingStatus === "string") {
               typedGroundingStatus = result.groundingStatus;
@@ -7727,25 +7754,47 @@ export default function ElevenLabsAgentWidget({
           // answer, whether the cause is no session, a network error, or an
           // unexpected server response.
         }
-        lastTurnWasAttentionIntentRef.current = true;
-        // Mirrors the existing voice/onMessage semantics for this same ref
-        // (see the onMessage attention-routing guard above): only a truly
-        // grounded outcome for THIS turn marks the predecessor as grounded
-        // for the next follow-up's continuation-context decision.
-        lastAttentionTurnWasGroundedRef.current = typedGroundingStatus === "grounded";
-        await persistLocalTypedAgentReply({
-          replyToClientMessageId: clientMessageId,
-          content: ownerResult,
-          clearPendingPhotos: true,
-        });
-        // Contextual update only, sent only after the canonical result
-        // exists — informs the live session for continuity (e.g. a later
-        // "why did you say that?"); explicitly must not and cannot trigger
-        // another user-facing response for this already-answered turn.
-        conversationRef.current?.sendContextualUpdate(
-          `Carson already answered an attention-check question directly (not through you): "${ownerResult}" This is already resolved — do not re-answer, re-check, or reference searching/checking anything for it.`,
-        );
-        return;
+
+        if (notAttention) {
+          // A resolved, valid decision that this turn is not an attention
+          // continuation — the conversation context ends here and the
+          // message falls through to the rest of this function exactly as
+          // if this block never ran (no local transcript push, no return).
+          lastTurnWasAttentionIntentRef.current = false;
+          lastAttentionTurnWasGroundedRef.current = false;
+          previouslySurfacedEvidenceIdsRef.current = [];
+          priorAttentionObjectiveRef.current = null;
+        } else {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          lastTurnWasAttentionIntentRef.current = true;
+          // Mirrors the existing voice/onMessage semantics for this same
+          // ref (see the onMessage attention-routing guard above): only a
+          // truly grounded outcome for THIS turn marks the predecessor as
+          // grounded for the next turn's admission/continuation decision.
+          lastAttentionTurnWasGroundedRef.current = typedGroundingStatus === "grounded";
+          if (typedGroundingStatus === "grounded") {
+            // Accumulate across the whole conversation (deduped) — lets a
+            // later "anything else?" reasoning call know everything already
+            // mentioned so far, not just the immediately preceding turn.
+            const merged = new Set([...previouslySurfacedEvidenceIdsRef.current, ...surfacedEvidenceIds]);
+            previouslySurfacedEvidenceIdsRef.current = Array.from(merged);
+            if (responseIntent) priorAttentionObjectiveRef.current = responseIntent;
+          }
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: ownerResult,
+            clearPendingPhotos: true,
+          });
+          // Contextual update only, sent only after the canonical result
+          // exists — informs the live session for continuity (e.g. a later
+          // "why did you say that?"); explicitly must not and cannot
+          // trigger another user-facing response for this already-answered
+          // turn.
+          conversationRef.current?.sendContextualUpdate(
+            `Carson already answered an attention-check question directly (not through you): "${ownerResult}" This is already resolved — do not re-answer, re-check, or reference searching/checking anything for it.`,
+          );
+          return;
+        }
       }
 
       // Final deterministic gate before the free-form typed model ever runs.

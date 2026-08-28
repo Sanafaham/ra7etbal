@@ -1,6 +1,7 @@
 import googleCalendarHandler from "./google-calendar.js";
 import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator } from "./_carson-read-turn.js";
 import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
+import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
 
 const MAX_DEDUP_ENTRIES = 200;
 const completedTurns = new Map();
@@ -88,10 +89,14 @@ export function createCarsonTurnHandler({
   interpretIntent = interpretReadIntentWithClaude,
   readCalendar = readCalendarThroughExistingHandler,
   fetchAttentionEvidence = fetchAttentionEvidenceThroughServerPath,
+  reasonOverEvidence = reasonOverOperationalEvidenceWithClaude,
   dedupStore = completedTurns,
 } = {}) {
   const coordinateCalendar = createReadOnlyTurnCoordinator({ interpretIntent, readCalendar });
-  const coordinateAttention = createAttentionReadCoordinator({ fetchEvidence: fetchAttentionEvidence });
+  const coordinateAttention = createAttentionReadCoordinator({
+    fetchEvidence: fetchAttentionEvidence,
+    reasonOverEvidence,
+  });
   return async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
     const accountId = await authenticate(req);
@@ -120,6 +125,14 @@ export function createCarsonTurnHandler({
       previousCapability: typeof req.body?.previousCapability === "string" ? req.body.previousCapability : null,
       previousGroundingStatus:
         typeof req.body?.previousGroundingStatus === "string" ? req.body.previousGroundingStatus : null,
+      // Second Brain reasoning conversation state (2026-08-28) — same
+      // non-authoritative trust tier as the two fields above. Never used
+      // for identity/tenant scoping; only passed through to the reasoning
+      // model as classification/selection context.
+      previouslySurfacedEvidenceIds: Array.isArray(req.body?.previouslySurfacedEvidenceIds)
+        ? req.body.previouslySurfacedEvidenceIds.filter((id) => typeof id === "string")
+        : [],
+      priorObjective: typeof req.body?.priorObjective === "string" ? req.body.priorObjective : null,
     };
 
     // Deterministic, model-free classification first (attention_summary_read).

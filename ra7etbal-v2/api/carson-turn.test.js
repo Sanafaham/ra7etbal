@@ -304,6 +304,98 @@ describe("Carson turn handler — attention_summary_read routing (typed hard-gro
   });
 });
 
+describe("Carson turn handler — Second Brain stateful reasoning admission (2026-08-28)", () => {
+  const EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    completeness: "full",
+    needsAttention: [{ id: "task-1", label: "call the dentist", reason: "overdue" }],
+    waiting: [],
+    unresolvedCaptures: [],
+  };
+  const CONTINUATION_BODY = {
+    turnId: "turn-continue-1",
+    providerEventId: "eleven-event-continue-1",
+    transcript: "What else?",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+    previouslySurfacedEvidenceIds: ["task-0"],
+    priorObjective: "reviewing attention list",
+  };
+
+  it("admits a context-only (no direct regex match) message into the reasoning path and threads conversationState through to reasonOverEvidence", async () => {
+    const interpretIntent = vi.fn();
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["task-1"] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req(CONTINUATION_BODY), response);
+
+    expect(interpretIntent).not.toHaveBeenCalled();
+    expect(readCalendar).not.toHaveBeenCalled();
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+    expect(reasonOverEvidence.mock.calls[0][0].conversationState).toMatchObject({
+      priorCapability: "attention_summary_read",
+      priorGroundingStatus: "grounded",
+      previouslySurfacedEvidenceIds: ["task-0"],
+      priorObjective: "reviewing attention list",
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toMatchObject({ handled: true, capability: "attention_summary_read", groundingStatus: "grounded" });
+  });
+
+  it("not_attention falls through to the existing calendar/Claude path, which independently evaluates the same transcript", async () => {
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "tomorrow" });
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "not_attention", selectedEvidenceIds: [] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...CONTINUATION_BODY, transcript: "Send Christopher a message." }), response);
+
+    expect(fetchAttentionEvidence).toHaveBeenCalledOnce();
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+    // Fell through to the calendar/Claude coordinator, which itself found
+    // nothing to claim either — final result is unhandled, exactly what
+    // tells the typed widget to fall through to the normal chat path.
+    expect(interpretIntent).toHaveBeenCalledOnce();
+    expect(response.payload).toMatchObject({ handled: false, code: "unsupported_intent" });
+  });
+
+  it("a message with neither a direct match nor active context never invokes reasonOverEvidence", async () => {
+    const reasonOverEvidence = vi.fn();
+    const fetchAttentionEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent: vi.fn().mockResolvedValue({ capability: "calendar_read", range: "tomorrow" }),
+      readCalendar: vi.fn().mockResolvedValue({ connected: true, events: [] }),
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    await handler(req(TURN), res());
+    expect(reasonOverEvidence).not.toHaveBeenCalled();
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+  });
+});
+
 describe("production-shaped Carson turn through the real Calendar handler", () => {
   it("returns canonical evidence for a connected calendar without any write boundary", async () => {
     const { requests } = configureRealBoundaryFetch({

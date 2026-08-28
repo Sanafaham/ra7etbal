@@ -1,4 +1,6 @@
-import { matchesAttentionIntent, matchesAttentionFollowUp } from "../shared/carson-attention-intent-classifier.js";
+import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
+import { renderAttentionSummary, renderAttentionDecision } from "../shared/carson-attention-summary.js";
+import { validateAttentionDecision } from "./_carson-attention-reasoning.js";
 
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
@@ -137,21 +139,53 @@ export function createReadOnlyTurnCoordinator({ interpretIntent, readCalendar })
   };
 }
 
+function collectAllEvidenceIds(evidence) {
+  return [
+    ...(evidence.needsAttention ?? []),
+    ...(evidence.waiting ?? []),
+    ...(evidence.unresolvedCaptures ?? []),
+  ].map((item) => item.id);
+}
+
 /**
- * Deterministic coordinator for attention_summary_read — the typed
- * hard-grounding boundary. Unlike createReadOnlyTurnCoordinator() above
- * (Claude-based intent interpretation for calendar_read), classification
- * here is the same deterministic regex already used client-side
- * (matchesAttentionIntent, shared/carson-attention-intent-classifier.js) —
- * no model call, no latency/cost for this question class, and one
- * source of truth with the existing client-side guard's classification.
+ * Coordinator for attention_summary_read — the typed hard-grounding +
+ * Second Brain stateful reasoning boundary.
  *
- * fetchEvidence is injected (matches this file's existing dependency-
- * injection convention) — production wiring passes
- * fetchAttentionSummaryForServer from api/_carson-attention-evidence.js.
+ * Two admission paths, deliberately different in mechanism:
+ *
+ * 1. DIRECT intent (matchesAttentionIntent, shared/carson-attention-intent-
+ *    classifier.js) — the same deterministic regex already used
+ *    client-side, no model call, no latency/cost. Unchanged from the
+ *    original hard-grounding slice: fetch fresh evidence, render the full
+ *    result deterministically via renderAttentionSummary.
+ *
+ * 2. ACTIVE GROUNDED ATTENTION CONTEXT (ownerTurn.previousCapability ===
+ *    "attention_summary_read" && ownerTurn.previousGroundingStatus ===
+ *    "grounded") — admitted WITHOUT requiring any regex match on the new
+ *    transcript. This is the 2026-08-28 correction: making a growing
+ *    follow-up regex the intelligence gate would mean adding a new pattern
+ *    for every new phrasing forever, exactly what this reasoning layer
+ *    exists to stop. Once genuine grounded attention context is active,
+ *    the REASONING MODEL decides — from fresh evidence, not memory —
+ *    whether this new message continues the topic (and how: list,
+ *    prioritize, filter, explain, nothing_new, clarify) or is unrelated
+ *    (not_attention, in which case the turn is left unclaimed so the
+ *    normal typed path can handle it).
+ *
+ * Both paths always perform a fresh, authenticated, RLS-scoped retrieval —
+ * previouslySurfacedEvidenceIds/priorObjective are conversational context
+ * for the model only, never a substitute for retrieval and never trusted
+ * for identity/tenant scoping (that remains accountId/authorization only,
+ * verified the same way for every turn regardless of conversation state).
+ *
+ * fetchEvidence and reasonOverEvidence are injected (matches this file's
+ * existing dependency-injection convention) — production wiring passes
+ * fetchAttentionSummaryForServer (api/_carson-attention-evidence.js) and
+ * reasonOverOperationalEvidenceWithClaude (api/_carson-attention-
+ * reasoning.js).
  */
-export function createAttentionReadCoordinator({ fetchEvidence }) {
-  if (typeof fetchEvidence !== "function") {
+export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence }) {
+  if (typeof fetchEvidence !== "function" || typeof reasonOverEvidence !== "function") {
     throw new Error("Carson attention read coordinator dependencies are required.");
   }
 
@@ -162,19 +196,12 @@ export function createAttentionReadCoordinator({ fetchEvidence }) {
     if (ownerTurn.legacyClaimed === true) {
       return { handled: false, status: 409, code: "ownership_collision" };
     }
-    // 2026-08-28 follow-up fix: a genuine continuation ("What else?") is
-    // admitted ONLY when BOTH hold — the server independently re-verifies
-    // the transcript itself against matchesAttentionFollowUp (the client's
-    // claim alone can never admit arbitrary text), AND the client asserts
-    // the immediately preceding turn was a grounded attention_summary_read.
-    // This is classification context only: it never supplies identity,
-    // never bypasses authentication/RLS below, and never substitutes for
-    // the fresh retrieval every admitted turn still performs.
-    const isValidFollowUpContinuation =
-      matchesAttentionFollowUp(ownerTurn.transcript) &&
-      ownerTurn.previousCapability === ATTENTION_CAPABILITY &&
-      ownerTurn.previousGroundingStatus === "grounded";
-    if (!matchesAttentionIntent(ownerTurn.transcript) && !isValidFollowUpContinuation) {
+
+    const isDirectAttentionIntent = matchesAttentionIntent(ownerTurn.transcript);
+    const hasActiveGroundedAttentionContext =
+      ownerTurn.previousCapability === ATTENTION_CAPABILITY && ownerTurn.previousGroundingStatus === "grounded";
+
+    if (!isDirectAttentionIntent && !hasActiveGroundedAttentionContext) {
       return { handled: false, status: 422, code: "unsupported_intent" };
     }
 
@@ -195,26 +222,110 @@ export function createAttentionReadCoordinator({ fetchEvidence }) {
     // fetchAttentionSummaryForServer's own try/catch), but this coordinator
     // does not assume that of an arbitrary injected dependency — a thrown
     // rejection here still resolves to the same honest, code-enforced
-    // failure result as an ok:false evidence object would.
+    // failure result as an ok:false evidence object would. Fresh retrieval
+    // failing is always the honest fallback, regardless of admission path —
+    // no evidence means no factual operational answer, and no reasoning
+    // call is even attempted without evidence to reason over.
     let result;
     try {
       result = await fetchEvidence({ accountId: policy.accountId, authorization: ownerTurn.authorization });
     } catch {
       result = null;
     }
-
     const evidence = result?.evidence ?? null;
     const grounded = evidence?.ok === true;
+
+    if (!grounded) {
+      return {
+        handled: true,
+        status: 502,
+        code: evidence?.code ?? "attention_read_failed",
+        turnId: ownerTurn.turnId,
+        capability: ATTENTION_CAPABILITY,
+        groundingStatus: "failed",
+        evidence,
+        ownerResult:
+          result?.text ?? "I couldn't check what needs your attention right now — the live check didn't complete.",
+      };
+    }
+
+    if (isDirectAttentionIntent) {
+      return {
+        handled: true,
+        status: 200,
+        code: evidence.code,
+        turnId: ownerTurn.turnId,
+        capability: ATTENTION_CAPABILITY,
+        groundingStatus: "grounded",
+        evidence,
+        ownerResult: result.text,
+        surfacedEvidenceIds: collectAllEvidenceIds(evidence),
+        responseIntent: "list",
+      };
+    }
+
+    // Context-only candidate (no direct regex match): the reasoning model
+    // decides relevance/selection/intent over the fresh evidence just
+    // retrieved. It never sees accountId/authorization and cannot
+    // influence retrieval or tenant scoping — it only classifies and
+    // selects among ids already authorized above.
+    let rawDecision;
+    try {
+      rawDecision = await reasonOverEvidence({
+        userMessage: ownerTurn.transcript,
+        conversationState: {
+          priorCapability: ownerTurn.previousCapability ?? null,
+          priorGroundingStatus: ownerTurn.previousGroundingStatus ?? null,
+          previouslySurfacedEvidenceIds: Array.isArray(ownerTurn.previouslySurfacedEvidenceIds)
+            ? ownerTurn.previouslySurfacedEvidenceIds
+            : [],
+          priorObjective: typeof ownerTurn.priorObjective === "string" ? ownerTurn.priorObjective : null,
+        },
+        authorizedEvidence: evidence,
+      });
+    } catch {
+      rawDecision = null;
+    }
+
+    const validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
+
+    if (!validated.ok) {
+      // Reasoning failed/returned invalid output, but fresh evidence IS
+      // valid — fall back to the existing full deterministic render
+      // (truthful, just not intelligently filtered), never a fabricated
+      // or free-form answer.
+      return {
+        handled: true,
+        status: 200,
+        code: evidence.code,
+        turnId: ownerTurn.turnId,
+        capability: ATTENTION_CAPABILITY,
+        groundingStatus: "grounded",
+        evidence,
+        ownerResult: renderAttentionSummary(evidence),
+        surfacedEvidenceIds: collectAllEvidenceIds(evidence),
+        responseIntent: "list",
+      };
+    }
+
+    if (validated.decision.responseIntent === "not_attention") {
+      // Not an error — a resolved, valid decision that this turn does not
+      // belong to the attention topic. Left unclaimed so the normal typed
+      // path (unrelated to this coordinator) can handle it.
+      return { handled: false, status: 200, code: "not_attention" };
+    }
+
     return {
       handled: true,
-      status: grounded ? 200 : 502,
-      code: evidence?.code ?? "attention_read_failed",
+      status: 200,
+      code: evidence.code,
       turnId: ownerTurn.turnId,
       capability: ATTENTION_CAPABILITY,
-      groundingStatus: grounded ? "grounded" : "failed",
+      groundingStatus: "grounded",
       evidence,
-      ownerResult:
-        result?.text ?? "I couldn't check what needs your attention right now — the live check didn't complete.",
+      ownerResult: renderAttentionDecision(evidence, validated.decision),
+      surfacedEvidenceIds: validated.decision.selectedEvidenceIds,
+      responseIntent: validated.decision.responseIntent,
     };
   };
 }
