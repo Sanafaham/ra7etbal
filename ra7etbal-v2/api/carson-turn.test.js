@@ -212,6 +212,98 @@ describe("production-shaped Carson read turn", () => {
   });
 });
 
+describe("Carson turn handler — attention_summary_read routing (typed hard-grounding)", () => {
+  const ATTENTION_TURN = { turnId: "turn-attn-1", providerEventId: "eleven-event-attn-1", transcript: "What needs my attention?" };
+
+  it("routes an attention-classified transcript to the deterministic attention path — Claude/calendar are never invoked", async () => {
+    const interpretIntent = vi.fn();
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full" },
+      text: "Needs your attention: call the dentist.",
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req(ATTENTION_TURN), response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toMatchObject({
+      handled: true,
+      capability: "attention_summary_read",
+      groundingStatus: "grounded",
+      ownerResult: "Needs your attention: call the dentist.",
+    });
+    expect(interpretIntent).not.toHaveBeenCalled();
+    expect(readCalendar).not.toHaveBeenCalled();
+    expect(fetchAttentionEvidence).toHaveBeenCalledWith({ accountId: "account-a", authorization: "Bearer session-a" });
+  });
+
+  it("never falls through to the calendar/Claude path even when the grounded retrieval fails — no plausible answer is substituted", async () => {
+    const interpretIntent = vi.fn();
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: false, code: "attention_read_failed", completeness: "none" },
+      text: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req(ATTENTION_TURN), response);
+
+    expect(response.statusCode).toBe(502);
+    expect(response.payload).toMatchObject({
+      handled: true,
+      groundingStatus: "failed",
+      ownerResult: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+    expect(interpretIntent).not.toHaveBeenCalled();
+    expect(readCalendar).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated attention turn before any retrieval, exactly like calendar turns", async () => {
+    const fetchAttentionEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue(null),
+      fetchAttentionEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+    await handler(req(ATTENTION_TURN), response);
+    expect(response.statusCode).toBe(401);
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+  });
+
+  it("a non-attention transcript still reaches the existing calendar path unchanged", async () => {
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "calendar_read", range: "tomorrow" });
+    const readCalendar = vi.fn().mockResolvedValue({ connected: true, events: [] });
+    const fetchAttentionEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload).toMatchObject({ capability: "calendar_read" });
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+  });
+});
+
 describe("production-shaped Carson turn through the real Calendar handler", () => {
   it("returns canonical evidence for a connected calendar without any write boundary", async () => {
     const { requests } = configureRealBoundaryFetch({

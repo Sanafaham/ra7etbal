@@ -3,6 +3,7 @@ import {
   READ_CAPABILITY_REGISTRY,
   authorizeReadIntent,
   createReadOnlyTurnCoordinator,
+  createAttentionReadCoordinator,
   normalizeCalendarEvidence,
   renderCalendarOwnerResult,
   validateStructuredIntent,
@@ -17,8 +18,13 @@ const OWNER_TURN = {
 };
 
 describe("Carson read-only turn contracts", () => {
-  it("registers only the existing calendar read capability", () => {
-    expect(READ_CAPABILITY_REGISTRY).toEqual({ calendar_read: { permission: "read" } });
+  it("registers exactly the calendar and attention-summary read capabilities", () => {
+    // 2026-08-28, Second Brain typed hard-grounding slice: attention_summary_read
+    // was deliberately added alongside the existing calendar_read capability.
+    expect(READ_CAPABILITY_REGISTRY).toEqual({
+      calendar_read: { permission: "read" },
+      attention_summary_read: { permission: "read" },
+    });
   });
 
   it("accepts strict calendar intent and rejects unsupported or malformed output", () => {
@@ -111,5 +117,96 @@ describe("Carson composed read-only turn", () => {
     const result = await coordinate(OWNER_TURN);
     expect(result).toMatchObject({ handled: true, status: 502, code: "calendar_read_failed", ownerResult: "I couldn't read your calendar right now." });
     expect(result.ownerResult).not.toContain("event");
+  });
+});
+
+describe("Carson deterministic attention-summary read coordinator (typed hard-grounding)", () => {
+  const ATTENTION_TURN = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-attn-1",
+    transcript: "What needs my attention?",
+  };
+
+  it("classifies deterministically — no model call — and returns the grounded evidence server result verbatim", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full" },
+      text: "Needs your attention: call the dentist.",
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate(ATTENTION_TURN);
+
+    expect(fetchEvidence).toHaveBeenCalledOnce();
+    expect(fetchEvidence).toHaveBeenCalledWith({ accountId: "account-a", authorization: "Bearer session-a" });
+    expect(result).toMatchObject({
+      handled: true,
+      status: 200,
+      capability: "attention_summary_read",
+      groundingStatus: "grounded",
+      ownerResult: "Needs your attention: call the dentist.",
+    });
+  });
+
+  it("leaves a non-attention transcript unclaimed — the calendar path (or anything else) can still handle it", async () => {
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate({ ...ATTENTION_TURN, transcript: "What's on my calendar tomorrow?" });
+
+    expect(result).toEqual({ handled: false, status: 422, code: "unsupported_intent" });
+    expect(fetchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on retrieval failure — a truthful, honest result, never a fall-through to another answer path", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: false, code: "attention_read_failed", completeness: "none" },
+      text: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate(ATTENTION_TURN);
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: 502,
+      code: "attention_read_failed",
+      groundingStatus: "failed",
+      ownerResult: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+  });
+
+  it("fails closed even when the injected retrieval dependency throws outright", async () => {
+    const fetchEvidence = vi.fn().mockRejectedValue(new Error("boom"));
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate(ATTENTION_TURN);
+
+    expect(result.handled).toBe(true);
+    expect(result.groundingStatus).toBe("failed");
+    expect(result.ownerResult).toBe("I couldn't check what needs your attention right now — the live check didn't complete.");
+  });
+
+  it("rejects an unauthenticated turn before any retrieval is attempted", async () => {
+    // Matches createReadOnlyTurnCoordinator's own convention: a missing
+    // accountId fails the initial owner-turn shape check (400,
+    // invalid_owner_turn) before intent/authorization is even evaluated.
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate({ ...ATTENTION_TURN, accountId: "" });
+
+    expect(result).toEqual({ handled: false, status: 400, code: "invalid_owner_turn" });
+    expect(fetchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("rejects an old/new ownership collision before retrieval", async () => {
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate({ ...ATTENTION_TURN, legacyClaimed: true });
+
+    expect(result).toEqual({ handled: false, status: 409, code: "ownership_collision" });
+    expect(fetchEvidence).not.toHaveBeenCalled();
   });
 });

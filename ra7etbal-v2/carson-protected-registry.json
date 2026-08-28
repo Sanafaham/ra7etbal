@@ -1228,12 +1228,16 @@
       "contract": "A supported read-only Carson turn has one account-bound authoritative owner transcript, one strict structured intent, one policy decision, one invocation of an existing read capability, one evidence object, and one canonical owner result. Unsupported intents remain owned by the legacy conversational path. Once this coordinator handles a turn, no legacy/model response may independently claim or contradict its result. The Stage 1 capability is limited to calendar reads and cannot perform writes or consequential actions.",
       "business_importance": "high — this is the first bounded proof of the Corrected Path C brain boundary and prevents split ownership, malformed model output, cross-account reuse, duplicate provider events, and unsupported-intent leakage before any consequential capability is admitted",
       "production_entry_points": [
-        "api/carson-turn.js"
+        "api/carson-turn.js",
+        "src/components/home/ElevenLabsAgentWidget.tsx (sendTypedMessage — attention_summary_read interception only, 2026-08-28)"
       ],
       "files_functions": [
         "api/carson-turn.js:createCarsonTurnHandler / interpretReadIntentWithClaude / readCalendarThroughExistingHandler",
         "api/_carson-read-turn.js:createReadOnlyTurnCoordinator / validateStructuredIntent / normalizeCalendarEvidence / renderCalendarOwnerResult",
         "src/lib/carson-turn-client.ts:dispatchCarsonReadTurn",
+        "api/carson-turn.js:fetchAttentionEvidenceThroughServerPath (2026-08-28 addition — Second Brain typed hard-grounding slice)",
+        "api/_carson-read-turn.js:createAttentionReadCoordinator (2026-08-28 addition — deterministic, non-LLM classification for attention_summary_read)",
+        "api/_carson-attention-evidence.js:fetchAttentionEvidenceForServer / fetchAttentionSummaryForServer (2026-08-28 addition, new file)",
         "shared/carson-morning-brief-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/carson-unresolved-captures-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/carson-attention-summary.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
@@ -1257,6 +1261,8 @@
         "api/_carson-read-turn.test.js",
         "api/carson-turn.test.js",
         "src/lib/carson-turn-client.test.ts",
+        "api/_carson-attention-evidence.test.js",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
         "src/lib/reminder-time-shared-parity.test.ts"
       ],
       "protected_suite": true,
@@ -1269,9 +1275,10 @@
       "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback",
       "verification_status": "Stage 1 code-only proof registered 2026-08-19. Its highest test exercises the composed API boundary through the real Supabase-authentication code, strict Claude intent code, Calendar adapter, and real existing googleCalendarHandler, with only external Supabase/Anthropic/Google HTTP responses mocked. The Calendar adapter supplies the real GET path's status/json/setHeader response contract. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
       "unresolved": [
-        "The live ElevenLabs widget is deliberately not wired to this route in Stage 1, so production voice traffic remains on the existing path until a separately approved cutover.",
+        "The live ElevenLabs widget was not wired to this route in Stage 1 (calendar_read only). As of 2026-08-28, the TYPED channel is wired for attention_summary_read only (ElevenLabsAgentWidget.tsx sendTypedMessage) — voice and calendar_read both remain on their pre-existing paths, unchanged.",
         "Deduplication is bounded and process-local because Stage 1 is read-only. It prevents duplicate calls within one warm instance, including concurrent duplicate events, but is not durable across instances and is explicitly insufficient for future consequential actions.",
-        "Only Calendar read is admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary."
+        "Calendar read and attention_summary_read (2026-08-28) are the only intents admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary.",
+        "2026-08-28: attention_summary_read was wired into this route/coordinator specifically for the typed channel (ElevenLabsAgentWidget.tsx sendTypedMessage intercepts before conversation.sendUserMessage()). Voice is explicitly untouched and continues to rely solely on the existing client-side carson-attention-intent-guard.ts backstop. This is a deliberate, approved channel split — see RA7ETBAL_STATE.md for the architecture decision record — not a partial/incomplete rollout."
       ]
     },
     {
@@ -1334,7 +1341,8 @@
       "business_importance": "high — first Second Brain vertical-slice proof that Production Carson can answer an operational question from live, structured, evidence-only retrieval rather than the frozen session-start ra7etbal_state/daily_brief snapshot or model inference; Phase 1 closes a real architectural gap where anything the owner entrusted to Notes/To-dos was permanently invisible to every Carson operational surface (confirmed by forensic review: zero references to carson_notes/carson_todos in morning-brief.ts, night-sweep.ts, daily-brief.ts, or the pre-Phase-1 carson-operations-center.ts) — explicitly scoped read-only-plus-dedup-write and additive; Morning Brief, Night Sweep, Needs You, Waiting, and History are deliberately untouched in this phase pending live production evidence",
       "production_entry_points": [
         "src/components/home/ElevenLabsAgentWidget.tsx (get_items_needing_attention clientTool; act_on_note's four conversion branches)",
-        "src/routes/Inbox.tsx (Discuss with Carson button; Make Task / Delegate / Add to Calendar / Remind Me conversion handlers)"
+        "src/routes/Inbox.tsx (Discuss with Carson button; Make Task / Delegate / Add to Calendar / Remind Me conversion handlers)",
+        "api/carson-turn.js (typed channel only, 2026-08-28 — server-owned hard-grounding boundary; see carson_read_only_turn_coordinator)"
       ],
       "files_functions": [
         "src/lib/carson-operations-center.ts:fetchAttentionEvidence / renderAttentionSummary / fetchAttentionSummary",
@@ -1347,6 +1355,7 @@
         "src/routes/Inbox.tsx:handleMakeTask / handleDelegateSubmit / handleCalendarSubmit / handleRemindSubmit dismissCarsonNote wiring; handleSendToCarson (Discuss with Carson)",
         "src/lib/carson-status-policy.ts:CARSON_STATUS_POLICY's Status answer structure section — routes the general live-attention question class to get_items_needing_attention instead of answering from its own template/context (2026-08-25 production-failure fix)",
         "src/lib/carson-attention-intent-guard.ts:matchesAttentionIntent / matchesAttentionFollowUp / resolveAttentionGuardedMessage — deterministic, code-level backstop that substitutes a live get_items_needing_attention-equivalent result for the model's own reply when the tool did not actually run for a matching turn (2026-08-25 production-failure fix)",
+        "api/_carson-attention-evidence.js:fetchAttentionEvidenceForServer / fetchAttentionSummaryForServer (2026-08-28 — server-side port of this capability's exact queries, authenticated with the caller's own JWT, never service-role; see carson_read_only_turn_coordinator for the coordinator/routing layer)",
         "shared/carson-morning-brief-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/carson-unresolved-captures-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/carson-attention-summary.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
@@ -1393,6 +1402,10 @@
         "src/lib/carson-attention-intent-guard.test.ts",
         "src/lib/carson-status-policy.test.ts",
         "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts",
+        "api/_carson-attention-evidence.test.js",
+        "api/_carson-read-turn.test.js",
+        "api/carson-turn.test.js",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
         "src/lib/reminder-time-shared-parity.test.ts"
       ],
       "protected_suite": false,
@@ -1413,7 +1426,8 @@
         "carsonCanHandle and safeToIgnore evidence fields are always empty — no existing signal supports either classification yet; revisit only if a real data signal emerges, not by inventing heuristics.",
         "The action-wording heuristic (ACTION_LEAD_PATTERN) is a shallow, bounded, explicit verb list — not semantic understanding. A note phrased without a leading action verb but genuinely actionable (or vice versa) will be misclassified. This is a documented, deliberate Phase 1 limitation, not an oversight — true semantic classification would require either an LLM classification pass or materially more architecture, explicitly deferred per product decision.",
         "Morning Brief, Night Sweep, Needs You, Waiting, and History remain untouched by this Phase 1 addition per explicit product scope — proactive resurfacing through those surfaces is Phase 2, gated on live production evidence from this Phase 1 pull-based (get_items_needing_attention only) slice.",
-        "No production canary and no live owner acceptance test have been performed as of this registration — both remain required before this capability can be marked PRODUCTION VERIFIED."
+        "No production canary and no live owner acceptance test have been performed as of this registration — both remain required before this capability can be marked PRODUCTION VERIFIED.",
+        "2026-08-28, Second Brain typed hard-grounding slice: for the TYPED channel only, tool invocation is now code-enforced rather than model/prompt-controlled — the app classifies the utterance deterministically (matchesAttentionIntent/matchesAttentionFollowUp) before ever calling conversation.sendUserMessage(), retrieves evidence server-side via api/carson-turn.js (JWT-scoped, RLS-authoritative, never service-role), and displays the canonical result directly, skipping ElevenLabs entirely for this class. This closes the grounding gap named above for typed only. VOICE IS UNCHANGED: it still relies solely on the pre-existing client-side carson-attention-intent-guard.ts backstop (post-hoc substitution, not pre-generation prevention) — the model/prompt-controlled limitation described above still fully applies to voice. This was an explicit, approved scope decision (Custom LLM / full pre-generation voice control was evaluated and deliberately not pursued — see RA7ETBAL_STATE.md), not an oversight."
       ]
     }
   ]

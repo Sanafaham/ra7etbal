@@ -1,8 +1,12 @@
+import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
+
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
+const ATTENTION_CAPABILITY = "attention_summary_read";
 
 export const READ_CAPABILITY_REGISTRY = Object.freeze({
   [SUPPORTED_CAPABILITY]: Object.freeze({ permission: "read" }),
+  [ATTENTION_CAPABILITY]: Object.freeze({ permission: "read" }),
 });
 
 export function validateStructuredIntent(value) {
@@ -129,6 +133,76 @@ export function createReadOnlyTurnCoordinator({ interpretIntent, readCalendar })
       capability: policy.capability,
       evidence,
       ownerResult: renderCalendarOwnerResult(evidence),
+    };
+  };
+}
+
+/**
+ * Deterministic coordinator for attention_summary_read — the typed
+ * hard-grounding boundary. Unlike createReadOnlyTurnCoordinator() above
+ * (Claude-based intent interpretation for calendar_read), classification
+ * here is the same deterministic regex already used client-side
+ * (matchesAttentionIntent, shared/carson-attention-intent-classifier.js) —
+ * no model call, no latency/cost for this question class, and one
+ * source of truth with the existing client-side guard's classification.
+ *
+ * fetchEvidence is injected (matches this file's existing dependency-
+ * injection convention) — production wiring passes
+ * fetchAttentionSummaryForServer from api/_carson-attention-evidence.js.
+ */
+export function createAttentionReadCoordinator({ fetchEvidence }) {
+  if (typeof fetchEvidence !== "function") {
+    throw new Error("Carson attention read coordinator dependencies are required.");
+  }
+
+  return async function coordinateAttentionTurn(ownerTurn) {
+    if (!ownerTurn?.accountId || !ownerTurn?.turnId || !ownerTurn?.transcript?.trim()) {
+      return { handled: false, status: 400, code: "invalid_owner_turn" };
+    }
+    if (ownerTurn.legacyClaimed === true) {
+      return { handled: false, status: 409, code: "ownership_collision" };
+    }
+    if (!matchesAttentionIntent(ownerTurn.transcript)) {
+      return { handled: false, status: 422, code: "unsupported_intent" };
+    }
+
+    const policy = authorizeReadIntent({
+      accountId: ownerTurn.accountId,
+      intent: { capability: ATTENTION_CAPABILITY },
+    });
+    if (!policy.ok) {
+      return {
+        handled: true,
+        status: 401,
+        code: policy.code,
+        ownerResult: "Please sign in again before I check what needs your attention.",
+      };
+    }
+
+    // The server retrieval itself never throws (see
+    // fetchAttentionSummaryForServer's own try/catch), but this coordinator
+    // does not assume that of an arbitrary injected dependency — a thrown
+    // rejection here still resolves to the same honest, code-enforced
+    // failure result as an ok:false evidence object would.
+    let result;
+    try {
+      result = await fetchEvidence({ accountId: policy.accountId, authorization: ownerTurn.authorization });
+    } catch {
+      result = null;
+    }
+
+    const evidence = result?.evidence ?? null;
+    const grounded = evidence?.ok === true;
+    return {
+      handled: true,
+      status: grounded ? 200 : 502,
+      code: evidence?.code ?? "attention_read_failed",
+      turnId: ownerTurn.turnId,
+      capability: ATTENTION_CAPABILITY,
+      groundingStatus: grounded ? "grounded" : "failed",
+      evidence,
+      ownerResult:
+        result?.text ?? "I couldn't check what needs your attention right now — the live check didn't complete.",
     };
   };
 }
