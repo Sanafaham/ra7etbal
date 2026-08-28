@@ -612,6 +612,30 @@ describe("Carson rank ordering is deterministic by dueAt, never model-authored (
     );
   });
 
+  it("[rank 1b/6] an exact dueAt tie is ordered by a stable secondary key (id) — not by the model's selectedEvidenceIds order (2026-08-28 CodeRabbit finding)", async () => {
+    const tieEvidence = {
+      ...RANK_EVIDENCE,
+      overdueReminders: [
+        { id: "tie-a", label: "task A", type: "reminder", status: "pending", dueAt: "2026-08-25T14:14:23.686Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
+        { id: "tie-b", label: "task B", type: "reminder", status: "pending", dueAt: "2026-08-25T14:14:23.686Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
+      ],
+    };
+    const fetchEvidence = vi.fn().mockResolvedValue({ evidence: tieEvidence, text: "..." });
+    // Selection order is reversed relative to id order — if the tie fell
+    // back to input order instead of a stable key, this would render
+    // task B before task A.
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["tie-b", "tie-a"],
+      rankedEvidenceIds: ["tie-b", "tie-a"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    expect(result.ownerResult).toBe("In order: task A (Overdue by 3 days); then task B (Overdue by 3 days).");
+  });
+
   it("[rank 2/6] items with identical rounded dueDescription are still correctly ordered by their exact dueAt (the exact Turn 3 production tie)", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockResolvedValue({

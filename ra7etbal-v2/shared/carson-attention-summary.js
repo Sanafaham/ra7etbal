@@ -338,9 +338,15 @@ export function renderAttentionDecision(evidence, decision) {
   // "Overdue by 3 days" items with different real dueAt values).
   if (responseIntent === "rank") {
     if (selectedItems.every(hasComparableDueAt)) {
-      const sorted = [...selectedItems].sort(
-        (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
-      );
+      const sorted = [...selectedItems].sort((a, b) => {
+        const dueAtDiff = new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+        // A genuine dueAt tie falls back to id — without this, a tie's
+        // order would still come from selectedItems' original order,
+        // which is the model's own selectedEvidenceIds sequence (a stable
+        // sort preserves input order on equal keys), reintroducing exactly
+        // the model-authored-order problem this fix removes (CodeRabbit).
+        return dueAtDiff !== 0 ? dueAtDiff : a.id.localeCompare(b.id);
+      });
       return `In order: ${sorted.map(describeItem).join("; then ")}.`;
     }
     return `I don't have a reliable way to put those in order — here's what's active: ${renderByCategory(selectedItems)}`;
