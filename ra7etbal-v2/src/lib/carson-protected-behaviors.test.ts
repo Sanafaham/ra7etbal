@@ -505,21 +505,23 @@ describe("Acknowledgement wording — communication reroute keeps message-style,
     expect(block).toContain("const successText = `Done. I asked ${person.name} to ${taskText}.`;");
   });
 
-  it("CARSON_VOICE_SESSION_GUARD distinguishes plain-message wording from real-delegation wording for Talk to Carson", async () => {
+  it("CARSON_VOICE_SESSION_GUARD preserves the canonical returned wording for both real delegations and plain messages", async () => {
     const { CARSON_VOICE_SESSION_GUARD } = await import("./carson-status-policy");
-    // Real delegation phrasing preserved (2026-08-25: genericized to a
-    // [Name] placeholder — see carson-attention-intent-guard.ts's sibling
-    // fix — the distinction being tested is task-style vs message-style
-    // wording, not the literal named example).
+    // The tool result already carries the approved task-style or message-style
+    // wording. Voice must use that same canonical result instead of creating a
+    // second paraphrase or adding a lifecycle promise the result did not make.
     expect(CARSON_VOICE_SESSION_GUARD).toContain(
+      "speak the returned result text exactly, word-for-word",
+    );
+    expect(CARSON_VOICE_SESSION_GUARD).toContain(
+      "If the result describes a plain message sent on the user's behalf, speak that returned delivery result exactly as well",
+    );
+    expect(CARSON_VOICE_SESSION_GUARD).toContain(
+      "Never add reply-tracking or follow-up language unless the returned result itself says it is guaranteed",
+    );
+    expect(CARSON_VOICE_SESSION_GUARD).not.toContain(
       "[Name] has it. I'll follow up if they don't confirm.",
     );
-    // New plain-message phrasing, and an explicit instruction not to use
-    // task-style wording for it.
-    expect(CARSON_VOICE_SESSION_GUARD).toContain(
-      "I sent [Name] the message.",
-    );
-    expect(CARSON_VOICE_SESSION_GUARD).toContain('Never say "[name] has it" for a plain message');
   });
 });
 
