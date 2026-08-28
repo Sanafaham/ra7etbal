@@ -141,7 +141,24 @@ export function createCarsonTurnHandler({
     const pendingResult = (async () => {
       const attentionResult = await coordinateAttention(ownerTurn);
       if (attentionResult.handled) return attentionResult;
-      return coordinateCalendar(ownerTurn);
+      const calendarResult = await coordinateCalendar(ownerTurn);
+      if (calendarResult.handled) return calendarResult;
+      // Neither coordinator claimed this turn. If the attention coordinator
+      // specifically classified it as not_attention (a genuine, meaningful
+      // decision from active grounded context — distinct from having no
+      // candidacy at all) AND calendar's own rejection is its generic
+      // "not for me either" (unsupported_intent), that not_attention
+      // classification must survive to the caller: the typed widget only
+      // knows to fall through to the normal typed path on
+      // code:"not_attention", and calendar's generic rejection must not
+      // silently overwrite it. But a genuine calendar-side validation
+      // failure (invalid_owner_turn, ownership_collision — a different,
+      // more fundamental problem with the request itself) must never be
+      // masked by an unrelated not_attention result (CodeRabbit finding).
+      if (attentionResult.code === "not_attention" && calendarResult.code === "unsupported_intent") {
+        return attentionResult;
+      }
+      return calendarResult;
     })();
 
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);
