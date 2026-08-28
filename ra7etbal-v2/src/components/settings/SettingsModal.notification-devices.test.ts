@@ -35,7 +35,7 @@ describe("SettingsModal — notification devices management (Orphan Resolution)"
   it("renders NotificationDevicesPanel for the notification-devices view, passing userId and a back handler", () => {
     const branch = blockBetween(
       'if (view === "notification-devices")',
-      "return (\n    <Modal open={open} onClose={close} title=\"Settings\">\n      <SettingsList",
+      'return (\n    <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>\n        <SettingsList',
     );
     expect(branch).toContain("<NotificationDevicesPanel userId={userId} onBack={() => setView(\"list\")} />");
   });

@@ -7,6 +7,8 @@ interface Props {
   title: string;
   /** Disable Escape + backdrop dismissal while a save is in-flight. */
   dismissable?: boolean;
+  /** Optional presentation-only layer rendered inside the sheet chrome. */
+  backgroundLayer?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -31,6 +33,7 @@ export default function Modal({
   onClose,
   title,
   dismissable = true,
+  backgroundLayer,
   children,
 }: Props) {
   useEffect(() => {
@@ -84,10 +87,14 @@ export default function Modal({
         className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
       />
       <div
-        className="relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-border bg-cream shadow-xl sm:rounded-3xl"
+        className={
+          "relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-border shadow-xl sm:rounded-3xl " +
+          (backgroundLayer ? "carson-light-sheet-surface" : "bg-cream")
+        }
         style={{ maxHeight: "calc(100dvh - 1rem)" }}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-border px-5 pt-5 pb-3">
+        {backgroundLayer}
+        <header className="relative z-10 flex items-start justify-between gap-4 border-b border-border px-5 pt-5 pb-3">
           <h2 style={{ fontFamily: "var(--font-display)" }} className="text-[22px] font-semibold text-ink">{title}</h2>
           {dismissable && (
             <button
@@ -108,7 +115,7 @@ export default function Modal({
           )}
         </header>
         <div
-          className="overflow-y-auto px-5 pt-4"
+          className="relative z-10 overflow-y-auto px-5 pt-4"
           // Respect iOS home-indicator safe area at the bottom of the inner
           // scroll area so the last button never sits under the bar.
           style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}

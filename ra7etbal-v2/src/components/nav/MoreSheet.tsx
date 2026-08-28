@@ -1,4 +1,5 @@
 import { signOut } from "../../lib/session";
+import CarsonAmbientBackground from "../carson/CarsonAmbientBackground";
 
 interface Props {
   open: boolean;
@@ -28,15 +29,19 @@ export default function MoreSheet({ open, onClose, onSettings }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="More options"
-        className="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-warm-white shadow-2xl"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)" }}
+        className="carson-light-sheet-surface fixed inset-0 z-50 overflow-hidden shadow-2xl"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 8px)",
+        }}
       >
+        <CarsonAmbientBackground />
         {/* Drag handle */}
-        <div className="flex justify-center pb-2 pt-3">
+        <div className="relative z-10 flex justify-center pb-2 pt-3">
           <div className="h-1 w-10 rounded-full bg-ink/15" aria-hidden="true" />
         </div>
 
-        <div className="px-4 pb-2">
+        <div className="relative z-10 px-4 pb-2">
           <ul className="divide-y divide-sage/10">
             <li>
               <button

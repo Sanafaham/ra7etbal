@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
 import Modal from "../ui/Modal";
+import CarsonAmbientBackground from "../carson/CarsonAmbientBackground";
 import { archiveCompleted } from "../../lib/archive";
 import { clearUserData } from "../../lib/cleanup";
 import { supabase } from "../../lib/supabase";
@@ -33,6 +34,8 @@ interface Props {
   onCalendarReconnected?: () => void;
   onCalendarDisconnected?: () => void;
 }
+
+const settingsAmbientLayer = <CarsonAmbientBackground className="z-[1]" />;
 
 type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
 
@@ -152,8 +155,8 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
 
   if (view === "confirm-calendar-disconnect") {
     return (
-      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
-        <ConfirmPane
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy} backgroundLayer={settingsAmbientLayer}>
+          <ConfirmPane
           title="Disconnect Google Calendar?"
           body="Carson will not be able to read or manage your calendar until you reconnect."
           confirmLabel="Disconnect"
@@ -167,15 +170,15 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
             setView("list");
           }}
           onConfirm={() => void handleCalendarDisconnect()}
-        />
+          />
       </Modal>
     );
   }
 
   if (view === "confirm-archive") {
     return (
-      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
-        <ConfirmPane
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy} backgroundLayer={settingsAmbientLayer}>
+          <ConfirmPane
           title="Archive completed?"
           body="This moves your completed tasks and their linked messages out of the active workspace. You'll still see them in View history."
           confirmLabel="Archive completed"
@@ -189,15 +192,15 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
             setView("list");
           }}
           onConfirm={() => void handleArchive()}
-        />
+          />
       </Modal>
     );
   }
 
   if (view === "confirm-clear") {
     return (
-      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
-        <ConfirmPane
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy} backgroundLayer={settingsAmbientLayer}>
+          <ConfirmPane
           title="Clear history?"
           body="This will delete your tasks, messages, follow-ups, and completed history. Your People and account will stay."
           confirmLabel="Clear history"
@@ -211,30 +214,30 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
             setView("list");
           }}
           onConfirm={() => void handleClear()}
-        />
+          />
       </Modal>
     );
   }
 
   if (view === "delegation-rules") {
     return (
-      <Modal open={open} onClose={close} title="Settings">
-        <HouseholdDelegationRulesPanel onBack={() => setView("list")} />
+      <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+          <HouseholdDelegationRulesPanel onBack={() => setView("list")} />
       </Modal>
     );
   }
 
   if (view === "notification-devices") {
     return (
-      <Modal open={open} onClose={close} title="Settings">
-        <NotificationDevicesPanel userId={userId} onBack={() => setView("list")} />
+      <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+          <NotificationDevicesPanel userId={userId} onBack={() => setView("list")} />
       </Modal>
     );
   }
 
   return (
-    <Modal open={open} onClose={close} title="Settings">
-      <SettingsList
+    <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+        <SettingsList
         userId={userId}
         notice={notice?.kind === "success" ? notice.text : null}
         displayName={profileStore.displayName}
@@ -278,7 +281,7 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           onClose();
           navigate("/debug");
         }}
-      />
+        />
     </Modal>
   );
 }

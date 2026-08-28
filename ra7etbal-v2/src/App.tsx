@@ -24,6 +24,7 @@ import Terms from "./routes/Terms";
 import BottomNav from "./components/nav/BottomNav";
 import MoreSheet from "./components/nav/MoreSheet";
 import CarsonLivePill from "./components/carson/CarsonLivePill";
+import CarsonAmbientBackground from "./components/carson/CarsonAmbientBackground";
 import ConfirmationNotices from "./components/home/ConfirmationNotices";
 import ElevenLabsAgentWidget from "./components/home/ElevenLabsAgentWidget";
 import SettingsModal from "./components/settings/SettingsModal";
@@ -491,6 +492,7 @@ export default function App() {
   usePushSubscriptionRotationSync();
   useGlobalNotificationsRefresh();
 
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [calendarRevoked, setCalendarRevoked] = useState(false);
@@ -508,17 +510,20 @@ export default function App() {
   } = useCarsonStore();
 
   const showNav = useShowNavInner();
+  const { pathname } = useLocation();
   const unreadNotifications = useNotificationsStore(selectUnreadNotificationCount);
 
   return (
-    <div className="relative min-h-dvh overflow-x-hidden bg-cream text-ink">
+    <div
+      className={
+        "relative overflow-x-hidden bg-cream text-ink " +
+        (pathname === "/"
+          ? "h-dvh overflow-y-auto overscroll-y-none"
+          : "min-h-dvh")
+      }
+    >
       {showNav && (
-        <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
-          <div
-            className="absolute inset-0 bg-cover bg-[center_18%] opacity-[0.14] brightness-[1.05] contrast-[1.12] saturate-[0.78] sm:bg-[center_14%]"
-            style={{ backgroundImage: "url('/carson-ambient-subject-v1.png')" }}
-          />
-        </div>
+        <CarsonAmbientBackground fixed className="z-0" />
       )}
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <header className="relative z-10 mx-auto max-w-3xl px-5 pt-4" style={{ paddingTop: "max(18px, env(safe-area-inset-top))" }}>
@@ -568,7 +573,15 @@ export default function App() {
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="relative z-10 mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 160px)" }}>
+      <main
+        className="relative z-10 mx-auto mt-3 max-w-3xl px-5"
+        style={{
+          paddingBottom:
+            pathname === "/"
+              ? "calc(env(safe-area-inset-bottom) + 84px)"
+              : "calc(env(safe-area-inset-bottom) + 160px)",
+        }}
+      >
         <ConfirmationNotices />
 
         {/* Hidden Carson diagnostics — self-gates on /debug/carson or
@@ -626,21 +639,24 @@ export default function App() {
           "fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden shadow-2xl " +
           (carsonCallStatus !== "idle" && carsonChannel === "voice"
             ? "bg-[#090c0c] text-white"
-            : "rounded-t-3xl bg-warm-white")
+            : "carson-light-sheet-surface rounded-t-3xl")
         }
         style={{
-          top: carsonCallStatus === "idle" ? "48dvh" : carsonChannel === "text" ? "8dvh" : "0",
+          top: carsonCallStatus === "idle" ? "0" : carsonChannel === "text" ? "8dvh" : "0",
           transform: carsonOpen ? "translateY(0)" : "translateY(110%)",
           transition: "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), top 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
         aria-hidden={!carsonOpen}
       >
+        {carsonOpen && (carsonCallStatus === "idle" || carsonCallStatus === "connecting") && (
+          <CarsonAmbientBackground />
+        )}
         {carsonCallStatus !== "idle" && carsonChannel === "voice" && (
           <div className="pointer-events-none absolute inset-0" aria-hidden="true">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_58%_50%_at_50%_32%,rgba(191,171,126,0.08),transparent_74%)]" />
             <div
-              className="absolute inset-0 bg-cover bg-[center_10%] opacity-[0.28] brightness-[0.92] contrast-[1.16] saturate-[0.72] sm:bg-[center_14%]"
+              className="absolute inset-0 bg-cover bg-[center_10%] opacity-[0.28] brightness-[0.92] contrast-[1.16] saturate-[0.72] sm:bg-[center_14%] md:bg-contain md:bg-center md:bg-no-repeat"
               style={{ backgroundImage: "url('/carson-ambient-subject-v1.png')" }}
             />
             <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,6,7,0.05),transparent_52%,rgba(5,6,7,0.58))]" />

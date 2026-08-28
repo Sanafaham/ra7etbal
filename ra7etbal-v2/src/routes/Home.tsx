@@ -90,7 +90,6 @@ export default function Home() {
     <section
       data-testid="home-root"
       className="mx-auto max-w-2xl"
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
       <div data-testid="home-briefing" className="mt-0 px-2 text-center sm:mt-4">
