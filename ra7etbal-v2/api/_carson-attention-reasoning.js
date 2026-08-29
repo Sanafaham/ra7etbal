@@ -27,6 +27,7 @@ const RESPONSE_INTENTS = [
   "rank",
   "contrast",
   "explain",
+  "defer_timing",
   "nothing_new",
   "clarify",
   "not_attention",
@@ -86,13 +87,19 @@ function buildToolSchema(evidenceIds) {
       "overdue reminders, upcoming reminders, things waiting on others, other active items, or notes/to-dos). " +
       "Each evidence item already carries its own true category — you select/rank/contrast ids, you never " +
       "invent a category or a fact. You may only select, rank, or reference evidence ids that were supplied " +
-      "to you. Never invent an id. Use 'contrast' when the question asks for a genuine distinction (e.g. what " +
-      "can wait vs what can't) — selectedEvidenceIds holds the primary answer set, contrastedEvidenceIds holds " +
-      "the secondary set being contrasted against. Use 'rank' when asked to order/prioritize — " +
-      "rankedEvidenceIds must be an ordering of selectedEvidenceIds. If the message is not about the owner's " +
-      "operational state at all (e.g. a new unrelated request), return responseIntent 'not_attention'. " +
-      "You must always include every field below — use an empty array [] or null when a field does not " +
-      "apply to your decision; never omit a field.",
+      "to you. Never invent an id. Use 'contrast' when the question asks for a genuine two-sided distinction " +
+      "between two sets of items you can both name from the evidence (e.g. items assigned to one person vs " +
+      "another) — selectedEvidenceIds holds the primary set, contrastedEvidenceIds holds the secondary set. " +
+      "Use 'defer_timing' when the question is about deferral, postponement, or timing — e.g. 'what can wait', " +
+      "'what can I leave until later', 'what doesn't need doing yet', 'is there anything I can postpone' — put " +
+      "every active item relevant to the question in selectedEvidenceIds; do NOT decide yourself which of them " +
+      "are overdue, not due yet, or safe to defer — the server derives that from each item's own due date, " +
+      "never from its category or from your judgment, because due timing alone does not establish true " +
+      "importance or safety to postpone. Use 'rank' when asked to order/prioritize — rankedEvidenceIds must be " +
+      "an ordering of selectedEvidenceIds. If the message is not about the owner's operational state at all " +
+      "(e.g. a new unrelated request), return responseIntent 'not_attention'. You must always include every " +
+      "field below — use an empty array [] or null when a field does not apply to your decision; never omit " +
+      "a field.",
     strict: true,
     input_schema: {
       type: "object",
