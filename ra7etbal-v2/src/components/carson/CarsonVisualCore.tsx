@@ -95,7 +95,7 @@ export default function CarsonVisualCore({
       const cx = width / 2;
       const cy = height / 2;
       const minSide = Math.min(width, height);
-      const baseRadius = minSide * 0.205;
+      const baseRadius = minSide * (immersive ? 0.25 : 0.19);
       const reduced = reducedMotion.matches;
       const ambient = reduced ? 0 : Math.sin(t * 0.72) * 0.018;
       const response = smoothedEnergy * 0.18;
@@ -112,6 +112,33 @@ export default function CarsonVisualCore({
       atmosphere.addColorStop(1, "rgba(8,10,10,0)");
       context.fillStyle = atmosphere;
       context.fillRect(0, 0, width, height);
+
+      const rippleStrength = visualState === "speaking"
+        ? 0.34 + smoothedEnergy * 0.22
+        : visualState === "listening"
+          ? 0.3 + smoothedEnergy * 0.12
+          : visualState === "thinking"
+            ? 0.18
+            : 0.09;
+      const rippleSpeed = visualState === "speaking"
+        ? 0.62 + smoothedEnergy * 0.34
+        : visualState === "listening"
+          ? 0.42
+          : visualState === "thinking"
+            ? 0.24
+            : 0.1;
+      for (let ripple = 0; ripple < 4; ripple += 1) {
+        const phase = reduced ? ripple / 4 : (t * rippleSpeed + ripple / 4) % 1;
+        const rippleRadius = radius * (1.25 + phase * 1.18);
+        const thinkingPulse = visualState === "thinking" && !reduced
+          ? 0.78 + Math.sin(t * 1.8) * 0.22
+          : 1;
+        context.beginPath();
+        context.arc(cx, cy, rippleRadius, 0, Math.PI * 2);
+        context.strokeStyle = `rgba(${r},${g},${b},${rippleStrength * (1 - phase) * thinkingPulse})`;
+        context.lineWidth = visualState === "speaking" ? 1.25 : visualState === "listening" ? 1 : 0.85;
+        context.stroke();
+      }
 
       context.save();
       context.translate(cx, cy);
@@ -203,7 +230,7 @@ export default function CarsonVisualCore({
         "relative mx-auto flex w-full flex-col items-center overflow-hidden " +
         (immersive
           ? "h-full max-w-[560px] bg-transparent px-2 pb-2 pt-0"
-          : "max-w-[420px] rounded-[28px] border border-white/10 bg-[#0b0e0e] px-4 pb-4 pt-3 shadow-[0_24px_80px_-36px_rgba(10,12,12,0.85)]")
+          : "max-w-[420px] rounded-[28px] border border-white/10 bg-[radial-gradient(ellipse_42%_90%_at_50%_45%,rgba(11,14,14,0.18),rgba(11,14,14,0.68)_78%)] px-4 pb-4 pt-3 shadow-[0_24px_80px_-36px_rgba(10,12,12,0.85)] backdrop-blur-[1px]")
       }
       aria-label={`Carson is ${CARSON_VISUAL_LABELS[state].toLowerCase()}`}
       data-carson-visual-state={state}
@@ -213,8 +240,8 @@ export default function CarsonVisualCore({
         ref={canvasRef}
         className={
           immersive
-            ? "relative h-[clamp(260px,38dvh,340px)] w-full flex-none"
-            : "relative h-[176px] w-full sm:h-[210px]"
+            ? "relative mt-[clamp(148px,19dvh,176px)] h-[clamp(280px,40dvh,360px)] w-full flex-none md:mt-[clamp(260px,30dvh,340px)]"
+            : "relative mt-[10px] h-[100px] w-full flex-none sm:mt-[14px] sm:h-[110px]"
         }
         aria-hidden="true"
       />

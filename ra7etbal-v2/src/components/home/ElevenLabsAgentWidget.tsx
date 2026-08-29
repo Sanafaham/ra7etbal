@@ -8126,12 +8126,12 @@ export default function ElevenLabsAgentWidget({
         aria-label="Attach photos"
       />
 
-      {channel === "voice" && (
-        <div className={status === "idle" ? "mb-3 w-full px-3 sm:px-5" : "min-h-0 w-full flex-1 px-1 sm:px-5"}>
+      {(status === "idle" || status === "connecting" || channel === "voice") && (
+        <div className={status === "idle" ? "mb-3 mt-20 w-full px-3 sm:px-5" : "min-h-0 w-full flex-1 px-1 sm:px-5"}>
           <CarsonVisualCore
             state={visualState}
             active={isOpen}
-            immersive={status !== "idle"}
+            immersive={status !== "idle" && channel === "voice"}
             getInputByteFrequencyData={getInputByteFrequencyData}
             getOutputByteFrequencyData={getOutputByteFrequencyData}
             getInputVolume={getInputVolume}
@@ -8334,7 +8334,7 @@ export default function ElevenLabsAgentWidget({
             ) : (
               <PulsingDot color="bg-sage" />
             )}
-            <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em]">
+            <span className="sr-only">
               {visualState === "complete"
                 ? "Handled"
                 : visualState === "error"

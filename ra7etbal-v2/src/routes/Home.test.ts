@@ -3,6 +3,23 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SOURCE = readFileSync(join(__dirname, "Home.tsx"), "utf-8");
+const APP_SOURCE = readFileSync(join(__dirname, "../App.tsx"), "utf-8");
+
+describe("Home.tsx — stable viewport composition", () => {
+  it("uses one route-aware bottom-nav allowance instead of nested Home padding", () => {
+    expect(SOURCE).not.toContain('paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)"');
+    expect(APP_SOURCE).toContain('pathname === "/"');
+    expect(APP_SOURCE).toContain('"calc(env(safe-area-inset-bottom) + 84px)"');
+    expect(APP_SOURCE).toContain('"calc(env(safe-area-inset-bottom) + 160px)"');
+  });
+
+  it("contains iOS rubber-band movement in a Home-only dynamic viewport scroller", () => {
+    expect(APP_SOURCE).toContain('pathname === "/"');
+    expect(APP_SOURCE).toContain('"h-dvh overflow-y-auto overscroll-y-none"');
+    expect(APP_SOURCE).toContain('"min-h-dvh"');
+    expect(APP_SOURCE).not.toContain("document.body.style.overflow = \"hidden\"");
+  });
+});
 
 /**
  * Clear My Head (the capture textarea/photo-attach/submit flow on Home) was
