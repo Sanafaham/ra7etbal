@@ -101,7 +101,7 @@ describe('Golden contract [1] — substitute_review is the correct trigger state
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }, 'POST'), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }, 'POST'), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'substitute_review' }));
 
