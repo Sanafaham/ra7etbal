@@ -34,8 +34,8 @@ describe("Carson V1 final presentation", () => {
     expect(appSource.match(/carson-ambient-subject-v1\.png/g)).toHaveLength(1);
     expect(ambientSource.match(/carson-ambient-subject-v1\.png/g)).toHaveLength(1);
     expect(ambientSource).toContain('bg-cover bg-[center_18%]');
-    expect(ambientSource).toContain('density === "content" ? "opacity-[0.09]" : "opacity-[0.14]"');
-    expect(ambientSource).toContain('brightness-[1.04] contrast-[1.16] saturate-[0.90] sepia-[0.14]');
+    expect(ambientSource).toContain('density === "content" ? "opacity-[0.15]" : "opacity-[0.26]"');
+    expect(ambientSource).toContain('brightness-[0.78] contrast-[1.18] saturate-[1.08] sepia-[0.18]');
     expect(ambientSource).toContain('sm:bg-[center_14%]');
     expect(appSource).toContain('["/updates", "/active", "/inbox", "/actions", "/messages", "/notes", "/people", "/notifications", "/history"].includes(pathname)');
     expect(appSource).toContain('<CarsonAmbientBackground />');
@@ -81,10 +81,10 @@ describe("Carson V1 final presentation", () => {
   });
 
   it("uses the shared clean ivory tokens across app light surfaces", () => {
-    expect(globalsSource).toContain("--color-cream: #F3EEE6;");
-    expect(globalsSource).toContain("--color-warm-white: #FCFAF6;");
+    expect(globalsSource).toContain("--color-cream: #151310;");
+    expect(globalsSource).toContain("--color-warm-white: #26221E;");
     expect(globalsSource).toContain(".carson-light-sheet-surface");
-    expect(globalsSource).toContain("background: rgba(250, 247, 242, 0.992)");
+    expect(globalsSource).toContain("background: rgba(21, 19, 16, 0.992)");
     expect(globalsSource).toContain("isolation: isolate");
     expect(ambientSource).toContain('pointer-events-none ${fixed ? "fixed" : "absolute"}');
     expect(appSource).toContain('top: carsonCallStatus === "idle" ? "0"');

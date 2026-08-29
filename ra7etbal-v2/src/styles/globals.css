@@ -5,32 +5,32 @@
      accent. `sage` is repointed to the dark ink accent (was green) so
      every existing bg-sage/text-sage/border-sage utility across the app
      renders as the new primary/active color without per-usage edits. */
-  --color-cream: #F3EEE6;
-  --color-sand: #E8DDC8;
-  --color-stone: #D8C9AC;
-  --color-gold: #B2965F;
-  --color-espresso: #3A2E1F;
-  --color-ink: #1F1F1F;
-  --color-sage: #1F1F1F;
+  --color-cream: #151310;
+  --color-sand: #3A342D;
+  --color-stone: #5A5045;
+  --color-gold: #BDA36B;
+  --color-espresso: #0F0E0C;
+  --color-ink: #F3EEE6;
+  --color-sage: #332E28;
 
   /* Extended palette — V2 design system */
-  --color-warm-white: #FCFAF6;
-  --color-charcoal: #2A2927;
-  --color-ivory: #FCFAF6;
-  --color-card: #FCFAF6;
-  --color-surface: #FCFAF6;
-  --color-surface-subtle: #F8F4ED;
+  --color-warm-white: #26221E;
+  --color-charcoal: #211E1A;
+  --color-ivory: #181512;
+  --color-card: #26221E;
+  --color-surface: #26221E;
+  --color-surface-subtle: #1D1A17;
   --color-danger: #A8402F;
-  --color-muted: #A8A29E;
-  --color-text: #1F1F1F;
-  --color-text-soft: #494540;
-  --color-text-muted: #6B645C;
-  --color-nav-muted: #514B44;
-  --color-gold-soft: #D7BD8C;
-  --color-gold-dark: #8B6F3E;
+  --color-muted: #9D9488;
+  --color-text: #F3EEE6;
+  --color-text-soft: #C8BFB3;
+  --color-text-muted: #9F9589;
+  --color-nav-muted: #B4AA9E;
+  --color-gold-soft: #D8C18F;
+  --color-gold-dark: #9D814F;
   --color-gold-tint: #B89B5E14;
-  --color-border: #D3C9BB;
-  --color-border-strong: #C2B5A2;
+  --color-border: #4A4239;
+  --color-border-strong: #6B5D4D;
 
   /* Type stack. Display = elegant serif (Cormorant Garamond).
      Script = handwritten italic (Caveat). Body = Inter. */
@@ -66,7 +66,7 @@ body {
    subject-isolated portrait while preserving the warm, soft surface. */
 .carson-light-sheet-surface {
   isolation: isolate;
-  background: rgba(250, 247, 242, 0.992);
+  background: rgba(21, 19, 16, 0.992);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }

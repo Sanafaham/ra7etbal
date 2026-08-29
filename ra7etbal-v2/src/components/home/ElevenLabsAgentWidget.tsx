@@ -8150,7 +8150,7 @@ export default function ElevenLabsAgentWidget({
         <div className={
           "mb-2 flex max-w-full items-center gap-2 rounded-full border px-2 py-1.5 shadow-sm backdrop-blur-md " +
           (status === "idle"
-            ? "border-border bg-white/90"
+            ? "border-border bg-surface/90"
             : "border-white/10 bg-black/30")
         }>
           <div className="flex min-w-0 items-center gap-1.5">
@@ -8214,7 +8214,7 @@ export default function ElevenLabsAgentWidget({
               "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-gold/40 bg-gold/10 text-gold"
-                : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
+                : "border-border bg-surface text-text-soft hover:border-border-strong hover:text-ink")
             }
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -8229,10 +8229,10 @@ export default function ElevenLabsAgentWidget({
             type="button"
             onClick={startCall}
             aria-label="Talk now"
-            className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
+            className="flex items-center gap-2 rounded-full border border-border-strong bg-surface px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(0,0,0,0.35)] transition hover:bg-surface-subtle active:scale-95"
           >
-            <MicIcon className="h-4 w-4 text-charcoal" />
-            <span className="text-[13px] font-semibold text-charcoal">
+            <MicIcon className="h-4 w-4 text-gold-soft" />
+            <span className="text-[13px] font-semibold text-ink">
               Talk now
             </span>
           </button>
@@ -8247,7 +8247,7 @@ export default function ElevenLabsAgentWidget({
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
             </svg>
-            <span className="text-[13px] font-semibold text-charcoal">Type</span>
+            <span className="text-[13px] font-semibold text-ink">Type</span>
           </button>
 
           {/* WhatsApp — only when a destination + visibility switch are configured */}
@@ -8257,10 +8257,10 @@ export default function ElevenLabsAgentWidget({
               target="_blank"
               rel="noopener noreferrer"
               aria-label="WhatsApp"
-              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-sm transition hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] active:scale-95"
+              className="flex items-center gap-2 rounded-full border border-border-strong bg-surface px-4 py-2.5 shadow-sm transition hover:bg-surface-subtle active:scale-95"
             >
               <WhatsAppIcon className="h-4 w-4" />
-              <span className="text-[13px] font-semibold text-charcoal">WhatsApp</span>
+              <span className="text-[13px] font-semibold text-ink">WhatsApp</span>
             </a>
           )}
 
@@ -8269,10 +8269,10 @@ export default function ElevenLabsAgentWidget({
             <a
               href={carsonCallUrl}
               aria-label="Call Carson"
-              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-sm transition hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] active:scale-95"
+              className="flex items-center gap-2 rounded-full border border-border-strong bg-surface px-4 py-2.5 shadow-sm transition hover:bg-surface-subtle active:scale-95"
             >
-              <PhoneIcon className="h-4 w-4 text-charcoal" />
-              <span className="text-[13px] font-semibold text-charcoal">Call Carson</span>
+              <PhoneIcon className="h-4 w-4 text-gold-soft" />
+              <span className="text-[13px] font-semibold text-ink">Call Carson</span>
             </a>
           )}
         </div>

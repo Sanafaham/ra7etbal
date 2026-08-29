@@ -92,7 +92,7 @@ export default function History() {
           <div className="mt-3">
             <Link
               to="/"
-              className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-surface-subtle"
             >
               ← Back to Home
             </Link>

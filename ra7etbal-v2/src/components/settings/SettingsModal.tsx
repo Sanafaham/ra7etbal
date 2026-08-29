@@ -598,7 +598,7 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
       <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/60">
         {label}
       </h3>
-      <div className="overflow-hidden rounded-2xl border border-border bg-white/80 shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface/90 shadow-sm">
         {children}
       </div>
     </section>

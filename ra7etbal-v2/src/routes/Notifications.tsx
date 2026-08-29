@@ -56,7 +56,7 @@ export default function Notifications() {
           <button
             type="button"
             onClick={() => void markAll()}
-            className="shrink-0 rounded-full border border-sage/25 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
+            className="shrink-0 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
           >
             Mark all read
           </button>

@@ -56,7 +56,7 @@ export default function BottomNav() {
           aria-label="Home"
           className={({ isActive }) =>
             "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (isActive ? "text-sage" : "text-nav-muted hover:text-ink")
+            (isActive ? "text-gold-soft" : "text-nav-muted hover:text-ink")
           }
         >
           {({ isActive }) => (
@@ -76,7 +76,7 @@ export default function BottomNav() {
           aria-label="What's Happening"
           className={
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (updatesIsActive ? "text-sage" : "text-nav-muted hover:text-ink")
+            (updatesIsActive ? "text-gold-soft" : "text-nav-muted hover:text-ink")
           }
         >
           <span className="relative">
@@ -95,7 +95,7 @@ export default function BottomNav() {
           aria-label="People"
           className={({ isActive }) =>
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (isActive ? "text-sage" : "text-nav-muted hover:text-ink")
+            (isActive ? "text-gold-soft" : "text-nav-muted hover:text-ink")
           }
         >
           {({ isActive }) => (
@@ -116,7 +116,7 @@ export default function BottomNav() {
           type="button"
           onClick={() => setCarsonOpen(true)}
           aria-label="Tell Carson"
-          className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-sage" : "text-nav-muted hover:text-ink")}
+          className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-gold-soft" : "text-nav-muted hover:text-ink")}
         >
           <span className="relative">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={carsonOpen ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
