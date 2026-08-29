@@ -170,7 +170,7 @@ export default function Home() {
           data-testid="home-talk-to-carson-button"
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-0.5 rounded-[14px] border border-border bg-gold/[0.08] px-6 py-4 shadow-[0_1px_2px_rgba(31,31,31,0.05)] transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-0.5 rounded-[14px] border border-border-strong bg-surface/90 px-6 py-4 shadow-[0_1px_2px_rgba(31,31,31,0.05)] transition active:scale-[0.982]"
         >
           <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-gold/[0.12] ring-1 ring-gold/30 transition group-hover:bg-gold/[0.18] group-hover:ring-gold/55">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-gold">
@@ -192,7 +192,7 @@ export default function Home() {
         type="button"
         data-testid="home-view-whats-happening"
         onClick={() => navigate("/updates")}
-        className="mt-6 block w-full rounded-full border border-border bg-white/60 px-4 py-3 text-center text-[13px] font-semibold text-ink transition hover:bg-cream"
+        className="mt-6 block w-full rounded-full border border-border-strong bg-surface/85 px-4 py-3 text-center text-[13px] font-semibold text-ink transition hover:bg-cream"
       >
         View What's Happening
       </button>

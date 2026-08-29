@@ -33,10 +33,11 @@ describe("Carson V1 final presentation", () => {
   it("uses the single text-free portrait asset for faint app and immersive voice layers", () => {
     expect(appSource.match(/carson-ambient-subject-v1\.png/g)).toHaveLength(1);
     expect(ambientSource.match(/carson-ambient-subject-v1\.png/g)).toHaveLength(1);
-    expect(ambientSource).toContain('bg-cover bg-[center_18%] opacity-[0.14]');
-    expect(ambientSource).toContain('brightness-[1.05] contrast-[1.12] saturate-[0.78]');
+    expect(ambientSource).toContain('bg-cover bg-[center_18%]');
+    expect(ambientSource).toContain('density === "content" ? "opacity-[0.15]" : "opacity-[0.26]"');
+    expect(ambientSource).toContain('brightness-[0.78] contrast-[1.18] saturate-[1.08] sepia-[0.18]');
     expect(ambientSource).toContain('sm:bg-[center_14%]');
-    expect(appSource).toContain('<CarsonAmbientBackground fixed className="z-0" />');
+    expect(appSource).toContain('["/updates", "/active", "/inbox", "/actions", "/messages", "/notes", "/people", "/notifications", "/history"].includes(pathname)');
     expect(appSource).toContain('<CarsonAmbientBackground />');
     expect(appSource).toContain('opacity-[0.28]');
     expect(appSource).toContain('brightness-[0.92] contrast-[1.16] saturate-[0.72]');
@@ -80,10 +81,10 @@ describe("Carson V1 final presentation", () => {
   });
 
   it("uses the shared clean ivory tokens across app light surfaces", () => {
-    expect(globalsSource).toContain("--color-cream: #F8F5EF;");
-    expect(globalsSource).toContain("--color-warm-white: #FAF7F2;");
+    expect(globalsSource).toContain("--color-cream: #151310;");
+    expect(globalsSource).toContain("--color-warm-white: #26221E;");
     expect(globalsSource).toContain(".carson-light-sheet-surface");
-    expect(globalsSource).toContain("background: rgba(250, 247, 242, 0.992)");
+    expect(globalsSource).toContain("background: rgba(21, 19, 16, 0.992)");
     expect(globalsSource).toContain("isolation: isolate");
     expect(ambientSource).toContain('pointer-events-none ${fixed ? "fixed" : "absolute"}');
     expect(appSource).toContain('top: carsonCallStatus === "idle" ? "0"');

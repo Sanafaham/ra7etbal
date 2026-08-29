@@ -653,7 +653,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
       {/* ── List error ── */}
       {listError && listStatus !== "loading" && (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <p className="rounded-xl border border-danger/35 bg-danger/10 px-4 py-3 text-sm text-danger">
           {listError}
         </p>
       )}
@@ -667,7 +667,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
       {/* ── Create form ── */}
       {LEGACY_ROUTINE_MANUAL_CREATION_ENABLED && showForm && (
-        <div className="rounded-2xl border border-sand bg-white/80 p-5 shadow-sm space-y-4">
+        <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4">
           <h2 className="text-base font-semibold text-ink">New Routine</h2>
 
           {/* Type picker */}
@@ -702,7 +702,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 value={form.reminderTitle}
                 onChange={(e) => setField("reminderTitle", e.target.value)}
                 placeholder="e.g. Review your priorities"
-                className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
+                className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
               />
             </div>
           )}
@@ -727,7 +727,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   <select
                     value={form.delegatePersonId}
                     onChange={(e) => setField("delegatePersonId", e.target.value)}
-                    className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                    className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
                   >
                     <option value="">Select a person…</option>
                     {delegatablePeople.map((p) => (
@@ -747,7 +747,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onChange={(e) => setField("delegateMessage", e.target.value)}
                   placeholder="e.g. Please send the weekly status update to the team."
                   rows={3}
-                  className="w-full resize-none rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
+                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
                 />
               </div>
             </div>
@@ -773,7 +773,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   <select
                     value={form.messagePersonId}
                     onChange={(e) => setField("messagePersonId", e.target.value)}
-                    className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                    className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
                   >
                     <option value="">Select a recipient…</option>
                     {delegatablePeople.map((p) => (
@@ -793,7 +793,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onChange={(e) => setField("messageBody", e.target.value)}
                   placeholder={`e.g. Good morning Loulya, I love you. Please keep me posted on your day.`}
                   rows={4}
-                  className="w-full resize-none rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
+                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
                 />
                 <p className="text-[11px] text-ink/40">
                   Sent verbatim — not rewritten or modified.
@@ -835,7 +835,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                     max={365}
                     value={form.intervalDays}
                     onChange={(e) => setField("intervalDays", Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="w-24 rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                    className="w-24 rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
                   />
                   <span className="text-sm text-ink/50">days</span>
                 </div>
@@ -849,7 +849,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               <select
                 value={form.scheduleDay}
                 onChange={(e) => setField("scheduleDay", parseInt(e.target.value, 10))}
-                className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
               >
                 {WEEKDAYS.map((day, i) => (
                   <option key={day} value={i}>
@@ -867,7 +867,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 type="time"
                 value={form.scheduleTime}
                 onChange={(e) => setField("scheduleTime", e.target.value)}
-                className="rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                className="rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
               />
             </div>
           </div>
@@ -882,13 +882,13 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value, nameEdited: true }))}
               placeholder="Auto-filled — edit if you want"
-              className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
+              className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
             />
           </div>
 
           {/* Form error */}
           {formError && (
-            <p className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            <p className="rounded-xl border border-danger/35 bg-danger/10 px-3.5 py-2.5 text-sm text-danger">
               {formError}
             </p>
           )}
@@ -924,7 +924,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
       {/* ── Empty state ── */}
       {showEmpty && (
-        <div className="rounded-2xl border border-sand bg-white/60 px-5 py-10 text-center">
+        <div className="rounded-2xl border border-border bg-surface-subtle px-5 py-10 text-center">
           <p className="text-sm text-ink/50">
             {LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE}
           </p>
@@ -1143,7 +1143,7 @@ function AutomationCard({
   const isPaused = automation.status === "paused";
 
   return (
-    <div className={`rounded-2xl border border-sand border-l-4 ${state.border} bg-white/80 px-4 py-3.5 shadow-sm transition`}>
+    <div className={`rounded-2xl border border-border border-l-4 ${state.border} bg-surface px-4 py-3.5 shadow-sm transition`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1 space-y-1">
 
@@ -1290,13 +1290,13 @@ function RoutineCard({
     routine.type === "message"  ? "Message"  : "Delegation";
   const typeBadgeClass =
     routine.type === "reminder" ? "bg-stone/40 text-espresso/70" :
-    routine.type === "message"  ? "bg-blue-50 text-blue-600"     :
+    routine.type === "message"  ? "bg-sky-400/10 text-sky-300"  :
     "bg-sage/15 text-sage";
 
   return (
     <div
-      className={`rounded-2xl border bg-white/80 px-4 py-3.5 shadow-sm transition ${
-        routine.enabled ? "border-sand" : "border-sand/50 opacity-60"
+      className={`rounded-2xl border bg-surface px-4 py-3.5 shadow-sm transition ${
+        routine.enabled ? "border-border" : "border-border/60 opacity-60"
       }`}
     >
       <div className="flex items-start gap-3">

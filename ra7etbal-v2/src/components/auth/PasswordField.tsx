@@ -34,7 +34,7 @@ export default function PasswordField({
         className={
           srOnlyLabel
             ? "sr-only"
-            : "text-xs font-medium uppercase tracking-wide text-ink/60"
+            : "text-xs font-medium uppercase tracking-wide text-text-soft"
         }
       >
         {label}
@@ -48,7 +48,7 @@ export default function PasswordField({
           placeholder={placeholder}
           autoComplete={autoComplete}
           disabled={disabled}
-          className="w-full rounded-xl border border-border bg-white px-4 py-3 pr-12 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full rounded-xl border border-border bg-surface-subtle px-4 py-3 pr-12 text-base text-ink shadow-sm outline-none transition placeholder:text-text-muted focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
         <button
           type="button"
@@ -56,7 +56,7 @@ export default function PasswordField({
           disabled={disabled}
           aria-label={visible ? "Hide password" : "Show password"}
           aria-pressed={visible}
-          className="absolute inset-y-0 right-0 flex items-center px-3 text-lg text-ink/60 transition hover:text-ink disabled:opacity-50"
+          className="absolute inset-y-0 right-0 flex items-center px-3 text-lg text-text-soft transition hover:text-ink disabled:opacity-50"
         >
           {visible ? "🙈" : "👁"}
         </button>

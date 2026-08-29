@@ -93,11 +93,11 @@ export default function MessageCard({
   return (
     <article
       className={
-        "rounded-2xl border bg-white/85 p-4 shadow-sm transition " +
+        "rounded-2xl border bg-surface/90 p-4 shadow-sm transition " +
         (isConfirmed ? "border-emerald-200" : "border-sage/30")
       }
     >
-      <header className="flex items-center justify-between gap-2 text-xs text-ink/55">
+      <header className="flex items-center justify-between gap-2 text-xs text-text-soft">
         <span className="font-medium text-ink/80">→ {message.recipient}</span>
         <div className="flex items-center gap-2">
           {isConfirmed && (
@@ -106,7 +106,7 @@ export default function MessageCard({
             </span>
           )}
           {isWaiting && (
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
+            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
               Waiting for confirmation
             </span>
           )}
@@ -153,7 +153,7 @@ export default function MessageCard({
           type="button"
           onClick={() => void remove()}
           disabled={busy}
-          className="ml-auto inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+          className="ml-auto inline-flex items-center gap-2 rounded-full border border-danger/35 bg-surface-subtle px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 disabled:opacity-50"
         >
           {busy && <Spinner size={12} />}
           <span>Delete</span>

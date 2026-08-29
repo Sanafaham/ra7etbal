@@ -59,7 +59,7 @@ export default function Reset() {
   }
 
   return (
-    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-white/80 p-6 shadow-sm">
+    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-surface p-6 shadow-sm">
       <header className="space-y-1">
         <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[28px] font-semibold leading-tight tracking-[-0.005em] text-ink">Set a new password</h1>
         <p className="text-[13px] text-text-soft">
@@ -84,7 +84,7 @@ export default function Reset() {
           type="submit"
           disabled={!canSubmit}
           aria-busy={submitting}
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-base font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting && <Spinner size={16} />}
           <span>{submitting ? "Updating…" : "Update password"}</span>

@@ -141,7 +141,7 @@ export default function Auth({
         : "Create account";
 
   return (
-    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-white/80 p-6 shadow-sm">
+    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-surface p-6 shadow-sm">
       <header className="space-y-1">
         <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[28px] font-semibold leading-tight tracking-[-0.005em] text-ink">
           {mode === "signin" ? "Welcome back" : "Create your account"}
@@ -157,7 +157,7 @@ export default function Auth({
         <div
           role="tablist"
           aria-label="Auth mode"
-          className="grid grid-cols-2 gap-1 rounded-full border border-border bg-cream/60 p-1"
+          className="grid grid-cols-2 gap-1 rounded-full border border-border bg-surface-subtle p-1"
         >
           {(["signin", "signup"] as const).map((m) => (
             <button
@@ -171,7 +171,7 @@ export default function Auth({
                 "rounded-full px-3 py-2 text-sm font-medium transition " +
                 (mode === m
                   ? "bg-sage text-white shadow-sm"
-                  : "text-ink/70 hover:text-ink")
+                  : "text-text-soft hover:text-ink")
               }
             >
               {m === "signin" ? "Sign in" : "Create account"}
@@ -181,7 +181,7 @@ export default function Auth({
       )}
 
       {!publicSignupEnabled && (
-        <p className="rounded-xl border border-border bg-cream/60 px-4 py-3 text-center text-sm text-ink/70">
+        <p className="rounded-xl border border-border bg-surface-subtle px-4 py-3 text-center text-sm text-text-soft">
           Ra7etBal is currently invite-only. Existing approved users can sign in.
         </p>
       )}
@@ -191,7 +191,7 @@ export default function Auth({
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor={nameId}
-              className="text-xs font-medium uppercase tracking-wide text-ink/60"
+              className="text-xs font-medium uppercase tracking-wide text-text-soft"
             >
               Your name
             </label>
@@ -203,7 +203,7 @@ export default function Auth({
               placeholder="What should Carson call you?"
               autoComplete="name"
               disabled={submitting || sendingReset}
-              className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+              className="w-full rounded-xl border border-border bg-surface-subtle px-4 py-3 text-base text-ink shadow-sm outline-none transition placeholder:text-text-muted focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
             />
           </div>
         )}
@@ -211,7 +211,7 @@ export default function Auth({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={emailId}
-            className="text-xs font-medium uppercase tracking-wide text-ink/60"
+            className="text-xs font-medium uppercase tracking-wide text-text-soft"
           >
             Email
           </label>
@@ -224,7 +224,7 @@ export default function Auth({
             autoComplete="email"
             inputMode="email"
             disabled={submitting || sendingReset}
-            className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+            className="w-full rounded-xl border border-border bg-surface-subtle px-4 py-3 text-base text-ink shadow-sm outline-none transition placeholder:text-text-muted focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
           />
         </div>
 
@@ -242,7 +242,7 @@ export default function Auth({
               type="button"
               onClick={handleForgot}
               disabled={sendingReset || submitting}
-              className="text-xs font-medium text-sage transition hover:underline disabled:opacity-50"
+              className="text-xs font-medium text-gold-soft transition hover:text-gold hover:underline disabled:opacity-50"
             >
               {sendingReset ? "Sending…" : "Forgot password?"}
             </button>
@@ -255,20 +255,20 @@ export default function Auth({
           type="submit"
           disabled={!canSubmit}
           aria-busy={submitting}
-          className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-base font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting && <Spinner size={16} />}
           <span>{submitLabel}</span>
         </button>
       </form>
 
-      <p className="text-center text-[11px] text-ink/40">
+      <p className="text-center text-[11px] text-text-muted">
         By continuing you agree to our{" "}
-        <Link to="/terms" className="underline underline-offset-2 hover:text-ink/60">
+        <Link to="/terms" className="underline underline-offset-2 hover:text-text-soft">
           Terms
         </Link>{" "}
         and{" "}
-        <Link to="/privacy" className="underline underline-offset-2 hover:text-ink/60">
+        <Link to="/privacy" className="underline underline-offset-2 hover:text-text-soft">
           Privacy Policy
         </Link>
         .

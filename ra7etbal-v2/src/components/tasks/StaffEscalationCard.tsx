@@ -24,7 +24,7 @@ export interface StaffEscalationCardProps {
 
 export default function StaffEscalationCard({ escalation, now }: StaffEscalationCardProps) {
   return (
-    <article className="rounded-2xl border border-rose-300/60 bg-white/85 p-4 shadow-sm">
+    <article className="rounded-2xl border border-danger/40 bg-surface p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
         <span className="text-sm font-medium text-ink">{escalation.staffName}</span>
         <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
@@ -41,7 +41,7 @@ export default function StaffEscalationCard({ escalation, now }: StaffEscalation
         </div>
       )}
 
-      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
+      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-text-soft">
         "{escalation.inboundText}"
       </p>
 

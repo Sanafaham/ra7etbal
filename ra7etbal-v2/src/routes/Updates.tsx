@@ -357,7 +357,7 @@ export default function Updates() {
                 "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-4 py-2 text-[13.5px] font-semibold transition " +
                 (activeTab === tab.id
                   ? "border-sage bg-sage text-white"
-                  : "border-border text-ink hover:bg-ink/[0.03]")
+                  : "border-border-strong bg-surface-subtle/70 text-ink hover:bg-surface")
               }
             >
               <span
@@ -395,7 +395,7 @@ export default function Updates() {
       {activeTab === "needs-you" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.needsAttention.length === 0 && visibleStaffEscalations.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
               Nothing needs your attention right now.
             </div>
           ) : (
@@ -476,7 +476,7 @@ export default function Updates() {
       {activeTab === "waiting" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.waitingOnOthers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
               Nothing is waiting on others right now.
             </div>
           ) : (
@@ -535,7 +535,7 @@ export default function Updates() {
           </div>
 
           {doneTasks.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
               No completed items yet.
             </div>
           ) : (
@@ -574,7 +574,7 @@ export default function Updates() {
               type="button"
               onClick={() => setConfirmingClearHistory(false)}
               disabled={clearingHistory}
-              className="rounded-full border border-border bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+              className="rounded-full border border-border bg-surface px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-surface-subtle disabled:opacity-50"
             >
               Cancel
             </button>

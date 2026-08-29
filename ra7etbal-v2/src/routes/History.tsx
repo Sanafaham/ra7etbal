@@ -64,7 +64,7 @@ export default function History() {
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink">History</h1>
-          <p className="text-sm text-ink/60">
+          <p className="text-sm text-text-soft">
             Past completed coordination — confirmed and archived items.
           </p>
         </div>
@@ -87,12 +87,12 @@ export default function History() {
       )}
 
       {!initialLoading && tasks.length === 0 && status === "ready" && (
-        <div className="rounded-2xl border border-dashed border-sage/40 bg-white/60 p-8 text-center text-sm text-ink/70">
+        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/80 p-8 text-center text-sm text-text-soft">
           Nothing in history yet. Confirmed and archived items will appear here.
           <div className="mt-3">
             <Link
               to="/"
-              className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-surface-subtle"
             >
               ← Back to Home
             </Link>

@@ -49,8 +49,8 @@ export default function HistoryCard({ task, message }: Props) {
   }, [task.proof_image_path]);
 
   return (
-    <article className="rounded-2xl border border-sage/20 bg-white/80 p-4 shadow-sm">
-      <header className="flex items-center justify-between gap-2 text-xs text-ink/55">
+    <article className="rounded-2xl border border-border bg-surface/90 p-4 shadow-sm">
+      <header className="flex items-center justify-between gap-2 text-xs text-text-soft">
         <span className="font-medium uppercase tracking-wide">
           {TYPE_LABEL[task.type] ?? task.type}
         </span>
@@ -77,19 +77,19 @@ export default function HistoryCard({ task, message }: Props) {
       )}
 
       {message?.content && (
-        <p className="mt-2 rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/70">
+        <p className="mt-2 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-text-soft">
           “{message.content}”
         </p>
       )}
 
-      <footer className="mt-2 flex items-center gap-2 text-[11px] text-ink/55">
+      <footer className="mt-2 flex items-center gap-2 text-[11px] text-text-soft">
         {isDone && (
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
             Confirmed done
           </span>
         )}
         {isArchivedOnly && (
-          <span className="rounded-full border border-sage/20 bg-cream/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/55">
+          <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-soft">
             Archived
           </span>
         )}
