@@ -12,6 +12,46 @@ const QUALITY_MODEL = 'claude-sonnet-4-6';
 export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain', 'fraud_suspected', 'substitute_review'];
 
 /**
+ * Strips an optional leading "<bucket>/" prefix the same way
+ * downloadImageAsBase64 does, so a scope check below applies to the exact
+ * object path that will actually be read from Storage.
+ */
+function stripBucketPrefix(path) {
+  return path.startsWith(`${BUCKET}/`) ? path.slice(`${BUCKET}/`.length) : path;
+}
+
+/**
+ * Supplemental security review (2026-08-29) — task-confirm is an
+ * unauthenticated public endpoint (access is gated only by possession of
+ * the taskId link); proofImagePaths arrives directly from that request
+ * body and is read via the service-role key, which bypasses Storage RLS.
+ * Without this check, any submitted path was downloaded/persisted
+ * regardless of whose task/storage folder it actually belonged to. Every
+ * proof path must resolve (after stripping any bucket prefix, and after
+ * decoding any percent-encoding) to exactly the caller's own
+ * "<user_id>/<taskId>/proof/" folder, with no ".." segment anywhere in the
+ * decoded path — never trust the raw string prefix alone, since encoded or
+ * literal ".." segments could otherwise escape the intended folder despite
+ * a matching prefix.
+ */
+export function isAuthorizedProofPath({ path, userId, taskId }) {
+  if (typeof path !== 'string' || !path.trim()) return false;
+  if (!userId || !taskId) return false;
+
+  const objectPath = stripBucketPrefix(path.trim());
+  let decoded;
+  try {
+    decoded = decodeURIComponent(objectPath);
+  } catch {
+    return false; // malformed percent-encoding — reject rather than guess
+  }
+  if (decoded.includes('..') || decoded.includes('\0')) return false;
+
+  const expectedPrefix = `${userId}/${taskId}/proof/`;
+  return decoded.startsWith(expectedPrefix) && decoded.length > expectedPrefix.length;
+}
+
+/**
  * Downloads a Supabase Storage object directly (service role bypasses RLS)
  * and returns it as a base64 string. Returns null on any failure — callers
  * must treat a missing image as "not available", never as an error.
@@ -19,9 +59,7 @@ export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain', 
 export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath }) {
   if (!imagePath || !supabaseUrl || !serviceKey) return null;
 
-  const objectPath = imagePath.startsWith(`${BUCKET}/`)
-    ? imagePath.slice(`${BUCKET}/`.length)
-    : imagePath;
+  const objectPath = stripBucketPrefix(imagePath);
   const cacheBuster = `qi=${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   try {

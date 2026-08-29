@@ -17,11 +17,19 @@ const fetchHouseholdRulesTextMock = vi.fn();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TASK_CONFIRM_SOURCE = readFileSync(join(__dirname, 'task-confirm.js'), 'utf-8');
 
-vi.mock('./_quality-review.js', () => ({
-  downloadImageAsBase64: downloadImageAsBase64Mock,
-  runQualityReview: runQualityReviewMock,
-  fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
-}));
+vi.mock('./_quality-review.js', async () => {
+  // isAuthorizedProofPath (and QUALITY_RESULTS) are pure logic with no I/O —
+  // kept real via importActual so the proof-path scoping check (2026-08-29
+  // supplemental security fix) is genuinely exercised by every existing
+  // test here, not silently bypassed by the module mock.
+  const actual = await vi.importActual('./_quality-review.js');
+  return {
+    ...actual,
+    downloadImageAsBase64: downloadImageAsBase64Mock,
+    runQualityReview: runQualityReviewMock,
+    fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
+  };
+});
 
 vi.mock('web-push', () => ({
   default: { setVapidDetails: vi.fn(), sendNotification: vi.fn() },
@@ -243,7 +251,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'plate the chicken',
         assigned_to: 'Christopher',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
         attachment_count: 0,
       }]));
     vi.stubGlobal('fetch', fetchMock);
@@ -268,7 +276,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'buy TEREA Silver',
         assigned_to: 'Ghulam',
-        image_path: 'task-images/u/t/reference.jpg',
+        image_path: 'task-images/user-1/task-1/reference.jpg',
         attachment_count: 0,
         quality_review_status: 'approved',
         quality_review_note: 'Owner approved the alternative.',
@@ -327,7 +335,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }),
       res,
     );
 
@@ -345,7 +353,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
@@ -355,7 +363,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }),
       res,
     );
 
@@ -371,7 +379,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.status).toBe('done');
     expect(patchBody.quality_review_status).toBe('approved');
-    expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+    expect(patchBody.proof_image_path).toBe('task-images/user-1/task-1/proof/0.jpg');
     // Regression (2026-07-08): a QI-approved task must also clear
     // needs_follow_up and bump updated_at — same as the no-review path.
     expect(patchBody.needs_follow_up).toBe(false);
@@ -416,7 +424,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'make these for dinner, referring to the attached photos.',
         assigned_to: 'Christopher',
-        image_path: 'task-images/u/t/attachments/0.jpg',
+        image_path: 'task-images/user-1/task-1/attachments/0.jpg',
         attachment_count: 2,
         proof_image_path: null,
         quality_review_status: null,
@@ -424,8 +432,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       }]))
       // task_attachments reference lookup (file_name IS NULL) — the fix
       .mockResolvedValueOnce(jsonResponse([
-        { storage_path: 'task-images/u/t/attachments/0.jpg' },
-        { storage_path: 'task-images/u/t/attachments/1.jpg' },
+        { storage_path: 'task-images/user-1/task-1/attachments/0.jpg' },
+        { storage_path: 'task-images/user-1/task-1/attachments/1.jpg' },
       ]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Make these for dinner.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
@@ -438,7 +446,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     await handler(
       createReq({
         taskId: 'task-1',
-        proofImagePaths: ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg'],
+        proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg', 'task-images/user-1/task-1/proof/1.jpg'],
       }),
       res,
     );
@@ -452,10 +460,10 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(String(referenceQuery[0])).toContain('order=sort_order.asc');
 
     expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ imagePath: 'task-images/u/t/attachments/0.jpg' }),
+      expect.objectContaining({ imagePath: 'task-images/user-1/task-1/attachments/0.jpg' }),
     );
     expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ imagePath: 'task-images/u/t/attachments/1.jpg' }),
+      expect.objectContaining({ imagePath: 'task-images/user-1/task-1/attachments/1.jpg' }),
     );
     expect(runQualityReviewMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -476,7 +484,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'plate the chicken',
         assigned_to: 'Christopher',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
         attachment_count: 0,
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken.' }])) // messages lookup
@@ -488,7 +496,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }),
       res,
     );
 
@@ -503,7 +511,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       ),
     ).toBe(false);
     expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
-      expect.objectContaining({ imagePath: 'task-images/u/t/photo.jpg' }),
+      expect.objectContaining({ imagePath: 'task-images/user-1/task-1/photo.jpg' }),
     );
     expect(runQualityReviewMock).toHaveBeenCalledWith(
       expect.objectContaining({ referenceImagesBase64: ['base64-bytes'] }),
@@ -529,8 +537,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'Buy TEREA Silver.',
         assigned_to: 'Ghulam',
-        image_path: 'task-images/u/t/silver-reference.jpg',
-        proof_image_path: 'task-images/u/t/old-silver-alternative-proof.jpg',
+        image_path: 'task-images/user-1/task-1/silver-reference.jpg',
+        proof_image_path: 'task-images/user-1/task-1/old-silver-alternative-proof.jpg',
         attachment_count: 0,
         quality_review_status: null,
         quality_review_cycle_count: 0,
@@ -547,7 +555,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     await handler(
       createReq({
         taskId: 'task-1',
-        proofImagePaths: ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg'],
+        proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg', 'task-images/user-1/task-1/proof/1.jpg'],
       }),
       res,
     );
@@ -562,7 +570,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     }));
     expect(downloadImageAsBase64Mock).toHaveBeenCalledTimes(2);
     expect(downloadImageAsBase64Mock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ imagePath: 'task-images/u/t/silver-reference.jpg' }),
+      expect.objectContaining({ imagePath: 'task-images/user-1/task-1/silver-reference.jpg' }),
     );
 
     const customInstructionLookup = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/quality_substitute_decisions'));
@@ -592,7 +600,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'set the table', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'set the table', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please set the table for 6.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -600,7 +608,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(emptyResponse()); // confirmations insert
     vi.stubGlobal('fetch', fetchMock);
 
-    const paths = ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg', 'task-images/u/t/proof/2.jpg'];
+    const paths = ['task-images/user-1/task-1/proof/0.jpg', 'task-images/user-1/task-1/proof/1.jpg', 'task-images/user-1/task-1/proof/2.jpg'];
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePaths: paths }), res);
 
@@ -641,7 +649,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(emptyResponse());
     vi.stubGlobal('fetch', fetchMock);
 
-    const sixPaths = Array.from({ length: 6 }, (_, i) => `task-images/u/t/proof/${i}.jpg`);
+    const sixPaths = Array.from({ length: 6 }, (_, i) => `task-images/user-1/task-1/proof/${i}.jpg`);
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePaths: sixPaths }), res);
 
@@ -664,7 +672,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     // The task was still marked done — a secondary-write failure must not
     // undo or hide the primary, already-succeeded status transition.
@@ -678,7 +686,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup (delegation content)
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending, review fields)
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
@@ -690,7 +698,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }),
       res,
     );
 
@@ -707,7 +715,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBeUndefined(); // task NOT marked done
     expect(patchBody.quality_review_status).toBe('correction_required');
     expect(patchBody.quality_review_note).toBe('Christopher, please center the chicken and send another photo.');
-    expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+    expect(patchBody.proof_image_path).toBe('task-images/user-1/task-1/proof/0.jpg');
     expect(patchBody.quality_review_cycle_count).toBe(1);
 
     const correctionInsert = fetchMock.mock.calls.find(
@@ -759,7 +767,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     // Corrected resubmission has only 1 photo, down from a prior 3-photo set.
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
     const deleteCall = fetchMock.mock.calls[3];
@@ -776,7 +784,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Plate the chicken like the reference photo.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -787,7 +795,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -814,7 +822,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }])) // PATCH tasks -> correction_required
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -825,7 +833,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
@@ -840,7 +848,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (cycle count -> 2)
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -851,7 +859,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -885,7 +893,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the closet outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
         quality_review_cycle_count: 2,
       }]))
       .mockResolvedValueOnce(jsonResponse([])) // messages lookup
@@ -896,7 +904,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof3.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof3.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1213,7 +1221,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, outcome: 'uncertain', correctionCycleCount: 1 }),
@@ -1245,7 +1253,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{
         id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
-        assigned_to: 'Ghulam', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 2,
+        assigned_to: 'Ghulam', image_path: 'task-images/user-1/task-1/terea.jpg', quality_review_cycle_count: 2,
       }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
@@ -1258,7 +1266,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     await handler(
       createReq({
         taskId: 'task-1',
-        proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+        proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
         workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
       }),
       res,
@@ -1294,7 +1302,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         .fn()
         .mockResolvedValueOnce(jsonResponse([{
           id: 'task-1', user_id: 'user-1', status: 'pending', description: taskDescription,
-          assigned_to: 'Christopher', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 0,
+          assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/terea.jpg', quality_review_cycle_count: 0,
         }]))
         .mockResolvedValueOnce(jsonResponse([])) // no messages row
         .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
@@ -1318,7 +1326,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'I only found turquoise. Is it ok?',
         }),
         res,
@@ -1338,7 +1346,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       // 5. worker_reply preserved verbatim.
       expect(patchBody.worker_reply).toBe('I only found turquoise. Is it ok?');
       // 6. proof_image_path preserved.
-      expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+      expect(patchBody.proof_image_path).toBe('task-images/user-1/task-1/proof/0.jpg');
       // Never consumes the automated correction-attempt budget (same
       // invariant as a genuine substitute_review from runQualityReview).
       expect(patchBody.quality_review_cycle_count).toBe(0);
@@ -1373,7 +1381,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'I only found turquoise. Is it ok?',
         }),
         res,
@@ -1420,7 +1428,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'We only have these ingredients. Can I make this instead?',
         }),
         res,
@@ -1457,7 +1465,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'I only found Turquoise. Is it okay if I get this instead?',
         }),
         res,
@@ -1485,7 +1493,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'Can I get this one instead?',
         }),
         res,
@@ -1508,7 +1516,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         .fn()
         .mockResolvedValueOnce(jsonResponse([{
           id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
-          assigned_to: 'Christopher', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 0,
+          assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/terea.jpg', quality_review_cycle_count: 0,
         }]))
         .mockResolvedValueOnce(jsonResponse([])) // no messages row
         .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
@@ -1523,7 +1531,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       await handleTaskConfirmationPost(
         createReq({
           taskId: 'task-1',
-          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'],
           workerReply: 'I bought Turquoise instead.',
         }),
         res,
@@ -1541,7 +1549,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
       const fetchMock = vi
         .fn()
-        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
         .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }]))
         .mockResolvedValueOnce(emptyResponse())
         .mockResolvedValueOnce(emptyResponse())
@@ -1551,7 +1559,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
       const res = createRes();
       await handleTaskConfirmationPost(
-        createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }),
+        createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof2.jpg'] }),
         res,
       );
 
@@ -1563,7 +1571,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }]))
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse())
@@ -1573,7 +1581,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'], workerReply: 'Found it in the garage.' }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof2.jpg'], workerReply: 'Found it in the garage.' }),
       res,
     );
 
@@ -1596,15 +1604,15 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'buy TEREA Silver',
         assigned_to: 'Ghulam',
-        image_path: 'task-images/u/t/terea.jpg',
-        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        image_path: 'task-images/user-1/task-1/terea.jpg',
+        proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
         quality_review_status: 'substitute_review',
         quality_review_note: 'TEREA Silver requested; Turquoise sent.',
       }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       success: true,
@@ -1634,15 +1642,15 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'get the pizza',
         assigned_to: 'Christopher',
-        image_path: 'task-images/u/t/pizza.jpg',
-        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        image_path: 'task-images/user-1/task-1/pizza.jpg',
+        proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
         quality_review_status: 'uncertain',
         quality_review_note: 'Owner already needs to review this proof.',
       }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       success: true,
@@ -1659,7 +1667,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const fetchMock = vi
       .fn()
       // Task had one prior correction round before this approved resubmission.
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/photo.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -1668,7 +1676,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -1688,7 +1696,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'make the salad bowl',
         assigned_to: 'Christopher',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
         needs_follow_up: true,
         quality_review_cycle_count: 1,
         quality_review_status: 'correction_required',
@@ -1703,7 +1711,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const approvedPatchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
@@ -1730,7 +1738,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the closet outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
         quality_review_cycle_count: 1,
         quality_review_status: 'correction_required',
         quality_review_note: 'Wrong proof.',
@@ -1745,7 +1753,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
@@ -1769,7 +1777,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the closet outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/photo.jpg',
+        image_path: 'task-images/user-1/task-1/photo.jpg',
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(jsonResponse([])) // PATCH tasks -> duplicate lost the pending race
@@ -1780,7 +1788,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, already_done: true, outcome: 'approved', duplicate: true }),
@@ -1807,13 +1815,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(jsonResponse([])); // pending-only PATCH matched 0 rows because newer request completed first
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/old-proof.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/old-proof.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, already_done: true, outcome: 'approved', stale: true }),
@@ -1835,7 +1843,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'look for this in the closet', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'look for this in the closet', assigned_to: 'Grace', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -1846,7 +1854,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1889,7 +1897,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-2', proofImagePaths: ['task-images/u/t2/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-2', proofImagePaths: ['task-images/user-1/task-2/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1912,7 +1920,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/pizza.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -1922,7 +1930,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-pizza.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof-pizza.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -1941,7 +1949,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/pizza.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending)
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -1952,7 +1960,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-salad.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof-salad.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'correction_required',
@@ -1973,7 +1981,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/pizza.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (still pending, cycle -> 2)
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -1984,7 +1992,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-salad2.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof-salad2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required', correctionCycleCount: 2 }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -2006,7 +2014,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const fetchMock = vi
       .fn()
       // Task has one prior correction cycle recorded.
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/user-1/task-1/pizza.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
@@ -2016,7 +2024,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-pizza.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof-pizza.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -2045,13 +2053,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/outfit.jpg',
+        image_path: 'task-images/user-1/task-1/outfit.jpg',
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
@@ -2085,14 +2093,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/outfit.jpg',
+        image_path: 'task-images/user-1/task-1/outfit.jpg',
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(jsonResponse({ message: 'column quality_review_cycle_count does not exist' }, 400));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
@@ -2130,7 +2138,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         status: 'pending',
         description: 'check the outfit',
         assigned_to: 'Grace',
-        image_path: 'task-images/u/t/outfit.jpg',
+        image_path: 'task-images/user-1/task-1/outfit.jpg',
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> owner review state saved
@@ -2140,7 +2148,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'uncertain' }));
@@ -2157,7 +2165,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(runQualityReviewMock).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
@@ -2201,6 +2209,85 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
     const runPatch = fetchMock.mock.calls[4];
     expect(JSON.parse(runPatch[1].body)).toEqual({ current_state: 'confirmed', confirmed_at: confirmedAt });
+  });
+});
+
+describe('POST /api/task-confirm — proofImagePaths must be scoped to this task (2026-08-29 supplemental security fix)', () => {
+  it('rejects a submitted proof path belonging to a DIFFERENT user before any download, persistence, or review occurs', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/someone-elses-user-id/task-1/proof/0.jpg'] }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ error: 'One or more submitted photos could not be verified for this task.' });
+    // Only the initial task fetch happened — no PATCH, no attachment write,
+    // and critically: the service-role image download never fires for a
+    // rejected path.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(downloadImageAsBase64Mock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a submitted proof path belonging to a DIFFERENT task owned by the SAME user", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/some-other-task/proof/0.jpg'] }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(downloadImageAsBase64Mock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a traversal-style path even when it starts with the correct prefix', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        taskId: 'task-1',
+        proofImagePaths: ['task-images/user-1/task-1/proof/../../someone-else/secret.jpg'],
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(downloadImageAsBase64Mock).not.toHaveBeenCalled();
+  });
+
+  it('a correctly-scoped proof path (this exact user/task/proof folder) proceeds through the normal legitimate flow unchanged', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: null, image_path: null }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (replaceProofAttachments)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (replaceProofAttachments)
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
   });
 });
 
@@ -2273,10 +2360,10 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
   it('does not generate upload slots for an already-done task', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg', attachment_count: 0 }]))
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
       .mockResolvedValueOnce(jsonResponse([])) // proof attachments query
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=x' })); // legacy proof read
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=x' })); // legacy proof read
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2296,16 +2383,16 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         assigned_to: 'Christopher',
         status: 'done',
         confirmed_at: '2026-07-07T00:00:00.000Z',
-        image_path: 'task-images/u/t/reference-salad.jpg',
-        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
         attachment_count: 0,
         quality_review_status: 'approved',
         quality_review_note: 'Correct salad bowl confirmed.',
       }]))
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/reference-salad.jpg?token=reference' }))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=final' }));
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/reference-salad.jpg?token=reference' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=final' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2317,7 +2404,7 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     expect(body.qualityReviewNote).toBe('Correct salad bowl confirmed.');
     expect(body.proofUploadSlots).toEqual([]);
     expect(body.proofImageUrls).toEqual([
-      'https://example.supabase.co/storage/v1/object/sign/task-images/u/t/proof/0.jpg?token=final',
+      'https://example.supabase.co/storage/v1/object/sign/task-images/user-1/task-1/proof/0.jpg?token=final',
     ]);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'))).toHaveLength(0);
   });
@@ -2325,11 +2412,11 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
   it('returns existing proof photos from task_attachments, sorted by sort_order, without leaking into the reference-photo grid', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending', confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending', confirmed_at: null, image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg', attachment_count: 0 }]))
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }, { storage_path: 'task-images/u/t/proof/1.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/1.jpg?token=b' }))
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }, { storage_path: 'task-images/user-1/task-1/proof/1.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/1.jpg?token=b' }))
       // 5 upload-slot signings (task not done)
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
@@ -2358,10 +2445,10 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
   it('falls back to the legacy single tasks.proof_image_path column when no task_attachments proof rows exist yet', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/u/t/proof.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/user-1/task-1/proof.jpg', attachment_count: 0 }]))
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
       .mockResolvedValueOnce(jsonResponse([])) // no task_attachments proof rows (pre-V2 task)
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof.jpg?token=legacy' })); // legacy single-column read
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof.jpg?token=legacy' })); // legacy single-column read
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2379,14 +2466,14 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
-            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'uncertain', quality_review_note: 'No reference image to compare against.',
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2404,14 +2491,14 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
-            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'uncertain', quality_review_note: 'No reference image to compare against.',
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2431,15 +2518,15 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', status: 'pending',
-            confirmed_at: null, image_path: 'task-images/u/t/terea.jpg', proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: 'task-images/user-1/task-1/terea.jpg', proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'substitute_review',
             quality_review_note: 'TEREA Silver requested; Turquoise sent.', worker_reply: 'Could not find Silver, found Turquoise instead.',
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2460,16 +2547,16 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', status: 'pending',
-            confirmed_at: null, image_path: 'task-images/u/t/terea.jpg', proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: 'task-images/user-1/task-1/terea.jpg', proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'approved',
             quality_review_note: 'Owner approved the alternative.', worker_reply: null,
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/terea.jpg?token=ref' }))
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }]))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=proof' }));
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/terea.jpg?token=ref' }))
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=proof' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2491,14 +2578,14 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
-            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'fraud_suspected', quality_review_note: 'This is the reference image, not a new photo.',
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }))
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/2.jpg?token=t2' }))
@@ -2521,14 +2608,14 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
         jsonResponse([
           {
             id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
-            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
             attachment_count: 0, quality_review_status: 'correction_required', quality_review_note: 'Please center the chicken.',
           },
         ]),
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/user-1/task-1/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/proof/0.jpg?token=a' }))
       // 5 upload-slot signings — still allowed
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
       .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
@@ -3900,7 +3987,7 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof.jpg'] }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/proof.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'substitute_review' }));
     // No call ever touches reminder_delivery_events for this push variant.

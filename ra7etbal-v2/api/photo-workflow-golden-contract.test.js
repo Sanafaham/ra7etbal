@@ -199,7 +199,12 @@ describe('Golden contract [B/C/D/E/K] — task-confirm.js quality-review orchest
     // (not left real) so it does not consume a slot in this file's raw
     // `fetch` mock queues below — same reasoning as the other two mocks.
     const fetchHouseholdRulesTextMock = vi.fn().mockResolvedValue(null);
+    // isAuthorizedProofPath is pure logic with no I/O — kept real via
+    // importActual (2026-08-29 supplemental security fix) so the
+    // proof-path scoping check is genuinely exercised, not bypassed.
+    const actualQualityReview = await vi.importActual('./_quality-review.js');
     vi.doMock('./_quality-review.js', () => ({
+      ...actualQualityReview,
       downloadImageAsBase64: downloadImageAsBase64Mock,
       runQualityReview: runQualityReviewMock,
       fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
@@ -217,8 +222,8 @@ describe('Golden contract [B/C/D/E/K] — task-confirm.js quality-review orchest
 
   const REF0 = 'task-images/u/t/attachments/0.jpg';
   const REF1 = 'task-images/u/t/attachments/1.jpg';
-  const PROOF0 = 'task-images/u/t/proof/0.jpg';
-  const PROOF1 = 'task-images/u/t/proof/1.jpg';
+  const PROOF0 = 'task-images/user-1/task-1/proof/0.jpg';
+  const PROOF1 = 'task-images/user-1/task-1/proof/1.jpg';
 
   function byPath(map) {
     return ({ imagePath }) => Promise.resolve(map[imagePath] ?? null);
@@ -387,7 +392,7 @@ describe('Golden contract [B/C/D/E/K] — task-confirm.js quality-review orchest
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/new-proof.jpg'] }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/new-proof.jpg'] }),
       res,
     );
 
