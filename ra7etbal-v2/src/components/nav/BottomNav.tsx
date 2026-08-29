@@ -44,7 +44,7 @@ export default function BottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 inset-x-0 z-30 border-t border-sage/15 bg-white/96 backdrop-blur-md"
+      className="fixed bottom-0 inset-x-0 z-30 border-t border-border bg-surface/96 backdrop-blur-md"
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
       aria-label="Main navigation"
     >
@@ -56,7 +56,7 @@ export default function BottomNav() {
           aria-label="Home"
           className={({ isActive }) =>
             "flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (isActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
+            (isActive ? "text-sage" : "text-nav-muted hover:text-ink")
           }
         >
           {({ isActive }) => (
@@ -76,7 +76,7 @@ export default function BottomNav() {
           aria-label="What's Happening"
           className={
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (updatesIsActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
+            (updatesIsActive ? "text-sage" : "text-nav-muted hover:text-ink")
           }
         >
           <span className="relative">
@@ -95,7 +95,7 @@ export default function BottomNav() {
           aria-label="People"
           className={({ isActive }) =>
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (isActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
+            (isActive ? "text-sage" : "text-nav-muted hover:text-ink")
           }
         >
           {({ isActive }) => (
@@ -116,7 +116,7 @@ export default function BottomNav() {
           type="button"
           onClick={() => setCarsonOpen(true)}
           aria-label="Tell Carson"
-          className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-sage" : "text-ink/45 hover:text-ink/70")}
+          className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-sage" : "text-nav-muted hover:text-ink")}
         >
           <span className="relative">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={carsonOpen ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

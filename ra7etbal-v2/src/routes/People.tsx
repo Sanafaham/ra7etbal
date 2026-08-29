@@ -115,7 +115,7 @@ export default function People() {
       {/* ── Search (only when there are people) ── */}
       {!initialLoading && items.length > 0 && (
         <div className="relative">
-          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-ink/35">
+          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-text-muted">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.35-4.35" />
@@ -127,14 +127,14 @@ export default function People() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people…"
             aria-label="Search people"
-            className="w-full rounded-2xl border border-border bg-white/70 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
+            className="w-full rounded-2xl border border-border-strong bg-surface/90 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-text-muted focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
           />
         </div>
       )}
 
       {/* ── Empty state ── */}
       {!initialLoading && status === "ready" && items.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-border bg-white/50 px-6 py-10 text-center">
+        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-6 py-10 text-center">
           {/* Avatar cluster illustration */}
           <div className="mb-4 flex justify-center gap-2">
             {["A", "B", "C"].map((l) => (
@@ -147,7 +147,7 @@ export default function People() {
             ))}
           </div>
           <p className="text-base font-semibold text-ink">No people added yet.</p>
-          <p className="mt-1.5 text-sm leading-relaxed text-ink/55">
+          <p className="mt-1.5 text-sm leading-relaxed text-text-soft">
             Start by adding family members, staff, or anyone Carson may need to contact.
           </p>
           <button
@@ -165,7 +165,7 @@ export default function People() {
 
       {/* ── No search results ── */}
       {!initialLoading && items.length > 0 && filtered.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-center text-sm text-ink/45">
+        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-center text-sm text-text-soft">
           No people match &ldquo;{query}&rdquo;
         </div>
       )}
@@ -183,7 +183,7 @@ export default function People() {
 
       {/* ── Carson context hint (when list is populated) ── */}
       {!initialLoading && items.length > 0 && (
-        <p className="pt-1 text-center text-[11px] text-ink/30">
+        <p className="pt-1 text-center text-[11px] text-text-muted">
           Carson uses these people for delegation and reminders.
         </p>
       )}

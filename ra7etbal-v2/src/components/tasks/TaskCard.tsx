@@ -183,7 +183,7 @@ export default function TaskCard({
   return (
     <article
       className={
-        "rounded-2xl border bg-white/85 p-4 shadow-sm transition " +
+        "rounded-2xl border bg-surface/90 p-4 shadow-sm transition " +
         (isDone ? "border-border opacity-70" : "border-sage/30")
       }
     >
@@ -196,7 +196,7 @@ export default function TaskCard({
         >
           {type.label}
         </span>
-        <div className="flex items-center gap-2 text-xs text-ink/55">
+        <div className="flex items-center gap-2 text-xs text-text-soft">
           {isWaitingDelegation && qualityLifecycle.badge === "Needs your review" ? (
             <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
               Needs your review
@@ -243,17 +243,17 @@ export default function TaskCard({
       </p>
 
       {(task.type === "followup" || task.type === "delegation") && task.created_at && (
-        <p className="mt-1 text-[11px] text-ink/40">
+        <p className="mt-1 text-[11px] text-text-muted">
           {formatFollowUpSentTime(task.created_at)}
         </p>
       )}
 
       {completedAtLabel && (
-        <p className="mt-1 text-[11px] text-ink/40">{completedAtLabel}</p>
+        <p className="mt-1 text-[11px] text-text-muted">{completedAtLabel}</p>
       )}
 
       {showNeedsYouTimestamp && (
-        <p className="mt-1 text-[11px] text-ink/40">{needsYouTimestampLabel}</p>
+        <p className="mt-1 text-[11px] text-text-muted">{needsYouTimestampLabel}</p>
       )}
 
       {signedImageUrl && (

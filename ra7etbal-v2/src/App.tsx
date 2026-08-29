@@ -523,7 +523,11 @@ export default function App() {
       }
     >
       {showNav && (
-        <CarsonAmbientBackground fixed className="z-0" />
+        <CarsonAmbientBackground
+          fixed
+          className="z-0"
+          density={pathname === "/updates" || pathname === "/people" ? "content" : "standard"}
+        />
       )}
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <header className="relative z-10 mx-auto max-w-3xl px-5 pt-4" style={{ paddingTop: "max(18px, env(safe-area-inset-top))" }}>

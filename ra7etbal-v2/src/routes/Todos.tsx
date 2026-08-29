@@ -296,13 +296,13 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
       {!headerless && (
         <header>
           <h1 className="text-2xl font-semibold text-ink">To-do</h1>
-          <p className="text-sm text-ink/55">Active personal commitments.</p>
+          <p className="text-sm text-text-soft">Active personal commitments.</p>
         </header>
       )}
 
       {/* ── Add a to-do ── */}
-      <section className="rounded-2xl border border-sage/20 bg-white/70 p-4 shadow-sm">
-        <label htmlFor="manual-todo" className="text-xs font-medium uppercase tracking-wide text-ink/60">
+      <section className="rounded-2xl border border-border bg-surface/90 p-4 shadow-sm">
+        <label htmlFor="manual-todo" className="text-xs font-medium uppercase tracking-wide text-ink">
           Add a to-do
         </label>
         <div className="mt-2 flex gap-2">
@@ -313,7 +313,7 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void handleSave(); }}
             placeholder="Buy flowers, renew passport…"
-            className="flex-1 rounded-xl border border-sage/20 bg-cream/30 px-3 py-2 text-base text-ink outline-none placeholder:text-ink/30 focus:border-sage focus:bg-white"
+            className="flex-1 rounded-xl border border-border-strong bg-surface-subtle px-3 py-2 text-base text-ink outline-none placeholder:text-text-muted focus:border-sage focus:bg-surface"
           />
           <button
             type="button"
@@ -345,7 +345,7 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
         <>
           <section className="space-y-2.5">
             {activeTodos.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-sage/30 bg-white/50 p-8 text-center text-sm text-ink/60">
+              <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 p-8 text-center text-sm text-text-soft">
                 Nothing on your to-do list. Ask Carson to add one.
               </div>
             ) : (
@@ -477,7 +477,7 @@ function TodoCard({
   const busy = toggling || deleting || movingNote || settingReminder || sendingDelegate || settingCalendar;
 
   return (
-    <article className="rounded-2xl border border-sage/20 bg-white/85 p-4 shadow-sm">
+    <article className="rounded-2xl border border-border bg-surface/90 p-4 shadow-sm">
       <header className="flex items-start gap-3">
         <button
           type="button"
@@ -491,10 +491,10 @@ function TodoCard({
         <div className="min-w-0 flex-1">
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{todo.title}</p>
           {todo.description && (
-            <p className="mt-1 whitespace-pre-wrap text-sm text-ink/60">{todo.description}</p>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-text-soft">{todo.description}</p>
           )}
         </div>
-        <time className="shrink-0 text-xs text-ink/40" dateTime={todo.created_at}>
+        <time className="shrink-0 text-xs text-text-muted" dateTime={todo.created_at}>
           {formatTodoTime(todo.created_at)}
         </time>
       </header>
