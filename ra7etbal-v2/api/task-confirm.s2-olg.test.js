@@ -11,11 +11,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
+const fetchHouseholdRulesTextMock = vi.fn().mockResolvedValue(null);
 
-vi.mock('./_quality-review.js', () => ({
-  downloadImageAsBase64: downloadImageAsBase64Mock,
-  runQualityReview: runQualityReviewMock,
-}));
+vi.mock('./_quality-review.js', async () => {
+  // isAuthorizedProofPath is pure logic with no I/O — kept real via
+  // importActual so the proof-path scoping check (2026-08-29 supplemental
+  // security fix) is genuinely exercised here, not silently bypassed.
+  // fetchHouseholdRulesText DOES perform a real fetch — it must stay
+  // mocked (as it already effectively was pre-2026-08-29) or it silently
+  // consumes an unaccounted-for slot in this file's fetchMock queue.
+  const actual = await vi.importActual('./_quality-review.js');
+  return {
+    ...actual,
+    downloadImageAsBase64: downloadImageAsBase64Mock,
+    runQualityReview: runQualityReviewMock,
+    fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
+  };
+});
 
 vi.mock('web-push', () => ({
   default: { setVapidDetails: vi.fn(), sendNotification: vi.fn() },
@@ -55,7 +67,7 @@ function createReq({ taskId, proofImagePaths } = {}) {
     method: 'POST',
     body: {
       taskId: taskId ?? 'task-olg',
-      proofImagePaths: proofImagePaths ?? ['proof/task-olg/photo1.jpg'],
+      proofImagePaths: proofImagePaths ?? ['user-1/task-olg/proof/photo1.jpg'],
     },
     headers: {},
     query: {},

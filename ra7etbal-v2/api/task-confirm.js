@@ -54,7 +54,7 @@
 
 import webpush from 'web-push';
 import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
-import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText } from './_quality-review.js';
+import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText, isAuthorizedProofPath } from './_quality-review.js';
 import { isLikelyPreActionSubstitutionRequest } from './_staff-substitution-intent.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
@@ -412,6 +412,18 @@ export async function handleTaskConfirmationPost(
     }
 
     const task = tasks[0];
+
+    // Supplemental security review (2026-08-29): this endpoint is public
+    // (gated only by possession of the taskId link), and proofImagePaths
+    // is downloaded/persisted via the service-role key, which bypasses
+    // Storage RLS. Reject the whole request if ANY submitted path does not
+    // resolve to this exact task's own "<user_id>/<taskId>/proof/" folder —
+    // fail closed rather than silently dropping some photos, since a
+    // partial silent drop could itself produce confusing/incorrect
+    // behavior (e.g. proofRequired passing on fewer photos than intended).
+    if (proofImagePaths.some((p) => !isAuthorizedProofPath({ path: p, userId: task.user_id, taskId }))) {
+      return res.status(403).json({ error: 'One or more submitted photos could not be verified for this task.' });
+    }
 
     // Idempotent — already done
     if (task.status === 'done') {

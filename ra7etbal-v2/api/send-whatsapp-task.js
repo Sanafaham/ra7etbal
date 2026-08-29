@@ -80,6 +80,26 @@ async function verifyOwnedResource({ supabaseUrl, serviceKey, table, id, uid }) 
   return Array.isArray(rows) && rows.length === 1;
 }
 
+/**
+ * Supplemental security review (2026-08-29) — a routine_message send never
+ * required taskId/personId/messageRecordId (verifyOwnedResource treats an
+ * omitted id as "nothing to check"), so an authenticated caller could
+ * direct an arbitrary phone number with no ownership relationship at all.
+ * Resolves the phone number of a person the verified uid actually owns —
+ * returns null if the person doesn't exist, isn't owned by this uid, or
+ * has no stored phone. Callers must treat null as "not authorized."
+ */
+async function resolveOwnedPersonPhone({ supabaseUrl, serviceKey, id, uid }) {
+  if (!id) return null;
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/people?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(uid)}&select=phone&limit=1`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+  );
+  if (!response.ok) return null;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.length === 1 ? (rows[0]?.phone ?? null) : null;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
@@ -137,6 +157,29 @@ export default async function handler(req, res) {
     ]);
     if (!ownsTask || !ownsPerson || !ownsMessage) {
       return res.status(403).json({ success: false, error: 'Forbidden.' });
+    }
+
+    // Supplemental security review (2026-08-29) — routine_message never
+    // required an owned taskId/personId/messageRecordId, so a client could
+    // send an arbitrary body-supplied `to` with no relationship check at
+    // all. A routine message must resolve to a person this caller actually
+    // owns, AND the requested destination must match that person's own
+    // stored phone — never an arbitrary body-supplied `to`.
+    if (sendMode === 'routine_message') {
+      const ownedPersonPhone = await resolveOwnedPersonPhone({
+        supabaseUrl,
+        serviceKey,
+        id: personId,
+        uid: verifiedUid,
+      });
+      const requestedPhone = normalizeWhatsAppPhone(to);
+      if (
+        !ownedPersonPhone ||
+        !requestedPhone ||
+        normalizeWhatsAppPhone(ownedPersonPhone) !== requestedPhone
+      ) {
+        return res.status(403).json({ success: false, error: 'Forbidden.' });
+      }
     }
   }
 

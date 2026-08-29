@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText } from './_quality-review.js';
+import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText, isAuthorizedProofPath } from './_quality-review.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -12,6 +12,59 @@ function anthropicResponse(text) {
     json: async () => ({ content: [{ text }] }),
   };
 }
+
+describe('isAuthorizedProofPath (2026-08-29 supplemental security fix — proof-path scoping)', () => {
+  const USER_ID = 'user-1';
+  const TASK_ID = 'task-1';
+
+  it('1. a valid path under the expected user/task/proof prefix -> PASS', () => {
+    expect(isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/0.jpg', userId: USER_ID, taskId: TASK_ID })).toBe(true);
+    // Also valid without the bucket prefix, matching downloadImageAsBase64's own tolerance.
+    expect(isAuthorizedProofPath({ path: 'user-1/task-1/proof/0.jpg', userId: USER_ID, taskId: TASK_ID })).toBe(true);
+  });
+
+  it("2. another user's path -> DENY", () => {
+    expect(
+      isAuthorizedProofPath({ path: 'task-images/someone-elses-user-id/task-1/proof/0.jpg', userId: USER_ID, taskId: TASK_ID }),
+    ).toBe(false);
+  });
+
+  it('3. another task belonging to the SAME user -> DENY', () => {
+    expect(
+      isAuthorizedProofPath({ path: 'task-images/user-1/some-other-task-id/proof/0.jpg', userId: USER_ID, taskId: TASK_ID }),
+    ).toBe(false);
+  });
+
+  it('4. an arbitrary unrelated object path -> DENY', () => {
+    expect(isAuthorizedProofPath({ path: 'task-images/some/unrelated/object.jpg', userId: USER_ID, taskId: TASK_ID })).toBe(false);
+    expect(isAuthorizedProofPath({ path: '', userId: USER_ID, taskId: TASK_ID })).toBe(false);
+    expect(isAuthorizedProofPath({ path: null, userId: USER_ID, taskId: TASK_ID })).toBe(false);
+  });
+
+  it('5. malformed / traversal-style paths cannot bypass validation', () => {
+    // Literal ".." after an otherwise-matching prefix.
+    expect(
+      isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/../../someone-else/x.jpg', userId: USER_ID, taskId: TASK_ID }),
+    ).toBe(false);
+    // Percent-encoded ".." (decodes to a traversal segment).
+    expect(
+      isAuthorizedProofPath({
+        path: 'task-images/user-1/task-1/proof/%2e%2e/%2e%2e/someone-else/x.jpg',
+        userId: USER_ID,
+        taskId: TASK_ID,
+      }),
+    ).toBe(false);
+    // Malformed percent-encoding rejected outright rather than guessed at.
+    expect(isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/%', userId: USER_ID, taskId: TASK_ID })).toBe(false);
+    // A prefix match with nothing meaningful after it is still rejected (no bare-folder reference).
+    expect(isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/', userId: USER_ID, taskId: TASK_ID })).toBe(false);
+  });
+
+  it('6/7. missing userId or taskId never authorizes any path, regardless of how plausible it looks', () => {
+    expect(isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/0.jpg', userId: null, taskId: TASK_ID })).toBe(false);
+    expect(isAuthorizedProofPath({ path: 'task-images/user-1/task-1/proof/0.jpg', userId: USER_ID, taskId: null })).toBe(false);
+  });
+});
 
 describe('runQualityReview', () => {
   it('downloads proof images with cache bypass so corrected uploads at the same storage path are reviewed fresh', async () => {
