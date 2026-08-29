@@ -59,15 +59,45 @@ function jsonResponse(payload, ok = true, status = ok ? 200 : 500) {
 /** Owner has one person (PERSON_ID) with a real stored phone. */
 const PERSON_ID = 'person-1';
 const OWNED_PERSON_PHONE = '971500000001';
+const FOREIGN_PERSON_ID = 'person-belongs-to-someone-else';
+const OTHER_TENANT_UID = '99999999-9999-9999-9999-999999999999';
 
-function routineFetchMock({ personRows = [{ phone: OWNED_PERSON_PHONE }] } = {}) {
+// A small fake "table" plus real REST-style filter parsing (2026-08-29
+// CodeRabbit finding) — the mock genuinely enforces id AND user_id query
+// filters instead of trusting a hand-picked personRows fixture per test.
+// If production ever dropped the user_id=eq.<uid> filter from the real
+// query, this mock would then return the foreign row too, and the "another
+// tenant's personId" test below would correctly start failing.
+const PEOPLE_DB = [
+  { id: PERSON_ID, user_id: VALID_UID, phone: OWNED_PERSON_PHONE },
+  { id: FOREIGN_PERSON_ID, user_id: OTHER_TENANT_UID, phone: '971500000099' },
+];
+
+function parseEqFilters(url) {
+  const search = String(url).split('?')[1] ?? '';
+  const filters = {};
+  for (const pair of search.split('&')) {
+    const [key, value] = pair.split('=');
+    if (!key || value == null) continue;
+    const match = decodeURIComponent(value).match(/^eq\.(.*)$/);
+    if (match) filters[key] = match[1];
+  }
+  return filters;
+}
+
+function routineFetchMock() {
   return vi.fn().mockImplementation(async (url) => {
     const u = String(url);
     if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
     if (u.includes('/rest/v1/tasks')) return jsonResponse([]); // no taskId supplied in these tests
     if (u.includes('/rest/v1/messages')) return jsonResponse([]); // no messageRecordId supplied
-    if (u.includes('/rest/v1/people') && u.includes('select=phone')) return jsonResponse(personRows);
-    if (u.includes('/rest/v1/people')) return jsonResponse(personRows.length ? [{ id: PERSON_ID }] : []);
+    if (u.includes('/rest/v1/people')) {
+      const filters = parseEqFilters(u);
+      const rows = PEOPLE_DB.filter((person) =>
+        Object.entries(filters).every(([key, value]) => String(person[key]) === value),
+      );
+      return jsonResponse(u.includes('select=phone') ? rows.map((p) => ({ phone: p.phone })) : rows.map((p) => ({ id: p.id })));
+    }
     if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
     if (u.includes('/rest/v1/whatsapp_deliveries?id=eq')) return jsonResponse({});
     if (u.includes('graph.facebook.com')) return jsonResponse({ messages: [{ id: 'wamid.1' }] });
@@ -120,9 +150,10 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
   });
 
   it("3. authenticated user + another tenant's personId -> DENY", async () => {
-    // people lookup scoped by user_id=eq.<verifiedUid> returns nothing for
-    // a personId that exists but belongs to a different account.
-    const fetchMock = routineFetchMock({ personRows: [] });
+    // FOREIGN_PERSON_ID genuinely exists in PEOPLE_DB, just under a
+    // different user_id — the mock's own id+user_id filter (not a
+    // hand-picked empty-array fixture) is what makes this deny correctly.
+    const fetchMock = routineFetchMock();
     vi.stubGlobal('fetch', fetchMock);
     const res = mockRes();
 
@@ -133,7 +164,7 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
           to: OWNED_PERSON_PHONE,
           messageText: 'hi',
           sendMode: 'routine_message',
-          personId: 'person-belongs-to-someone-else',
+          personId: FOREIGN_PERSON_ID,
         },
       }),
       res,
