@@ -5,32 +5,32 @@
      accent. `sage` is repointed to the dark ink accent (was green) so
      every existing bg-sage/text-sage/border-sage utility across the app
      renders as the new primary/active color without per-usage edits. */
-  --color-cream: #F8F5EF;
+  --color-cream: #F3EEE6;
   --color-sand: #E8DDC8;
   --color-stone: #D8C9AC;
-  --color-gold: #B89B5E;
+  --color-gold: #B2965F;
   --color-espresso: #3A2E1F;
   --color-ink: #1F1F1F;
   --color-sage: #1F1F1F;
 
   /* Extended palette — V2 design system */
-  --color-warm-white: #FAF7F2;
+  --color-warm-white: #FCFAF6;
   --color-charcoal: #2A2927;
-  --color-ivory: #FAF7F2;
-  --color-card: #FDFBF7;
-  --color-surface: #FDFBF7;
-  --color-surface-subtle: #FBF8F2;
+  --color-ivory: #FCFAF6;
+  --color-card: #FCFAF6;
+  --color-surface: #FCFAF6;
+  --color-surface-subtle: #F8F4ED;
   --color-danger: #A8402F;
   --color-muted: #A8A29E;
   --color-text: #1F1F1F;
-  --color-text-soft: #57534E;
-  --color-text-muted: #78716C;
-  --color-nav-muted: #6B655E;
-  --color-gold-soft: #D4B483;
+  --color-text-soft: #494540;
+  --color-text-muted: #6B645C;
+  --color-nav-muted: #514B44;
+  --color-gold-soft: #D7BD8C;
   --color-gold-dark: #8B6F3E;
   --color-gold-tint: #B89B5E14;
-  --color-border: #DED7CC;
-  --color-border-strong: #CEC5B8;
+  --color-border: #D3C9BB;
+  --color-border-strong: #C2B5A2;
 
   /* Type stack. Display = elegant serif (Cormorant Garamond).
      Script = handwritten italic (Caveat). Body = Inter. */

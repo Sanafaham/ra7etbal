@@ -526,7 +526,11 @@ export default function App() {
         <CarsonAmbientBackground
           fixed
           className="z-0"
-          density={pathname === "/updates" || pathname === "/people" ? "content" : "standard"}
+          density={
+            ["/updates", "/active", "/inbox", "/actions", "/messages", "/notes", "/people", "/notifications", "/history"].includes(pathname)
+              ? "content"
+              : "standard"
+          }
         />
       )}
       {/* ── Header ──────────────────────────────────────────────────────── */}

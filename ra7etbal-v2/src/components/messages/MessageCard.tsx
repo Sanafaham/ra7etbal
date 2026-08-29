@@ -93,11 +93,11 @@ export default function MessageCard({
   return (
     <article
       className={
-        "rounded-2xl border bg-white/85 p-4 shadow-sm transition " +
+        "rounded-2xl border bg-surface/90 p-4 shadow-sm transition " +
         (isConfirmed ? "border-emerald-200" : "border-sage/30")
       }
     >
-      <header className="flex items-center justify-between gap-2 text-xs text-ink/55">
+      <header className="flex items-center justify-between gap-2 text-xs text-text-soft">
         <span className="font-medium text-ink/80">→ {message.recipient}</span>
         <div className="flex items-center gap-2">
           {isConfirmed && (
