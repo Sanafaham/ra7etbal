@@ -70,6 +70,7 @@ export type AttentionResponseIntent =
   | "rank"
   | "contrast"
   | "explain"
+  | "defer_timing"
   | "nothing_new"
   | "clarify"
   | "not_attention";

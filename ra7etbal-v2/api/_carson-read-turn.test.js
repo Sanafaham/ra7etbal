@@ -408,7 +408,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(result.groundingStatus).toBe("grounded");
   });
 
-  it("[10] the reasoning provider throwing/unavailable falls back to the full deterministic render, not the honest-failure message", async () => {
+  it("[10] the reasoning provider throwing/unavailable falls back to the full deterministic render, not the honest-failure message, and is NOT structurally retried (5/6: a thrown error is a separate failure mode from a returned-but-invalid decision)", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockRejectedValue(new Error("provider unavailable"));
     const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
@@ -417,6 +417,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     expect(result.ownerResult).toBe(FALLBACK_RENDER);
     expect(result.groundingStatus).toBe("grounded");
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(1);
   });
 
   it("['Anything overdue?' 1/5] selects and names the actual overdue items with due context when the reasoning model returns a valid decision", async () => {
@@ -746,6 +747,261 @@ describe("Carson rank ordering is deterministic by dueAt, never model-authored (
     const contrastResult = await contrastCoordinate({ ...rankActiveContext, transcript: "What can wait?" });
     expect(contrastResult.ownerResult).toBe(
       "Overdue: call Loulya (Overdue by 3 days). Waiting on others: Grace: kitchen (Overdue by a long time).",
+    );
+  });
+});
+
+describe("Carson bounded one-retry structural reliability for a Stage 2 decision that fails validation (2026-08-29 Turn 4 canary fix)", () => {
+  const RETRY_EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    completeness: "full",
+    needsYou: [],
+    overdueReminders: [
+      { id: "r1", label: "call Loulya", type: "reminder", status: "pending", dueAt: "2026-08-28T08:48:21.59Z", dueDescription: "Overdue by 1 day", assignee: null, category: "overdueReminders" },
+    ],
+    upcomingReminders: [],
+    waiting: [],
+    later: [],
+    unresolvedCaptures: [],
+  };
+  const RETRY_GROUNDED_RESULT = { evidence: RETRY_EVIDENCE, text: "Needs your attention: call Loulya." };
+  const retryActiveContext = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-retry-1",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+    previouslySurfacedEvidenceIds: ["r1"],
+    priorObjective: "reviewing overdue reminders",
+  };
+
+  it("[structural-retry 1/6] a valid first decision never triggers a retry — exactly 1 provider call", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
+
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(1);
+    expect(result.ownerResult).toContain("call Loulya");
+  });
+
+  it("[structural-retry 2/6] an invalid first decision followed by a valid second decision succeeds — exactly 2 calls, the retry's answer is used", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const reasonOverEvidence = vi
+      .fn()
+      .mockResolvedValueOnce({ responseIntent: "list" }) // missing selectedEvidenceIds -> invalid
+      .mockResolvedValueOnce({ responseIntent: "list", selectedEvidenceIds: ["r1"] });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
+
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
+    expect(result.ownerResult).toContain("call Loulya");
+    expect(result.ownerResult).not.toBe(
+      "Nothing needs your direct decision right now. You do have 1 overdue reminder.",
+    );
+  });
+
+  it("[structural-retry 3/6] an invalid first decision followed by a still-invalid second decision falls back — exactly 2 calls, existing deterministic fallback", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ nonsense: true });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
+
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
+    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+  });
+
+  it("[structural-retry 4/6] an invalid first decision followed by the retry itself throwing falls back safely — exactly 2 calls, no unhandled rejection", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const reasonOverEvidence = vi
+      .fn()
+      .mockResolvedValueOnce({ responseIntent: "list" }) // missing selectedEvidenceIds -> invalid
+      .mockRejectedValueOnce(new Error("provider unavailable on retry"));
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
+
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
+    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+  });
+
+  it("[structural-retry 5/6] the initial provider throw is unaffected — no structural retry, existing behavior unchanged (see also test [10] above)", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockRejectedValue(new Error("provider unavailable"));
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
+
+    expect(reasonOverEvidence).toHaveBeenCalledTimes(1);
+    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+  });
+
+  it("[structural-retry 6/6] no path exceeds 2 total reasoning calls per turn, across every combination", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RETRY_GROUNDED_RESULT);
+    const scenarios = [
+      () => vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] }),
+      () => vi.fn().mockRejectedValue(new Error("boom")),
+      () =>
+        vi
+          .fn()
+          .mockResolvedValueOnce({ responseIntent: "list" })
+          .mockResolvedValueOnce({ responseIntent: "list", selectedEvidenceIds: ["r1"] }),
+      () => vi.fn().mockResolvedValue({ nonsense: true }),
+      () =>
+        vi
+          .fn()
+          .mockResolvedValueOnce({ responseIntent: "list" })
+          .mockRejectedValueOnce(new Error("boom on retry")),
+    ];
+    for (const makeReasonOverEvidence of scenarios) {
+      const reasonOverEvidence = makeReasonOverEvidence();
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+      await coordinate({ ...retryActiveContext, transcript: "What else?" });
+      expect(reasonOverEvidence.mock.calls.length).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe("Carson deferral/timing semantics are derived deterministically from dueAt, never from category (2026-08-29 Turn 4 fix)", () => {
+  // generatedAt anchors "now" for every timing test below. Deliberately
+  // includes an overdue item filed under `later` (type "action", not
+  // "reminder") — production evidence showed overdue non-reminder actions
+  // can and do land in `later`, so `later` membership must never be used
+  // as a proxy for "can wait."
+  const DEFER_EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    generatedAt: "2026-08-29T12:00:00.000Z",
+    completeness: "full",
+    needsYou: [],
+    overdueReminders: [
+      { id: "od1", label: "call the dentist", type: "reminder", status: "pending", dueAt: "2026-08-28T10:00:00.000Z", dueDescription: "Overdue by 1 day", assignee: null, category: "overdueReminders" },
+    ],
+    upcomingReminders: [
+      { id: "up1", label: "pay the electricity bill", type: "reminder", status: "pending", dueAt: "2026-09-01T10:00:00.000Z", dueDescription: "Due in 3 days", assignee: null, category: "upcomingReminders" },
+    ],
+    waiting: [],
+    later: [
+      { id: "la-overdue", label: "update the master plan", type: "action", status: "pending", dueAt: "2026-08-29T09:00:00.000Z", dueDescription: "Overdue by 3 hours", assignee: null, category: "later" },
+      { id: "la-undated", label: "read that book", type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "later" },
+    ],
+    unresolvedCaptures: [],
+  };
+  const DEFER_GROUNDED_RESULT = { evidence: DEFER_EVIDENCE, text: "..." };
+  const deferActiveContext = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-defer-1",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+    previouslySurfacedEvidenceIds: ["od1", "up1", "la-overdue", "la-undated"],
+    priorObjective: "reviewing what can wait",
+  };
+
+  it("[defer 1/6] overdue items are identified from exact dueAt, regardless of canonical category — a `later`-filed overdue action is grouped with an `overdueReminders` item", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "defer_timing",
+      selectedEvidenceIds: ["od1", "la-overdue"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...deferActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toContain(
+      "Overdue: call the dentist (Overdue by 1 day); update the master plan (Overdue by 3 hours).",
+    );
+  });
+
+  it("[defer 2/6] a future-due item is identified as not-yet-due from exact dueAt", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "defer_timing",
+      selectedEvidenceIds: ["up1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...deferActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toContain("Not due yet: pay the electricity bill (Due in 3 days).");
+  });
+
+  it("[defer 3/6] an undated item is surfaced factually with no invented priority or urgency claim", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "defer_timing",
+      selectedEvidenceIds: ["la-undated"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...deferActiveContext, transcript: "What doesn't need doing yet?" });
+
+    expect(result.ownerResult).toContain("No due date set: read that book.");
+    // The honest caveat itself legitimately mentions "safe"/"unimportant" in
+    // a negated sense ("doesn't tell me what's ... safe") — this checks no
+    // *affirmative* priority/safety claim is made about this specific item.
+    expect(result.ownerResult).not.toMatch(/\bis (safe|unimportant|low priority)\b/i);
+  });
+
+  it("[defer 4/6] an overdue non-reminder action filed under `later` is never mislabeled as not-due-yet or safe to wait, merely because its category is `later`", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "defer_timing",
+      selectedEvidenceIds: ["la-overdue"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...deferActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toContain("Overdue: update the master plan (Overdue by 3 hours).");
+    expect(result.ownerResult).not.toContain("Not due yet");
+  });
+
+  it("[defer 5/6] a future-due item may be called 'not due yet' but the response never asserts it is safe, unimportant, or definitely can wait — and always states the timing-only limitation", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "defer_timing",
+      selectedEvidenceIds: ["od1", "up1", "la-overdue", "la-undated"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...deferActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toContain("Overdue: call the dentist (Overdue by 1 day); update the master plan (Overdue by 3 hours).");
+    expect(result.ownerResult).toContain("Not due yet: pay the electricity bill (Due in 3 days).");
+    expect(result.ownerResult).toContain("No due date set: read that book.");
+    expect(result.ownerResult).toContain(
+      "Due timing alone doesn't tell me what's truly safe to postpone or unimportant — just what's overdue and what isn't due yet.",
+    );
+    // Same distinction: the caveat's own negated wording is expected and
+    // asserted above — this checks no affirmative "X is safe/definitely can
+    // wait" claim is made about any specific item.
+    expect(result.ownerResult).not.toMatch(/\bis safe to (defer|postpone|wait)\b|\bcan definitely wait\b/i);
+  });
+
+  it("[defer 6/6] list/rank/contrast/nothing_new rendering outside deferral questions is unaffected by the defer_timing intent", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(DEFER_GROUNDED_RESULT);
+
+    const listCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["od1"] }),
+    });
+    const listResult = await listCoordinate({ ...deferActiveContext, transcript: "What else?" });
+    expect(listResult.ownerResult).toBe("Overdue: call the dentist (Overdue by 1 day).");
+
+    const rankCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi
+        .fn()
+        .mockResolvedValue({ responseIntent: "rank", selectedEvidenceIds: ["od1", "up1"], rankedEvidenceIds: ["up1", "od1"] }),
+    });
+    const rankResult = await rankCoordinate({ ...deferActiveContext, transcript: "Which one first?" });
+    expect(rankResult.ownerResult).toBe(
+      "In order: call the dentist (Overdue by 1 day); then pay the electricity bill (Due in 3 days).",
     );
   });
 });

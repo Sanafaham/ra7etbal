@@ -281,9 +281,8 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // retrieved. It never sees accountId/authorization and cannot
     // influence retrieval or tenant scoping — it only classifies and
     // selects among ids already authorized above.
-    let rawDecision;
-    try {
-      rawDecision = await reasonOverEvidence({
+    const askReasoning = () =>
+      reasonOverEvidence({
         userMessage: ownerTurn.transcript,
         conversationState: {
           priorCapability: ownerTurn.previousCapability ?? null,
@@ -295,11 +294,35 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         },
         authorizedEvidence: evidence,
       });
+
+    let rawDecision;
+    try {
+      rawDecision = await askReasoning();
     } catch {
       rawDecision = null;
     }
 
-    const validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
+    let validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
+
+    // Bounded structural retry (2026-08-29, Turn 4 canary fix): exactly one
+    // retry, and only when the FIRST call itself succeeded (rawDecision
+    // exists) but its returned decision failed validation — a genuine
+    // structural/schema-compliance gap (e.g. a required field silently
+    // dropped), not a semantic judgment call. A thrown error on the first
+    // call is left untouched (existing immediate-fallback behavior) — this
+    // retry is not a general reliability net for provider/network failures,
+    // only for "the call succeeded but the shape was wrong." Same turn,
+    // same authorized evidence, same task — never a changed prompt. At most
+    // 2 reasoning calls total per turn; no loop, no counter, no recursion.
+    if (!validated.ok && rawDecision) {
+      let retryDecision;
+      try {
+        retryDecision = await askReasoning();
+      } catch {
+        retryDecision = null;
+      }
+      validated = retryDecision ? validateAttentionDecision(retryDecision, evidence) : { ok: false };
+    }
 
     if (!validated.ok) {
       // Reasoning failed/returned invalid output, but fresh evidence IS

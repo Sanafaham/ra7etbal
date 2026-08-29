@@ -352,6 +352,38 @@ export function renderAttentionDecision(evidence, decision) {
     return `I don't have a reliable way to put those in order — here's what's active: ${renderByCategory(selectedItems)}`;
   }
 
+  // Deferral/postponement questions ("what can wait", "what can I leave
+  // until later", "is there anything I can postpone") — the model only
+  // identifies WHICH active items the question is about (selectedEvidenceIds);
+  // it never decides which of them are overdue, not-yet-due, or safe to
+  // defer. That split is computed here from each item's own dueAt, never
+  // from category membership — `later` is a residual UI bucket, not a
+  // semantic guarantee of low urgency, and production evidence has shown
+  // overdue non-reminder actions can sit in `later` (2026-08-29).
+  if (responseIntent === "defer_timing") {
+    const nowMs = new Date(evidence.generatedAt).getTime();
+    const overdue = [];
+    const notYetDue = [];
+    const noDueDate = [];
+    for (const item of selectedItems) {
+      if (!hasComparableDueAt(item)) {
+        noDueDate.push(item);
+        continue;
+      }
+      if (new Date(item.dueAt).getTime() < nowMs) overdue.push(item);
+      else notYetDue.push(item);
+    }
+    const parts = [];
+    if (overdue.length > 0) parts.push(`Overdue: ${overdue.map(describeItem).join("; ")}.`);
+    if (notYetDue.length > 0) parts.push(`Not due yet: ${notYetDue.map(describeItem).join("; ")}.`);
+    if (noDueDate.length > 0) parts.push(`No due date set: ${noDueDate.map((item) => item.label).join("; ")}.`);
+    if (parts.length === 0) return "Nothing matches that right now.";
+    parts.push(
+      "Due timing alone doesn't tell me what's truly safe to postpone or unimportant — just what's overdue and what isn't due yet.",
+    );
+    return parts.join(" ");
+  }
+
   if (responseIntent === "contrast") {
     const contrastedItems = Array.isArray(contrastedEvidenceIds)
       ? contrastedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean)
