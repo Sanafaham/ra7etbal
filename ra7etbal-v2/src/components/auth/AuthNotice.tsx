@@ -6,7 +6,7 @@ interface Props {
 const styles: Record<Props["kind"], string> = {
   error: "border-danger/30 bg-danger/8 text-danger",
   info: "border-sage/40 bg-sage/10 text-ink",
-  success: "border-gold/30 bg-gold/8 text-gold-dark",
+  success: "border-gold/30 bg-gold/10 text-gold-soft",
 };
 
 export default function AuthNotice({ kind, children }: Props) {
