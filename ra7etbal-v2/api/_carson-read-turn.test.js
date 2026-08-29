@@ -419,6 +419,45 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(result.groundingStatus).toBe("grounded");
   });
 
+  it("[diagnostic] the temporary _turn4Diagnostic never leaks the raw provider error message or unallowlisted decision fields — only an allowlisted, redacted summary (2026-08-29 CodeRabbit finding)", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockRejectedValue(new Error("sensitive provider internals should not leak"));
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "What else?" });
+
+    expect(result._turn4Diagnostic).toEqual({
+      responseIntent: null,
+      reasoningThrew: { name: "Error" },
+    });
+    expect(JSON.stringify(result)).not.toContain("sensitive provider internals");
+  });
+
+  it("[diagnostic] an invalid decision with extra/unexpected keys and free-text needsClarification is redacted to an allowlisted shape, never echoed verbatim", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "list",
+      // Missing selectedEvidenceIds entirely -> invalid, triggers the diagnostic path.
+      needsClarification: "some arbitrary model-authored free text that should never leak verbatim",
+      unexpectedModelField: "should never appear in the diagnostic",
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "What else?" });
+
+    expect(result._turn4Diagnostic).toEqual({
+      responseIntent: "list",
+      selectedEvidenceIds: null,
+      contrastedEvidenceIds: null,
+      rankedEvidenceIds: null,
+      hasNeedsClarification: true,
+      unexpectedKeys: ["unexpectedModelField"],
+      reasoningThrew: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("arbitrary model-authored free text");
+    expect(JSON.stringify(result)).not.toContain("should never appear in the diagnostic");
+  });
+
   it("['Anything overdue?' 1/5] selects and names the actual overdue items with due context when the reasoning model returns a valid decision", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockResolvedValue({

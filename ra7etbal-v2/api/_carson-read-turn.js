@@ -282,10 +282,13 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // influence retrieval or tenant scoping — it only classifies and
     // selects among ids already authorized above.
     // TEMPORARY DIAGNOSTIC (2026-08-29, read-only Turn 4 "What can wait?"
-    // investigation — remove once root cause is confirmed). Captures no
-    // secrets: only the model's own returned decision shape (ids already
-    // authorized for this owner's own turn) and a short thrown-error
-    // category/message, surfaced solely on the pre-existing fallback path.
+    // investigation — remove once root cause is confirmed). Exposes an
+    // allowlisted, redacted summary only — never the raw provider error
+    // text or any model-authored free text (needsClarification), and every
+    // evidence id it echoes is already visible to this same owner in the
+    // response's own `evidence` field (2026-08-29 CodeRabbit finding: the
+    // original version returned the raw decision object and full provider
+    // error message verbatim).
     let rawDecision;
     let reasoningThrew = null;
     try {
@@ -303,7 +306,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       });
     } catch (err) {
       rawDecision = null;
-      reasoningThrew = { name: err?.name ?? "Error", message: String(err?.message ?? "").slice(0, 200) };
+      reasoningThrew = { name: err?.name ?? "Error" };
     }
 
     const validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
@@ -313,6 +316,29 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       // valid — fall back to the existing full deterministic render
       // (truthful, just not intelligently filtered), never a fabricated
       // or free-form answer.
+      const KNOWN_DECISION_KEYS = [
+        "responseIntent",
+        "selectedEvidenceIds",
+        "contrastedEvidenceIds",
+        "rankedEvidenceIds",
+        "needsClarification",
+      ];
+      const turn4Diagnostic =
+        rawDecision && typeof rawDecision === "object"
+          ? {
+              responseIntent: typeof rawDecision.responseIntent === "string" ? rawDecision.responseIntent : null,
+              selectedEvidenceIds: Array.isArray(rawDecision.selectedEvidenceIds)
+                ? rawDecision.selectedEvidenceIds
+                : null,
+              contrastedEvidenceIds: Array.isArray(rawDecision.contrastedEvidenceIds)
+                ? rawDecision.contrastedEvidenceIds
+                : null,
+              rankedEvidenceIds: Array.isArray(rawDecision.rankedEvidenceIds) ? rawDecision.rankedEvidenceIds : null,
+              hasNeedsClarification: rawDecision.needsClarification != null,
+              unexpectedKeys: Object.keys(rawDecision).filter((k) => !KNOWN_DECISION_KEYS.includes(k)),
+              reasoningThrew,
+            }
+          : { responseIntent: null, reasoningThrew };
       return {
         handled: true,
         status: 200,
@@ -324,7 +350,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         ownerResult: renderAttentionSummary(evidence),
         surfacedEvidenceIds: collectAllEvidenceIds(evidence),
         responseIntent: "list",
-        _turn4Diagnostic: { rawDecision: rawDecision ?? null, reasoningThrew },
+        _turn4Diagnostic: turn4Diagnostic,
       };
     }
 
