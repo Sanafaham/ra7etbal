@@ -130,22 +130,22 @@ describe("validateAttentionDecision", () => {
 
   it("rejects a decision referencing any id not in the authorized evidence set", () => {
     const result = validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: ["task-1", "invented-id"] }, EVIDENCE);
-    expect(result).toEqual({ ok: false });
+    expect(result.ok).toBe(false);
   });
 
   it("rejects an unknown responseIntent", () => {
-    expect(validateAttentionDecision({ responseIntent: "delete_everything", selectedEvidenceIds: [] }, EVIDENCE)).toEqual({ ok: false });
+    expect(validateAttentionDecision({ responseIntent: "delete_everything", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(false);
   });
 
   it("rejects malformed shapes (non-object, missing selectedEvidenceIds, wrong types)", () => {
-    expect(validateAttentionDecision(null, EVIDENCE)).toEqual({ ok: false });
-    expect(validateAttentionDecision("not an object", EVIDENCE)).toEqual({ ok: false });
-    expect(validateAttentionDecision({ responseIntent: "list" }, EVIDENCE)).toEqual({ ok: false });
-    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: "task-1" }, EVIDENCE)).toEqual({ ok: false });
+    expect(validateAttentionDecision(null, EVIDENCE).ok).toBe(false);
+    expect(validateAttentionDecision("not an object", EVIDENCE).ok).toBe(false);
+    expect(validateAttentionDecision({ responseIntent: "list" }, EVIDENCE).ok).toBe(false);
+    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: "task-1" }, EVIDENCE).ok).toBe(false);
   });
 
   it("requires a non-empty selection unless the intent is nothing_new/clarify/not_attention/a contrast with a contrasted set", () => {
-    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: [] }, EVIDENCE)).toEqual({ ok: false });
+    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(false);
     expect(validateAttentionDecision({ responseIntent: "nothing_new", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "clarify", selectedEvidenceIds: [], needsClarification: "Which ones?" }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "not_attention", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
@@ -219,5 +219,30 @@ describe("validateAttentionDecision", () => {
       validateAttentionDecision({ responseIntent: "clarify", selectedEvidenceIds: [], needsClarification: "" }, EVIDENCE).decision
         .needsClarification,
     ).toBeNull();
+  });
+
+  describe("diagnostic-only reason codes (2026-08-29, Turn 4 production diagnostic — additive, never changes .ok)", () => {
+    it("returns a machine-readable reason string for every failure case, without changing .ok", () => {
+      const cases = [
+        [null, "not_object"],
+        [{ responseIntent: "delete_everything", selectedEvidenceIds: [] }, "invalid_response_intent"],
+        [{ responseIntent: "list" }, "selected_ids_not_array"],
+        [{ responseIntent: "list", selectedEvidenceIds: ["invented-id"] }, "selected_id_unauthorized_or_invalid_type"],
+        [{ responseIntent: "list", selectedEvidenceIds: ["task-1"], rankedEvidenceIds: "not-an-array" }, "ranked_ids_not_array"],
+        [{ responseIntent: "list", selectedEvidenceIds: ["task-1"], contrastedEvidenceIds: "not-an-array" }, "contrasted_ids_not_array"],
+        [{ responseIntent: "list", selectedEvidenceIds: [] }, "empty_selection_for_intent"],
+      ];
+      for (const [decision, expectedReason] of cases) {
+        const result = validateAttentionDecision(decision, EVIDENCE);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toBe(expectedReason);
+      }
+    });
+
+    it("never includes a reason field when validation succeeds", () => {
+      const result = validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: ["task-1"] }, EVIDENCE);
+      expect(result.ok).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
   });
 });

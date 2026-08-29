@@ -209,19 +209,25 @@ export async function reasonOverOperationalEvidenceWithClaude(
  * decision. Exported separately from the provider call so it can be
  * exercised directly in tests without a network dependency.
  */
+// Diagnostic-only reason codes (2026-08-29, Turn 4 production diagnostic —
+// see api/_carson-read-turn.js's CARSON_STAGE2_DIAGNOSTIC_LOGGING). Purely
+// additive: no existing caller reads this field, and .ok truthiness is
+// unchanged for every case below — this cannot alter production behavior,
+// only make an already-failing decision's failure reason observable in the
+// redacted diagnostic log.
 export function validateAttentionDecision(decision, authorizedEvidence) {
-  if (!decision || typeof decision !== "object") return { ok: false };
-  if (!RESPONSE_INTENTS.includes(decision.responseIntent)) return { ok: false };
-  if (!Array.isArray(decision.selectedEvidenceIds)) return { ok: false };
+  if (!decision || typeof decision !== "object") return { ok: false, reason: "not_object" };
+  if (!RESPONSE_INTENTS.includes(decision.responseIntent)) return { ok: false, reason: "invalid_response_intent" };
+  if (!Array.isArray(decision.selectedEvidenceIds)) return { ok: false, reason: "selected_ids_not_array" };
 
   const authorizedIds = new Set(collectEvidenceIds(authorizedEvidence));
   for (const id of decision.selectedEvidenceIds) {
-    if (typeof id !== "string" || !authorizedIds.has(id)) return { ok: false };
+    if (typeof id !== "string" || !authorizedIds.has(id)) return { ok: false, reason: "selected_id_unauthorized_or_invalid_type" };
   }
 
   let rankedEvidenceIds;
   if (decision.rankedEvidenceIds !== undefined && decision.rankedEvidenceIds !== null) {
-    if (!Array.isArray(decision.rankedEvidenceIds)) return { ok: false };
+    if (!Array.isArray(decision.rankedEvidenceIds)) return { ok: false, reason: "ranked_ids_not_array" };
     const selectedSet = new Set(decision.selectedEvidenceIds);
     const isValidRanking = decision.rankedEvidenceIds.every(
       (id) => typeof id === "string" && selectedSet.has(id),
@@ -234,7 +240,7 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
 
   let contrastedEvidenceIds;
   if (decision.contrastedEvidenceIds !== undefined && decision.contrastedEvidenceIds !== null) {
-    if (!Array.isArray(decision.contrastedEvidenceIds)) return { ok: false };
+    if (!Array.isArray(decision.contrastedEvidenceIds)) return { ok: false, reason: "contrasted_ids_not_array" };
     const isValidContrast = decision.contrastedEvidenceIds.every(
       (id) => typeof id === "string" && authorizedIds.has(id),
     );
@@ -252,7 +258,7 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
     decision.responseIntent !== "not_attention" &&
     !(decision.responseIntent === "contrast" && contrastedEvidenceIds?.length > 0)
   ) {
-    return { ok: false };
+    return { ok: false, reason: "empty_selection_for_intent" };
   }
 
   const needsClarification =
