@@ -339,7 +339,7 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
     completeness: "full",
     needsYou: [],
     overdueReminders: [
-      { id: "task-1", label: "call the dentist", type: "reminder", status: "pending", dueAt: null, dueDescription: "Overdue", assignee: null, category: "overdueReminders" },
+      { id: "task-1", label: "call the dentist", type: "reminder", status: "pending", dueAt: "2026-08-27T10:00:00.000Z", dueDescription: "Overdue", assignee: null, category: "overdueReminders" },
     ],
     upcomingReminders: [],
     waiting: [],
