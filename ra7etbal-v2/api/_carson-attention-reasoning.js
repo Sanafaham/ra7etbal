@@ -22,7 +22,7 @@
  * response, using only each item's own already-known label/category.
  */
 
-const RESPONSE_INTENTS = [
+export const RESPONSE_INTENTS = [
   "list",
   "rank",
   "contrast",

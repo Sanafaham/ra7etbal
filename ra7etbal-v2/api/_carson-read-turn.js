@@ -1,6 +1,6 @@
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 import { renderAttentionSummary, renderAttentionDecision } from "../shared/carson-attention-summary.js";
-import { validateAttentionDecision } from "./_carson-attention-reasoning.js";
+import { validateAttentionDecision, RESPONSE_INTENTS } from "./_carson-attention-reasoning.js";
 
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
@@ -316,6 +316,13 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       // valid — fall back to the existing full deterministic render
       // (truthful, just not intelligently filtered), never a fabricated
       // or free-form answer.
+      // 2026-08-29 CodeRabbit finding (round 2): the previous version copied
+      // responseIntent/evidence-id arrays from rawDecision verbatim without
+      // checking they were actually recognized/authorized values — an
+      // invented intent string or an unauthorized id would have passed
+      // through into the JSON response unfiltered. Only ever echo values
+      // that are already known-good: a real RESPONSE_INTENTS member, or an
+      // id already present in this same response's own evidence.
       const KNOWN_DECISION_KEYS = [
         "responseIntent",
         "selectedEvidenceIds",
@@ -323,17 +330,18 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         "rankedEvidenceIds",
         "needsClarification",
       ];
+      const authorizedIds = new Set(collectAllEvidenceIds(evidence));
+      const onlyAuthorizedIds = (arr) =>
+        Array.isArray(arr) ? arr.filter((id) => typeof id === "string" && authorizedIds.has(id)) : null;
       const turn4Diagnostic =
         rawDecision && typeof rawDecision === "object"
           ? {
-              responseIntent: typeof rawDecision.responseIntent === "string" ? rawDecision.responseIntent : null,
-              selectedEvidenceIds: Array.isArray(rawDecision.selectedEvidenceIds)
-                ? rawDecision.selectedEvidenceIds
+              responseIntent: RESPONSE_INTENTS.includes(rawDecision.responseIntent)
+                ? rawDecision.responseIntent
                 : null,
-              contrastedEvidenceIds: Array.isArray(rawDecision.contrastedEvidenceIds)
-                ? rawDecision.contrastedEvidenceIds
-                : null,
-              rankedEvidenceIds: Array.isArray(rawDecision.rankedEvidenceIds) ? rawDecision.rankedEvidenceIds : null,
+              selectedEvidenceIds: onlyAuthorizedIds(rawDecision.selectedEvidenceIds),
+              contrastedEvidenceIds: onlyAuthorizedIds(rawDecision.contrastedEvidenceIds),
+              rankedEvidenceIds: onlyAuthorizedIds(rawDecision.rankedEvidenceIds),
               hasNeedsClarification: rawDecision.needsClarification != null,
               unexpectedKeys: Object.keys(rawDecision).filter((k) => !KNOWN_DECISION_KEYS.includes(k)),
               reasoningThrew,

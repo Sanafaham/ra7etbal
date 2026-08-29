@@ -458,6 +458,33 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(JSON.stringify(result)).not.toContain("should never appear in the diagnostic");
   });
 
+  it("[diagnostic] an invented responseIntent and unauthorized evidence ids are stripped from the diagnostic — only recognized intents and already-authorized ids ever pass through (2026-08-29 CodeRabbit finding, round 2)", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "delete_everything",
+      selectedEvidenceIds: ["task-1", "invented-id"],
+      contrastedEvidenceIds: ["also-invented"],
+      rankedEvidenceIds: ["task-1", "task-2", "yet-another-invented-id"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "What else?" });
+
+    expect(result._turn4Diagnostic).toEqual({
+      responseIntent: null,
+      selectedEvidenceIds: ["task-1"],
+      contrastedEvidenceIds: [],
+      rankedEvidenceIds: ["task-1", "task-2"],
+      hasNeedsClarification: false,
+      unexpectedKeys: [],
+      reasoningThrew: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("delete_everything");
+    expect(JSON.stringify(result)).not.toContain("invented-id");
+    expect(JSON.stringify(result)).not.toContain("also-invented");
+    expect(JSON.stringify(result)).not.toContain("yet-another-invented-id");
+  });
+
   it("['Anything overdue?' 1/5] selects and names the actual overdue items with due context when the reasoning model returns a valid decision", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockResolvedValue({
