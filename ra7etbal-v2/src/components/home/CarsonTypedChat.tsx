@@ -118,7 +118,7 @@ export default function CarsonTypedChat({
       )}
 
       <div
-        className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-charcoal/10 bg-white/70 p-3"
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-border bg-surface-subtle p-3"
         aria-live="polite"
         aria-label="Carson conversation"
       >
@@ -159,7 +159,7 @@ export default function CarsonTypedChat({
                     "max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed " +
                     (message.role === "user"
                       ? "rounded-br-md bg-charcoal text-white"
-                      : "rounded-bl-md border border-charcoal/10 bg-warm-white text-ink/80")
+                      : "rounded-bl-md border border-border bg-surface text-text-soft")
                   }
                 >
                   <p className="whitespace-pre-wrap break-words">{message.content}</p>
@@ -189,7 +189,7 @@ export default function CarsonTypedChat({
 
         {awaitingResponse && (
           <div className="flex justify-start">
-            <div className="rounded-2xl rounded-bl-md border border-charcoal/10 bg-warm-white px-3.5 py-2.5 text-[12px] text-ink/50">
+            <div className="rounded-2xl rounded-bl-md border border-border bg-surface px-3.5 py-2.5 text-[12px] text-text-muted">
               Carson is working…
             </div>
           </div>
@@ -204,7 +204,7 @@ export default function CarsonTypedChat({
       )}
 
       {photos.length > 0 && (
-        <div className="mt-2 rounded-2xl border border-border bg-white/90 px-2.5 py-2">
+        <div className="mt-2 rounded-2xl border border-border bg-surface px-2.5 py-2">
           <div className="flex items-center gap-2 overflow-x-auto">
             {photos.map((photo, index) => (
               <div key={photo.id} className="relative shrink-0">
@@ -235,7 +235,7 @@ export default function CarsonTypedChat({
 
       <form
         onSubmit={handleSubmit}
-        className="sticky bottom-0 z-10 mt-3 flex items-end gap-2 bg-warm-white/95 pb-1 pt-2 backdrop-blur"
+        className="sticky bottom-0 z-10 mt-3 flex items-end gap-2 bg-surface/95 pb-1 pt-2 backdrop-blur"
       >
         <button
           type="button"
@@ -243,7 +243,7 @@ export default function CarsonTypedChat({
           disabled={awaitingResponse || photoLimitReached}
           aria-label={photoLimitReached ? photoLimitMessage : "Attach photo to typed Carson message"}
           title={photoLimitReached ? photoLimitMessage : "Attach photo"}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-charcoal/15 bg-white text-ink/55 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-surface-subtle text-text-soft transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -262,7 +262,7 @@ export default function CarsonTypedChat({
           maxLength={12_000}
           disabled={awaitingResponse}
           placeholder="Message Carson…"
-          className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-charcoal/15 bg-white px-3.5 py-3 text-[14px] text-ink outline-none transition placeholder:text-ink/35 focus:border-sage disabled:opacity-60"
+          className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-border bg-surface-subtle px-3.5 py-3 text-[14px] text-ink outline-none transition placeholder:text-text-muted focus:border-gold disabled:opacity-60"
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -289,7 +289,7 @@ export default function CarsonTypedChat({
         <button
           type="button"
           onClick={onEnd}
-          className="h-11 shrink-0 rounded-full border border-charcoal/15 bg-white px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink/55 transition active:scale-95"
+          className="h-11 shrink-0 rounded-full border border-border bg-surface-subtle px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-soft transition active:scale-95"
         >
           End
         </button>

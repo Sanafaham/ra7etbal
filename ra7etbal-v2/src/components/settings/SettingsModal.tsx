@@ -442,7 +442,7 @@ function DisplayNameRow({
           disabled={busy}
           placeholder="e.g. Sana"
           maxLength={80}
-          className="mb-2 w-full rounded-xl border border-sage/30 bg-white px-3 py-2 text-base text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2 focus:ring-sage/40 disabled:opacity-50"
+          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
         {error && <p className="mb-2 text-xs text-rose-700">{error}</p>}
         <div className="flex gap-2">
@@ -459,7 +459,7 @@ function DisplayNameRow({
             type="button"
             onClick={cancel}
             disabled={busy}
-            className="rounded-full border border-sage/30 bg-white px-4 py-1.5 text-xs font-medium text-ink transition hover:bg-cream disabled:opacity-50"
+            className="rounded-full border border-border bg-surface-subtle px-4 py-1.5 text-xs font-medium text-ink transition hover:bg-surface disabled:opacity-50"
           >
             Cancel
           </button>
@@ -547,7 +547,7 @@ function WeatherCityRow({
           disabled={busy}
           placeholder="e.g. Dubai, Fethiye, London"
           maxLength={80}
-          className="mb-2 w-full rounded-xl border border-sage/30 bg-white px-3 py-2 text-base text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2 focus:ring-sage/40 disabled:opacity-50"
+          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
         {error && <p className="mb-2 text-xs text-rose-700">{error}</p>}
         <div className="flex gap-2">
@@ -564,7 +564,7 @@ function WeatherCityRow({
             type="button"
             onClick={cancel}
             disabled={busy}
-            className="rounded-full border border-sage/30 bg-white px-4 py-1.5 text-xs font-medium text-ink transition hover:bg-cream disabled:opacity-50"
+            className="rounded-full border border-border bg-surface-subtle px-4 py-1.5 text-xs font-medium text-ink transition hover:bg-surface disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1044,7 +1044,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
         placeholder={"e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."}
         rows={8}
         disabled={status === "loading" || saving}
-        className="w-full resize-none rounded-xl border border-border bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+        className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-4 py-3 text-sm text-ink placeholder:text-text-muted outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
       />
 
       <div className="flex items-center justify-between gap-3">
@@ -1170,7 +1170,7 @@ function NotificationDevicesPanel({
             return (
             <li
               key={device.id}
-              className="flex items-start justify-between gap-3 rounded-xl border border-border bg-white px-4 py-3"
+              className="flex items-start justify-between gap-3 rounded-xl border border-border bg-surface-subtle px-4 py-3"
             >
               <div className="min-w-0">
                 <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
@@ -1255,7 +1255,7 @@ function ConfirmPane({
           type="button"
           onClick={onCancel}
           disabled={busy}
-          className="rounded-full border border-sage/30 bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+          className="rounded-full border border-border bg-surface-subtle px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-surface disabled:opacity-50"
         >
           Cancel
         </button>

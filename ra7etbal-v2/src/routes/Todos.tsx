@@ -408,7 +408,7 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
               </summary>
               <ul className="mt-2 space-y-2">
                 {completedTodos.map((todo) => (
-                  <li key={todo.id} className="flex items-center justify-between gap-2 rounded-xl border border-sage/15 bg-white/50 px-3 py-2">
+                  <li key={todo.id} className="flex items-center justify-between gap-2 rounded-xl border border-border bg-surface-subtle px-3 py-2">
                     <span className="text-sm text-ink/50 line-through">{todo.title}</span>
                     <div className="flex shrink-0 items-center gap-3">
                       <button
@@ -501,7 +501,7 @@ function TodoCard({
 
       {/* ── Remind Me inline ── */}
       {reminding && (
-        <div className="mt-3 space-y-2 rounded-xl border border-gold/25 bg-amber-50/50 p-3">
+        <div className="mt-3 space-y-2 rounded-xl border border-gold/25 bg-surface-subtle p-3">
           <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 5pm)</label>
           <div className="flex gap-2">
             <input type="text" value={remindTimeText} onChange={(e) => onRemindTimeChange(e.target.value)}
@@ -509,7 +509,7 @@ function TodoCard({
               placeholder="tomorrow at 5pm"
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus disabled={settingReminder}
-              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-sage disabled:opacity-50" />
+              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-text-muted focus:border-gold disabled:opacity-50" />
             <button type="button" onClick={() => void onRemindSubmit(todo)} disabled={settingReminder || !remindTimeText.trim()}
               className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
               {settingReminder && <Spinner size={11} />}
@@ -526,13 +526,13 @@ function TodoCard({
 
       {/* ── Delegate inline ── */}
       {delegating && (
-        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/10 bg-charcoal/5 p-3">
+        <div className="mt-3 space-y-2 rounded-xl border border-border bg-surface-subtle p-3">
           <label className="text-xs font-medium text-ink/55">Who should handle this?</label>
           <div className="flex gap-2">
             <select value={delegatePersonId} onChange={(e) => onDelegatePersonChange(e.target.value)} disabled={sendingDelegate}
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
-              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none focus:border-sage disabled:opacity-50">
+              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-gold disabled:opacity-50">
               <option value="">Select a person…</option>
               {peopleItems.map((p) => <option key={p.id} value={p.id}>{p.name}{p.phone ? "" : " (no phone)"}</option>)}
             </select>
@@ -552,7 +552,7 @@ function TodoCard({
 
       {/* ── Calendar inline ── */}
       {addingToCalendar && (
-        <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+        <div className="mt-3 space-y-2 rounded-xl border border-border bg-surface-subtle p-3">
           <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 11, Monday at 2pm)</label>
           <div className="flex gap-2">
             <input type="text" value={calendarTimeText} onChange={(e) => onCalendarTimeChange(e.target.value)}
@@ -560,7 +560,7 @@ function TodoCard({
               placeholder="tomorrow at 11am"
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus disabled={settingCalendar}
-              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-sky-400 disabled:opacity-50" />
+              className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-text-muted focus:border-gold disabled:opacity-50" />
             <button type="button" onClick={() => void onCalendarSubmit(todo)} disabled={settingCalendar || !calendarTimeText.trim()}
               className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
               {settingCalendar && <Spinner size={11} />}
@@ -582,7 +582,7 @@ function TodoCard({
           <span className="text-xs font-medium text-gold">Reminder set ✓</span>
         ) : !reminding ? (
           <button type="button" onClick={() => onRemindMe(todo)} disabled={busy || delegating || addingToCalendar}
-            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50">
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-gold/10 px-3 py-1 text-xs font-medium text-gold-soft transition hover:bg-gold/15 disabled:opacity-50">
             Remind Me
           </button>
         ) : null}
@@ -592,7 +592,7 @@ function TodoCard({
           <span className="text-xs font-medium text-ink/60">Sent to {delegatedName} ✓</span>
         ) : !delegating ? (
           <button type="button" onClick={() => void onDelegate(todo)} disabled={busy || reminding || addingToCalendar}
-            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-charcoal/15 bg-charcoal/5 px-3 py-1 text-xs font-medium text-charcoal/75 transition hover:bg-charcoal/10 disabled:opacity-50">
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-3 py-1 text-xs font-medium text-text-soft transition hover:bg-surface disabled:opacity-50">
             Delegate
           </button>
         ) : null}
@@ -604,7 +604,7 @@ function TodoCard({
             onClick={onToggleOverflow}
             aria-label="More actions"
             aria-expanded={overflowOpen}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-ink/10 bg-white text-ink/40 transition hover:bg-ink/5 hover:text-ink/60"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-subtle text-text-muted transition hover:bg-surface hover:text-text-soft"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
@@ -612,7 +612,7 @@ function TodoCard({
           </button>
 
           {overflowOpen && (
-            <div className="absolute right-0 bottom-full mb-1.5 z-20 min-w-[170px] rounded-2xl border border-sage/20 bg-white shadow-xl">
+            <div className="absolute right-0 bottom-full mb-1.5 z-20 min-w-[170px] rounded-2xl border border-border bg-surface shadow-xl">
               {/* Add to Calendar */}
               {calendarAdded ? (
                 <div className="px-4 py-3 text-xs font-medium text-sky-700">Added to calendar ✓</div>

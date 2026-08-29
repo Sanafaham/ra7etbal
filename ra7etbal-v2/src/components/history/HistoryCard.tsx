@@ -77,7 +77,7 @@ export default function HistoryCard({ task, message }: Props) {
       )}
 
       {message?.content && (
-        <p className="mt-2 rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/70">
+        <p className="mt-2 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-text-soft">
           “{message.content}”
         </p>
       )}
@@ -89,7 +89,7 @@ export default function HistoryCard({ task, message }: Props) {
           </span>
         )}
         {isArchivedOnly && (
-          <span className="rounded-full border border-sage/20 bg-cream/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/55">
+          <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-soft">
             Archived
           </span>
         )}

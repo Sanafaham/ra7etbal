@@ -574,7 +574,7 @@ export default function Updates() {
               type="button"
               onClick={() => setConfirmingClearHistory(false)}
               disabled={clearingHistory}
-              className="rounded-full border border-border bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+              className="rounded-full border border-border bg-surface px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-surface-subtle disabled:opacity-50"
             >
               Cancel
             </button>
