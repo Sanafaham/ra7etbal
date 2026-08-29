@@ -281,7 +281,13 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // retrieved. It never sees accountId/authorization and cannot
     // influence retrieval or tenant scoping — it only classifies and
     // selects among ids already authorized above.
+    // TEMPORARY DIAGNOSTIC (2026-08-29, read-only Turn 4 "What can wait?"
+    // investigation — remove once root cause is confirmed). Captures no
+    // secrets: only the model's own returned decision shape (ids already
+    // authorized for this owner's own turn) and a short thrown-error
+    // category/message, surfaced solely on the pre-existing fallback path.
     let rawDecision;
+    let reasoningThrew = null;
     try {
       rawDecision = await reasonOverEvidence({
         userMessage: ownerTurn.transcript,
@@ -295,8 +301,9 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         },
         authorizedEvidence: evidence,
       });
-    } catch {
+    } catch (err) {
       rawDecision = null;
+      reasoningThrew = { name: err?.name ?? "Error", message: String(err?.message ?? "").slice(0, 200) };
     }
 
     const validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
@@ -317,6 +324,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         ownerResult: renderAttentionSummary(evidence),
         surfacedEvidenceIds: collectAllEvidenceIds(evidence),
         responseIntent: "list",
+        _turn4Diagnostic: { rawDecision: rawDecision ?? null, reasoningThrew },
       };
     }
 
