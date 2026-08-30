@@ -72,7 +72,7 @@ export default function People() {
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">
-            People{items.length > 0 && <span className="ml-1.5 text-[19px] font-medium text-ink/55" style={{ fontFamily: "var(--font-sans)" }}>({items.length})</span>}
+            People{items.length > 0 && <span className="ml-1.5 text-[19px] font-medium text-ink" style={{ fontFamily: "var(--font-sans)" }}>({items.length})</span>}
           </h1>
           <p className="mt-1.5 text-[13px] font-medium text-text-soft">People Carson coordinates with on your behalf.</p>
         </div>
@@ -80,7 +80,7 @@ export default function People() {
           type="button"
           onClick={() => setAdding(true)}
           aria-label="Add person"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sage px-3.5 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 active:brightness-95"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-gold px-3.5 py-2 text-[13px] font-bold text-cream shadow-sm transition hover:brightness-105 active:brightness-95"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
@@ -107,7 +107,7 @@ export default function People() {
 
       {/* ── Loading ── */}
       {initialLoading && (
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={20} label="Loading people" />
         </div>
       )}
@@ -127,7 +127,7 @@ export default function People() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people…"
             aria-label="Search people"
-            className="w-full rounded-2xl border border-border-strong bg-surface/90 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-text-muted focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
+            className="w-full rounded-2xl border border-border-strong bg-surface/90 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20"
           />
         </div>
       )}
@@ -140,7 +140,7 @@ export default function People() {
             {["A", "B", "C"].map((l) => (
               <span
                 key={l}
-                className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-gold/10 text-sm font-semibold text-gold shadow-sm"
+                className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-gold bg-gold text-sm font-semibold text-cream shadow-sm"
               >
                 {l}
               </span>
@@ -153,7 +153,7 @@ export default function People() {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="mt-5 inline-flex items-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-105 active:brightness-95"
+            className="mt-5 inline-flex items-center gap-2 rounded-full bg-gold px-5 py-2.5 text-sm font-medium text-cream shadow-sm transition hover:brightness-105 active:brightness-95"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />

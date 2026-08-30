@@ -101,7 +101,7 @@ export default function Modal({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="-mr-1 rounded-full p-1 text-ink/60 transition hover:bg-ink/5 hover:text-ink"
+              className="-mr-1 rounded-full p-1 text-ink transition hover:bg-gold/10 hover:text-gold"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path

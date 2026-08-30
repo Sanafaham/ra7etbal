@@ -64,7 +64,7 @@ export default function History() {
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink">History</h1>
-          <p className="text-sm text-text-soft">
+          <p className="text-sm text-ink">
             Past completed coordination — confirmed and archived items.
           </p>
         </div>
@@ -81,13 +81,13 @@ export default function History() {
       )}
 
       {initialLoading && (
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={20} label="Loading history" />
         </div>
       )}
 
       {!initialLoading && tasks.length === 0 && status === "ready" && (
-        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/80 p-8 text-center text-sm text-text-soft">
+        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle p-8 text-center text-sm text-ink">
           Nothing in history yet. Confirmed and archived items will appear here.
           <div className="mt-3">
             <Link
@@ -102,7 +102,7 @@ export default function History() {
 
       {groups.map((g) => (
         <section key={g.key} className="space-y-3">
-          <h2 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/55">
+          <h2 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink">
             {g.label} · {g.tasks.length}
           </h2>
           <ul className="space-y-3">

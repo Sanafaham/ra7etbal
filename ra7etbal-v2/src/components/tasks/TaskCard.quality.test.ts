@@ -5,9 +5,10 @@ import { join } from "node:path";
 const SOURCE = readFileSync(join(__dirname, "TaskCard.tsx"), "utf-8");
 
 function headerLifecycleBlock(): string {
+  const headerStart = SOURCE.indexOf('<div className="flex items-center gap-2 text-xs text-ink">');
   return SOURCE.slice(
-    SOURCE.indexOf('<div className="flex items-center gap-2 text-xs text-ink/55">'),
-    SOURCE.indexOf("{reminderDue?.overdue", SOURCE.indexOf('<div className="flex items-center gap-2 text-xs text-ink/55">')),
+    headerStart,
+    SOURCE.indexOf("{reminderDue?.overdue", headerStart),
   );
 }
 

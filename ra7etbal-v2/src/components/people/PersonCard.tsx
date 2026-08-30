@@ -17,9 +17,9 @@ export default function PersonCard({ person, onEdit }: Props) {
     <button
       type="button"
       onClick={() => onEdit(person)}
-      className="flex w-full items-center gap-3 rounded-2xl border border-border bg-surface/90 px-4 py-2.5 text-left shadow-sm transition hover:bg-surface focus:outline-none focus:ring-2 focus:ring-sage/40"
+      className="flex w-full items-center gap-3 rounded-2xl border border-border bg-surface/90 px-4 py-2.5 text-left shadow-sm transition hover:bg-surface focus:outline-none focus:ring-2 focus:ring-gold/40"
     >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-sm font-semibold text-gold">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold text-sm font-semibold text-cream">
         {initials(person.name)}
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">

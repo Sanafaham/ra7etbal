@@ -32,6 +32,13 @@ describe("Notifications Inbox V1 UI wiring", () => {
     expect(route).toContain("Could not dismiss this notification.");
   });
 
+  it("uses the approved gold accent only for the semantic unread indicator", () => {
+    expect(route).toContain(
+      '!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-gold" aria-label="Unread" />',
+    );
+    expect(route).not.toContain('rounded-full bg-sage" aria-label="Unread"');
+  });
+
   it("keeps the bell count independent from What's Happening attention", () => {
     expect(app).toContain("selectUnreadNotificationCount");
     expect(app).toContain('>Alerts</span>');

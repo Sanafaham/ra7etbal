@@ -25,10 +25,10 @@ export default function CarsonLivePill() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage opacity-60" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sage" />
         </span>
-        <span className="text-[12px] font-medium text-ink/80">
+        <span className="text-[12px] font-medium text-ink">
           {isText ? "Carson chat is active" : "Carson is listening"}
         </span>
-        <span className="text-[11px] text-ink/40">{isText ? "· Open" : "· End call"}</span>
+        <span className="text-[11px] text-ink">{isText ? "· Open" : "· End call"}</span>
       </button>
     </div>
   );

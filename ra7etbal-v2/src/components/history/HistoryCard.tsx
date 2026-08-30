@@ -50,24 +50,24 @@ export default function HistoryCard({ task, message }: Props) {
 
   return (
     <article className="rounded-2xl border border-border bg-surface/90 p-4 shadow-sm">
-      <header className="flex items-center justify-between gap-2 text-xs text-text-soft">
+      <header className="flex items-center justify-between gap-2 text-xs text-ink">
         <span className="font-medium uppercase tracking-wide">
           {TYPE_LABEL[task.type] ?? task.type}
         </span>
         <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
       </header>
 
-      <p className="mt-2 text-base leading-snug text-ink/85">{task.description}</p>
+      <p className="mt-2 text-base leading-snug text-ink">{task.description}</p>
 
       {signedImageUrl && (
         <div className="mt-2 space-y-1">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/40">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink">
             Reference image
           </p>
           <img
             src={signedImageUrl}
             alt="Reference image attached by owner"
-            className="max-h-40 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+            className="max-h-40 w-full rounded-xl border border-gold/30 object-cover shadow-sm"
           />
         </div>
       )}
@@ -77,19 +77,19 @@ export default function HistoryCard({ task, message }: Props) {
       )}
 
       {message?.content && (
-        <p className="mt-2 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-text-soft">
+        <p className="mt-2 rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-ink">
           “{message.content}”
         </p>
       )}
 
-      <footer className="mt-2 flex items-center gap-2 text-[11px] text-text-soft">
+      <footer className="mt-2 flex items-center gap-2 text-[11px] text-ink">
         {isDone && (
-          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+          <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
             Confirmed done
           </span>
         )}
         {isArchivedOnly && (
-          <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-soft">
+          <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink">
             Archived
           </span>
         )}
@@ -112,14 +112,14 @@ function ProofPhotoThumbnail({ url }: { url: string }) {
   return (
     <>
       <div className="mt-2 space-y-1">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-gold">
           Proof photo
         </p>
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="View proof photo full screen"
-          className="block w-full overflow-hidden rounded-xl border border-emerald-200 shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          className="block w-full overflow-hidden rounded-xl border border-gold/30 shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
         >
           <img
             src={url}

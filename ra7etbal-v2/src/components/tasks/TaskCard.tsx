@@ -29,18 +29,14 @@ interface Props {
   isNeedsYouCard?: boolean;
 }
 
-// 3 calm color groups:
-//   sage  — things to do (action, errand)
-//   amber — time-sensitive or pending decisions (reminder, decision, parked)
-//   slate — delegated or awaiting others (delegation, followup)
 const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
-  action:     { label: "Action",     cls: "bg-sage/15 text-sage border-sage/30" },
-  errand:     { label: "Errand",     cls: "bg-sage/15 text-sage border-sage/30" },
-  reminder:   { label: "Reminder",   cls: "bg-amber-100 text-amber-800 border-amber-200" },
-  decision:   { label: "Decision",   cls: "bg-amber-100 text-amber-800 border-amber-200" },
-  parked:     { label: "Parked",     cls: "bg-gold/10 text-gold-soft border-gold/35" },
-  delegation: { label: "Delegation", cls: "bg-slate-100 text-slate-700 border-slate-200" },
-  followup:   { label: "Follow-up",  cls: "bg-slate-100 text-slate-700 border-slate-200" },
+  action:     { label: "Action",     cls: "bg-surface-subtle text-ink border-border" },
+  errand:     { label: "Errand",     cls: "bg-surface-subtle text-ink border-border" },
+  reminder:   { label: "Reminder",   cls: "bg-gold text-cream border-gold" },
+  decision:   { label: "Decision",   cls: "bg-gold text-cream border-gold" },
+  parked:     { label: "Parked",     cls: "bg-gold text-cream border-gold" },
+  delegation: { label: "Delegation", cls: "bg-surface-subtle text-ink border-border" },
+  followup:   { label: "Follow-up",  cls: "bg-surface-subtle text-ink border-border" },
 };
 
 export default function TaskCard({
@@ -184,7 +180,7 @@ export default function TaskCard({
     <article
       className={
         "rounded-2xl border bg-surface/90 p-4 shadow-sm transition " +
-        (isDone ? "border-border opacity-70" : "border-sage/30")
+        "border-border"
       }
     >
       <header className="flex items-start justify-between gap-3">
@@ -196,36 +192,36 @@ export default function TaskCard({
         >
           {type.label}
         </span>
-        <div className="flex items-center gap-2 text-xs text-text-soft">
+        <div className="flex items-center gap-2 text-xs text-ink">
           {isWaitingDelegation && qualityLifecycle.badge === "Needs your review" ? (
-            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Needs your review
             </span>
           ) : isWaitingDelegation && qualityLifecycle.badge === "Proof submitted" ? (
-            <span className="rounded-full border border-sky-400/40 bg-sky-400/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Proof submitted
             </span>
           ) : isWaitingDelegation && qualityLifecycle.badge === "Waiting for confirmation" ? (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Waiting for confirmation
             </span>
           ) : null}
           {task.type === "delegation" && qualityLifecycle.badge === "Completed" ? (
-            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Completed
             </span>
           ) : isDone && task.type === "delegation" && (
-            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Confirmed done
             </span>
           )}
           {isWaitingDelegationOrFollowUp && task.escalated_at != null && (
-            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+            <span className="rounded-full border border-gold/35 bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink">
               Escalated
             </span>
           )}
           {reminderDue?.overdue && (
-            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+            <span className="rounded-full border border-gold/35 bg-surface-subtle px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink">
               Overdue
             </span>
           )}
@@ -236,29 +232,29 @@ export default function TaskCard({
       <p
         className={
           "mt-3 text-base leading-snug " +
-          (isDone ? "text-ink/55 line-through" : "text-ink")
+          (isDone ? "text-ink line-through" : "text-ink")
         }
       >
         {task.description}
       </p>
 
       {(task.type === "followup" || task.type === "delegation") && task.created_at && (
-        <p className="mt-1 text-[11px] text-text-muted">
+        <p className="mt-1 text-[11px] text-ink">
           {formatFollowUpSentTime(task.created_at)}
         </p>
       )}
 
       {completedAtLabel && (
-        <p className="mt-1 text-[11px] text-text-muted">{completedAtLabel}</p>
+        <p className="mt-1 text-[11px] text-ink">{completedAtLabel}</p>
       )}
 
       {showNeedsYouTimestamp && (
-        <p className="mt-1 text-[11px] text-text-muted">{needsYouTimestampLabel}</p>
+        <p className="mt-1 text-[11px] text-ink">{needsYouTimestampLabel}</p>
       )}
 
       {signedImageUrl && (
         <div className="mt-3 space-y-1">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/40">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink">
             Reference image
           </p>
           <img
@@ -274,9 +270,9 @@ export default function TaskCard({
       )}
 
       {showUncertainReview && (
-        <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+        <div className="rounded-lg border border-gold/30 bg-surface-subtle px-3 py-2 text-sm text-ink">
           <p className="font-medium">Carson is unsure — needs your review</p>
-          {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
+          {task.quality_review_note && <p className="mt-0.5 text-ink">{task.quality_review_note}</p>}
         </div>
       )}
 
@@ -285,14 +281,14 @@ export default function TaskCard({
       )}
 
       {message?.content && (
-        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-text-soft">
+        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-ink">
           "{message.content}"
         </p>
       )}
 
       {reminderDue && !isDone && (
         <div className="mt-2 space-y-0.5 text-xs font-medium">
-          <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
+          <p className="text-gold">
             {reminderDue.dueTime}
           </p>
           {/* Only show label when it adds relative countdown/overdue info not
@@ -300,12 +296,12 @@ export default function TaskCard({
               2 hours"). For absolute future times the label duplicates dueTime. */}
           {(reminderDue.label.startsWith("Due in") ||
             reminderDue.label.startsWith("Overdue")) && (
-            <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
+            <p className="text-gold">
               {reminderDue.label}
             </p>
           )}
           {reminderCreatedLabel && (
-            <p className="text-[11px] font-normal text-ink/40">{reminderCreatedLabel}</p>
+            <p className="text-[11px] font-normal text-ink">{reminderCreatedLabel}</p>
           )}
         </div>
       )}
@@ -317,7 +313,7 @@ export default function TaskCard({
             type="button"
             onClick={() => void send()}
             disabled={!!busy}
-            className="inline-flex items-center gap-2 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
+            className="inline-flex items-center gap-2 rounded-full border border-gold/40 bg-gold px-3 py-1.5 text-xs font-medium text-cream shadow-sm transition hover:brightness-105"
           >
             {busy === "send" ? "Sending…" : copied ? "Sent ✓" : "Send message"}
           </button>
@@ -336,7 +332,7 @@ export default function TaskCard({
               "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition disabled:opacity-50 " +
               (isDone
                 ? "border-border bg-surface-subtle text-ink hover:bg-surface"
-                : "border-sage/40 bg-sage text-white hover:brightness-105")
+                : "border-gold/40 bg-gold text-cream hover:brightness-105")
             }
           >
             {busy === "done" && <Spinner size={12} />}
@@ -351,8 +347,8 @@ export default function TaskCard({
           className={
             "ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 " +
             (confirmingDelete
-              ? "border-danger bg-danger text-white"
-              : "border-transparent bg-transparent text-danger hover:bg-danger/8")
+              ? "border-gold bg-surface-subtle text-ink"
+              : "border-transparent bg-transparent text-ink hover:text-gold")
           }
         >
           {busy === "delete" && <Spinner size={12} />}
@@ -362,7 +358,7 @@ export default function TaskCard({
 
       {/* Calm forward-looking helper under Send. */}
       {isWaitingDelegation && message?.content && (
-        <p className="mt-2 text-[11px] leading-snug text-ink/55">
+        <p className="mt-2 text-[11px] leading-snug text-ink">
           Sent through Ra7etBal WhatsApp. The task stays open until they tap
           Done.
         </p>
@@ -371,12 +367,12 @@ export default function TaskCard({
       {/* Manual override hidden behind a small disclosure so it doesn't
           sit beside Send message as an equal action. */}
       {isWaitingDelegation && (
-        <div className="mt-2 text-xs text-ink/55">
+        <div className="mt-2 text-xs text-ink">
           <button
             type="button"
             aria-expanded={manualOptionsOpen}
             onClick={() => setManualOptionsOpen((open) => !open)}
-            className="select-none text-[11px] text-ink/55 transition hover:text-ink/80"
+            className="select-none text-[11px] text-ink transition hover:text-gold"
           >
             Manual options
           </button>
@@ -391,7 +387,7 @@ export default function TaskCard({
                 {busy === "done" && <Spinner size={12} />}
                 <span>Mark done manually</span>
               </button>
-              <p className="text-[11px] italic text-ink/45">
+              <p className="text-[11px] italic text-ink">
                 Use only if confirmed outside the app.
               </p>
             </div>
@@ -427,14 +423,14 @@ function ProofPhotoThumbnail({ url }: { url: string }) {
   return (
     <>
       <div className="mt-3 space-y-1">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-gold-soft">
           Proof photo
         </p>
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="View proof photo full screen"
-          className="block w-full overflow-hidden rounded-xl border border-emerald-200 shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          className="block w-full overflow-hidden rounded-xl border border-gold/30 shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40"
         >
           <img
             src={url}
@@ -532,25 +528,25 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
   const isBusy = !!busyAction;
 
   return (
-    <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+    <div className="rounded-lg border border-gold/30 bg-surface-subtle px-3 py-2 text-sm text-ink">
       <p className="font-medium">
         {assignedLabel === "Me" ? "Someone" : assignedLabel} sent an alternative — needs your review
       </p>
-      {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
+      {task.quality_review_note && <p className="mt-0.5 text-ink">{task.quality_review_note}</p>}
       {task.worker_reply && (
-        <p className="mt-1 italic">
+        <p className="mt-1 italic text-ink">
           {assignedLabel === "Me" ? "Their" : `${assignedLabel}'s`} note: "{task.worker_reply}"
         </p>
       )}
 
-      {error && <p className="mt-1.5 text-xs font-medium text-rose-700">{error}</p>}
+      {error && <p className="mt-1.5 text-xs font-medium text-ink">{error}</p>}
 
       <div className="mt-2 flex flex-wrap gap-1.5">
         <button
           type="button"
           onClick={() => void runDecision("approved_alternative")}
           disabled={isBusy}
-          className="inline-flex items-center gap-1.5 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold px-3 py-1.5 text-xs font-medium text-cream shadow-sm transition hover:brightness-105 disabled:opacity-50"
         >
           {busyAction === "approved_alternative" && <Spinner size={12} />}
           <span>Approve Alternative</span>
@@ -559,7 +555,7 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
           type="button"
           onClick={() => void runDecision("rejected_alternative")}
           disabled={isBusy}
-          className="inline-flex items-center gap-1.5 rounded-full border border-danger/40 bg-surface-subtle px-3 py-1.5 text-xs font-medium text-danger shadow-sm transition hover:bg-danger/10 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-surface-subtle px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:border-gold disabled:opacity-50"
         >
           {busyAction === "rejected_alternative" && <Spinner size={12} />}
           <span>Reject Alternative</span>
@@ -568,7 +564,7 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
           type="button"
           onClick={() => setShowCustomInput((v) => !v)}
           disabled={isBusy}
-          className="inline-flex items-center gap-1.5 rounded-full border border-danger/35 bg-surface-subtle px-3 py-1.5 text-xs font-medium text-danger shadow-sm transition hover:bg-danger/10 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full border border-gold/35 bg-surface-subtle px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:border-gold disabled:opacity-50"
         >
           Custom Instruction
         </button>
@@ -583,13 +579,13 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
             maxLength={1000}
             rows={2}
             placeholder="Type a message to send to the assignee"
-            className="w-full rounded-lg border border-danger/35 bg-surface-subtle px-2.5 py-1.5 text-sm text-ink placeholder:text-text-muted focus:border-danger focus:outline-none disabled:opacity-50"
+            className="w-full rounded-lg border border-gold/35 bg-surface-subtle px-2.5 py-1.5 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none disabled:opacity-50"
           />
           <button
             type="button"
             onClick={submitCustomInstruction}
             disabled={isBusy}
-            className="inline-flex items-center gap-1.5 rounded-full border border-rose-400 bg-rose-800 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold px-3 py-1.5 text-xs font-medium text-cream shadow-sm transition hover:brightness-110 disabled:opacity-50"
           >
             {busyAction === "custom_instruction" && <Spinner size={12} />}
             <span>Send instruction</span>
