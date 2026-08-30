@@ -364,9 +364,9 @@ function SettingsList({
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Household Delegation Rules</span>
-            <span className="block text-xs text-text-soft">Global rules Carson follows when delegating.</span>
+            <span className="block text-xs text-ink">Global rules Carson follows when delegating.</span>
           </span>
-          <span aria-hidden className="text-text-muted">›</span>
+          <span aria-hidden className="text-ink">›</span>
         </button>
       </Group>
 
@@ -429,7 +429,7 @@ function DisplayNameRow({
   if (editing) {
     return (
       <div className="border-b border-border px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-text-soft">Your name</p>
+        <p className="mb-1.5 text-xs text-ink">Your name</p>
         <input
           ref={inputRef}
           type="text"
@@ -442,15 +442,15 @@ function DisplayNameRow({
           disabled={busy}
           placeholder="e.g. Sana"
           maxLength={80}
-          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
+          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-ink focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
-        {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+        {error && <p className="mb-2 text-xs text-ink">{error}</p>}
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => void save()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-full bg-sage px-4 py-1.5 text-xs font-medium text-white transition hover:brightness-105 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gold px-4 py-1.5 text-xs font-medium text-cream transition hover:brightness-105 disabled:opacity-50"
           >
             {busy && <Spinner size={11} />}
             <span>{busy ? "Saving…" : "Save"}</span>
@@ -476,11 +476,11 @@ function DisplayNameRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Your name</span>
-        <span className="block text-xs text-text-soft">
+        <span className="block text-xs text-ink">
           {saved ? "Saved ✓" : (displayName ?? "Not set")}
         </span>
       </span>
-      <span aria-hidden className="text-text-muted">
+      <span aria-hidden className="text-ink">
         ›
       </span>
     </button>
@@ -534,7 +534,7 @@ function WeatherCityRow({
   if (editing) {
     return (
       <div className="border-b border-border px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-text-soft">Weather city</p>
+        <p className="mb-1.5 text-xs text-ink">Weather city</p>
         <input
           ref={inputRef}
           type="text"
@@ -547,15 +547,15 @@ function WeatherCityRow({
           disabled={busy}
           placeholder="e.g. Dubai, Fethiye, London"
           maxLength={80}
-          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
+          className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-ink focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
-        {error && <p className="mb-2 text-xs text-danger">{error}</p>}
+        {error && <p className="mb-2 text-xs text-ink">{error}</p>}
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => void save()}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-full bg-sage px-4 py-1.5 text-xs font-medium text-white transition hover:brightness-105 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gold px-4 py-1.5 text-xs font-medium text-cream transition hover:brightness-105 disabled:opacity-50"
           >
             {busy && <Spinner size={11} />}
             <span>{busy ? "Saving…" : "Save"}</span>
@@ -581,11 +581,11 @@ function WeatherCityRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Weather city</span>
-        <span className="block text-xs text-text-soft">
+        <span className="block text-xs text-ink">
           {saved ? "Saved ✓" : (weatherCity ?? "Not set — tap to add")}
         </span>
       </span>
-      <span aria-hidden className="text-text-muted">
+      <span aria-hidden className="text-ink">
         ›
       </span>
     </button>
@@ -595,7 +595,7 @@ function WeatherCityRow({
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-text-soft">
+      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink">
         {label}
       </h3>
       <div className="overflow-hidden rounded-2xl border border-border bg-surface/90 shadow-sm">
@@ -613,7 +613,7 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
       className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
     >
       <span className="text-base text-ink">{label}</span>
-      <span aria-hidden className="text-text-muted">
+      <span aria-hidden className="text-ink">
         ›
       </span>
     </button>
@@ -735,13 +735,13 @@ function ReminderNotificationsRow({
       {showIOSInstallPrompt ? (
         <div className="px-4 py-3">
           <span className="block text-base text-ink">Push notifications</span>
-          <p className="mt-1 text-xs text-text-soft">
+          <p className="mt-1 text-xs text-ink">
             Install Ra7etBal to enable notifications on your iPhone or iPad.
           </p>
           <button
             type="button"
             onClick={() => setShowInstallGuidance(true)}
-            className="mt-2 text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
+            className="mt-2 text-[11px] text-ink underline underline-offset-2 transition hover:text-gold"
           >
             How to install Ra7etBal
           </button>
@@ -757,7 +757,7 @@ function ReminderNotificationsRow({
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Push notifications</span>
-            <span className="block text-xs text-text-soft">{statusText}</span>
+            <span className="block text-xs text-ink">{statusText}</span>
           </span>
           <span
             aria-hidden
@@ -766,7 +766,7 @@ function ReminderNotificationsRow({
               (isEnabled
                 ? "bg-gold"
                 : status === "denied" || status === "error"
-                  ? "bg-danger"
+                  ? "bg-gold"
                   : "bg-text-muted")
             }
           />
@@ -779,7 +779,7 @@ function ReminderNotificationsRow({
           <button
             type="button"
             onClick={() => void handleDisable()}
-            className="text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
+            className="text-[11px] text-ink underline underline-offset-2 transition hover:text-gold"
           >
             Disable notifications
           </button>
@@ -794,7 +794,7 @@ function ReminderNotificationsRow({
           <button
             type="button"
             onClick={onClickManageDevices}
-            className="text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
+            className="text-[11px] text-ink underline underline-offset-2 transition hover:text-gold"
           >
             Manage notification devices
           </button>
@@ -803,7 +803,7 @@ function ReminderNotificationsRow({
 
       {/* iOS Settings hint when permission is denied */}
       {status === "denied" && (
-        <p className="px-4 pb-2.5 text-[11px] leading-snug text-text-muted">
+        <p className="px-4 pb-2.5 text-[11px] leading-snug text-ink">
           Open iOS Settings → Safari (or Ra7etBal app) → Notifications, then enable and return here to subscribe.
         </p>
       )}
@@ -941,12 +941,12 @@ function GoogleCalendarRow({
     connected === null
       ? "bg-text-muted"
       : isRevoked
-        ? "bg-danger"
+        ? "bg-gold"
         : connected
           ? "bg-gold"
           : "bg-text-muted";
 
-  const statusClass = isRevoked ? "text-danger" : "text-text-soft";
+  const statusClass = isRevoked ? "text-gold" : "text-ink";
 
   // Show the disconnect link when calendar is connected or in a revoked-but-was-connected state.
   const showDisconnect = onDisconnect && (connected === true || isRevoked);
@@ -971,12 +971,12 @@ function GoogleCalendarRow({
         <button
           type="button"
           onClick={onDisconnect}
-          className="mt-1.5 text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
+          className="mt-1.5 text-[11px] text-ink underline underline-offset-2 transition hover:text-gold"
         >
           Disconnect Google Calendar
         </button>
       )}
-      <p className="mt-1 text-[11px] leading-snug text-text-muted">
+      <p className="mt-1 text-[11px] leading-snug text-ink">
         Connect to let Carson read and manage your Google Calendar.
       </p>
     </div>
@@ -1020,7 +1020,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-text-soft transition hover:text-ink"
+        className="flex items-center gap-1.5 text-sm text-ink transition hover:text-gold"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
@@ -1031,7 +1031,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       {/* Header */}
       <div>
         <h3 className="text-base font-semibold text-ink">Household Delegation Rules</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-text-soft">
+        <p className="mt-0.5 text-xs leading-relaxed text-ink">
           Global rules Carson follows when helping you delegate. Applies to all people.
         </p>
       </div>
@@ -1044,7 +1044,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
         placeholder={"e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."}
         rows={8}
         disabled={status === "loading" || saving}
-        className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-4 py-3 text-sm text-ink placeholder:text-text-muted outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
+        className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-4 py-3 text-sm text-ink placeholder:text-ink outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
       />
 
       <div className="flex items-center justify-between gap-3">
@@ -1056,7 +1056,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
             type="button"
             onClick={() => void handleSave()}
             disabled={status === "loading" || saving || text === savedRules}
-            className="inline-flex items-center gap-2 rounded-full bg-sage px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-full bg-gold px-5 py-2 text-sm font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving && <Spinner size={12} />}
             {saving ? "Saving…" : "Save rules"}
@@ -1134,7 +1134,7 @@ function NotificationDevicesPanel({
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-text-soft transition hover:text-ink"
+        className="flex items-center gap-1.5 text-sm text-ink transition hover:text-gold"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
@@ -1145,7 +1145,7 @@ function NotificationDevicesPanel({
       {/* Header */}
       <div>
         <h3 className="text-base font-semibold text-ink">Notification devices</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-text-soft">
+        <p className="mt-0.5 text-xs leading-relaxed text-ink">
           Every device currently set up to receive your reminders and updates. Remove any you no longer use. "No confirmed delivery yet" doesn't mean a device is broken — it may just not have received a notification yet.
         </p>
       </div>
@@ -1160,7 +1160,7 @@ function NotificationDevicesPanel({
       )}
 
       {status === "ready" && devices.length === 0 && (
-        <p className="py-6 text-center text-sm text-text-soft">No devices currently receive notifications.</p>
+        <p className="py-6 text-center text-sm text-ink">No devices currently receive notifications.</p>
       )}
 
       {status === "ready" && devices.length > 0 && (
@@ -1181,10 +1181,10 @@ function NotificationDevicesPanel({
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 block truncate text-[11px] text-text-soft">
+                <span className="mt-0.5 block truncate text-[11px] text-ink">
                   {device.userAgent || "No device details available"}
                 </span>
-                <span className="mt-1 block text-[11px] text-text-muted">
+                <span className="mt-1 block text-[11px] text-ink">
                   Added {formatDeviceDate(device.createdAt)}
                   {device.lastConfirmedDeliveredAt
                     ? ` · Last confirmed delivery ${formatDeviceDate(device.lastConfirmedDeliveredAt)}`
@@ -1195,7 +1195,7 @@ function NotificationDevicesPanel({
                 type="button"
                 onClick={() => void handleRemove(device.id)}
                 disabled={removingId === device.id}
-                className="shrink-0 text-[11px] font-medium text-danger underline underline-offset-2 transition hover:text-danger/80 disabled:cursor-not-allowed disabled:opacity-40"
+                className="shrink-0 text-[11px] font-medium text-ink underline underline-offset-2 transition hover:text-gold disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {removingId === device.id ? "Removing…" : "Remove"}
               </button>
@@ -1239,13 +1239,13 @@ function ConfirmPane({
 }) {
   const confirmCls =
     tone === "strong"
-      ? "bg-ink text-white hover:brightness-110"
-      : "bg-sage text-white hover:brightness-105";
+      ? "border border-gold bg-surface-subtle text-ink hover:border-gold"
+      : "bg-gold text-cream hover:brightness-105";
   return (
     <div className="space-y-4">
       <header className="space-y-1.5">
         <h3 className="text-lg font-semibold text-ink">{title}</h3>
-        <p className="text-sm leading-snug text-ink/70">{body}</p>
+        <p className="text-sm leading-snug text-ink">{body}</p>
       </header>
 
       {notice && <AuthNotice kind="error">{notice}</AuthNotice>}

@@ -24,7 +24,8 @@ describe("Carson V1 final presentation", () => {
 
   it("uses the approved dark surface tokens whenever the finalized voice response is displayed", () => {
     expect(widgetSource).toContain("rounded-2xl border border-border bg-surface");
-    expect(widgetSource).toContain("text-[12px] leading-relaxed text-text-soft");
+    expect(widgetSource).toContain("text-[12px] leading-relaxed text-ink");
+    expect(widgetSource).not.toContain("text-[12px] leading-relaxed text-text-soft");
     expect(widgetSource).not.toContain("border border-charcoal/10 bg-white/90");
   });
 

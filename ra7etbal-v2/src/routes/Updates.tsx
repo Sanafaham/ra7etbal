@@ -325,7 +325,7 @@ export default function Updates() {
       {/* ── Header ── */}
       <header>
         <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">What's Happening</h1>
-        <p className="mt-1.5 text-[13px] font-medium text-text-soft">What Carson is managing for you.</p>
+        <p className="mt-1.5 text-[13px] font-medium text-ink">What Carson is managing for you.</p>
       </header>
 
       {/* ── Category chips — auto-scrolls slowly when idle, loops, pauses on interaction ── */}
@@ -356,7 +356,7 @@ export default function Updates() {
               className={
                 "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-4 py-2 text-[13.5px] font-semibold transition " +
                 (activeTab === tab.id
-                  ? "border-sage bg-sage text-white"
+                  ? "border-gold bg-gold text-cream"
                   : "border-border-strong bg-surface-subtle/70 text-ink hover:bg-surface")
               }
             >
@@ -384,7 +384,7 @@ export default function Updates() {
 
       {/* ── Initial loading (task-based tabs only) ── */}
       {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={20} label="Loading" />
         </div>
       )}
@@ -395,7 +395,7 @@ export default function Updates() {
       {activeTab === "needs-you" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.needsAttention.length === 0 && visibleStaffEscalations.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle px-4 py-6 text-sm text-ink">
               Nothing needs your attention right now.
             </div>
           ) : (
@@ -423,10 +423,10 @@ export default function Updates() {
           {upcomingReminders.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
-                <span className="text-[12px] font-medium text-ink/55">
+                <span className="text-[12px] font-medium text-ink">
                   Upcoming reminders
                 </span>
-                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                <span className="rounded-full border border-gold/35 bg-gold/10 px-1.5 py-0.5 text-[11px] font-medium text-gold">
                   {upcomingReminders.length}
                 </span>
               </div>
@@ -449,9 +449,9 @@ export default function Updates() {
           {laterFiltered.length > 0 && (
             <details ref={pendingDetailsRef} className="group">
               <summary className="flex cursor-pointer select-none list-none items-center gap-2 py-1 px-1">
-                <span className="text-xs font-medium uppercase tracking-wide text-ink/55">Pending</span>
-                <span className="text-xs text-ink/55">{laterFiltered.length}</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink/40 transition-transform group-open:rotate-180" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                <span className="text-xs font-medium uppercase tracking-wide text-ink">Pending</span>
+                <span className="text-xs text-ink">{laterFiltered.length}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink transition-transform group-open:rotate-180" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
               </summary>
               <ul className="mt-2 space-y-3">
                 {laterFiltered.map((task) => (
@@ -476,7 +476,7 @@ export default function Updates() {
       {activeTab === "waiting" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.waitingOnOthers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle px-4 py-6 text-sm text-ink">
               Nothing is waiting on others right now.
             </div>
           ) : (
@@ -518,16 +518,16 @@ export default function Updates() {
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2 px-1 py-0.5">
             <div className="flex items-center gap-2">
-              <h2 className="text-xs font-medium uppercase tracking-wide text-ink/60">Completed</h2>
+              <h2 className="text-xs font-medium uppercase tracking-wide text-ink">Completed</h2>
               {doneTasks.length > 0 && (
-                <span className="text-xs text-ink/30">{doneTasks.length}</span>
+                <span className="text-xs text-ink">{doneTasks.length}</span>
               )}
             </div>
             {doneTasks.length > 0 && (
               <button
                 type="button"
                 onClick={() => { setClearHistoryError(null); setConfirmingClearHistory(true); }}
-                className="text-xs font-medium text-danger transition hover:underline"
+                className="text-xs font-medium text-ink transition hover:text-gold hover:underline"
               >
                 Clear History
               </button>
@@ -535,7 +535,7 @@ export default function Updates() {
           </div>
 
           {doneTasks.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle/75 px-4 py-6 text-sm text-text-soft">
+            <div className="rounded-2xl border border-dashed border-border bg-surface-subtle px-4 py-6 text-sm text-ink">
               No completed items yet.
             </div>
           ) : (
@@ -563,7 +563,7 @@ export default function Updates() {
         dismissable={!clearingHistory}
       >
         <div className="space-y-4">
-          <p className="text-sm leading-snug text-ink/70">
+          <p className="text-sm leading-snug text-ink">
             This will remove confirmed/completed items from your history log.
           </p>
 
@@ -583,7 +583,7 @@ export default function Updates() {
               onClick={() => void handleClearHistory()}
               disabled={clearingHistory}
               aria-busy={clearingHistory}
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-gold bg-surface-subtle px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:border-gold disabled:cursor-not-allowed disabled:opacity-50"
             >
               {clearingHistory && <Spinner size={14} />}
               <span>{clearingHistory ? "Clearing…" : "Clear history"}</span>

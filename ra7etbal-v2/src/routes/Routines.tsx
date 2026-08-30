@@ -634,7 +634,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
         {!headerless && (
           <div>
             <h1 className="text-2xl font-semibold text-ink">Routines</h1>
-            <p className="text-sm text-ink/60">
+            <p className="text-sm text-ink">
               Recurring reminders and delegations that run automatically.
             </p>
           </div>
@@ -643,7 +643,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           <button
             type="button"
             onClick={handleOpenForm}
-            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-sage px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-gold px-4 py-2 text-sm font-medium text-cream shadow-sm transition hover:brightness-105"
           >
             <span aria-hidden className="text-lg leading-none">＋</span>
             <span>New routine</span>
@@ -653,14 +653,14 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
       {/* ── List error ── */}
       {listError && listStatus !== "loading" && (
-        <p className="rounded-xl border border-danger/35 bg-danger/10 px-4 py-3 text-sm text-danger">
+        <p className="rounded-xl border border-gold/35 bg-surface-subtle px-4 py-3 text-sm text-ink">
           {listError}
         </p>
       )}
 
       {/* ── Loading ── */}
       {showInitialLoading && (
-        <div className="flex items-center justify-center py-10 text-ink/40">
+        <div className="flex items-center justify-center py-10 text-ink">
           <Spinner size={20} label="Loading routines" />
         </div>
       )}
@@ -672,7 +672,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Type picker */}
           <div className="space-y-1.5">
-            <p className="text-xs font-medium text-ink/60 uppercase tracking-wide">Type</p>
+            <p className="text-xs font-medium text-ink uppercase tracking-wide">Type</p>
             <div className="flex flex-wrap gap-2">
               {(["reminder", "delegation", "message"] as RoutineType[]).map((t) => (
                 <button
@@ -681,8 +681,8 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onClick={() => setField("type", t)}
                   className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                     form.type === t
-                      ? "bg-sage text-white"
-                      : "bg-sand/60 text-ink/70 hover:bg-sand"
+                      ? "bg-gold text-cream"
+                      : "bg-surface-subtle text-ink hover:border-gold"
                   }`}
                 >
                   {t === "reminder" ? "Remind me" : t === "delegation" ? "Delegate" : "Send message"}
@@ -694,7 +694,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {/* Reminder fields */}
           {form.type === "reminder" && (
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+              <label className="text-xs font-medium text-ink uppercase tracking-wide">
                 Reminder title
               </label>
               <input
@@ -702,7 +702,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 value={form.reminderTitle}
                 onChange={(e) => setField("reminderTitle", e.target.value)}
                 placeholder="e.g. Review your priorities"
-                className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
+                className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none"
               />
             </div>
           )}
@@ -711,15 +711,15 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {form.type === "delegation" && (
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink uppercase tracking-wide">
                   Person
                 </label>
                 {peopleStatus === "loading" && delegatablePeople.length === 0 ? (
-                  <p className="text-sm text-ink/40">Loading people…</p>
+                  <p className="text-sm text-ink">Loading people…</p>
                 ) : delegatablePeople.length === 0 ? (
-                  <p className="text-sm text-ink/50">
+                  <p className="text-sm text-ink">
                     No people added yet.{" "}
-                    <a href="/people" className="text-sage underline underline-offset-2">
+                    <a href="/people" className="text-gold underline underline-offset-2">
                       Add someone in People.
                     </a>
                   </p>
@@ -739,7 +739,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 )}
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink uppercase tracking-wide">
                   Message
                 </label>
                 <textarea
@@ -747,7 +747,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onChange={(e) => setField("delegateMessage", e.target.value)}
                   placeholder="e.g. Please send the weekly status update to the team."
                   rows={3}
-                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
+                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none"
                 />
               </div>
             </div>
@@ -757,15 +757,15 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {form.type === "message" && (
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink uppercase tracking-wide">
                   Recipient
                 </label>
                 {peopleStatus === "loading" && delegatablePeople.length === 0 ? (
-                  <p className="text-sm text-ink/40">Loading people…</p>
+                  <p className="text-sm text-ink">Loading people…</p>
                 ) : delegatablePeople.length === 0 ? (
-                  <p className="text-sm text-ink/50">
+                  <p className="text-sm text-ink">
                     No people added yet.{" "}
-                    <a href="/people" className="text-sage underline underline-offset-2">
+                    <a href="/people" className="text-gold underline underline-offset-2">
                       Add someone in People.
                     </a>
                   </p>
@@ -785,7 +785,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 )}
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink uppercase tracking-wide">
                   Message
                 </label>
                 <textarea
@@ -793,9 +793,9 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onChange={(e) => setField("messageBody", e.target.value)}
                   placeholder={`e.g. Good morning Loulya, I love you. Please keep me posted on your day.`}
                   rows={4}
-                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
+                  className="w-full resize-none rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none"
                 />
-                <p className="text-[11px] text-ink/40">
+                <p className="text-[11px] text-ink">
                   Sent verbatim — not rewritten or modified.
                 </p>
               </div>
@@ -804,7 +804,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Schedule */}
           <div className="space-y-3">
-            <p className="text-xs font-medium text-ink/60 uppercase tracking-wide">Schedule</p>
+            <p className="text-xs font-medium text-ink uppercase tracking-wide">Schedule</p>
             {/* Daily / Weekly / Every N days chips */}
             <div className="flex flex-wrap gap-2">
               {([["daily", "Daily"], ["weekly", "Weekly"], ["every_n_days", "Every N days"]] as [RoutineSchedule, string][]).map(([s, label]) => (
@@ -814,8 +814,8 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   onClick={() => setField("schedule", s)}
                   className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                     form.schedule === s
-                      ? "bg-sage text-white"
-                      : "bg-sand/60 text-ink/70 hover:bg-sand"
+                      ? "bg-gold text-cream"
+                      : "bg-surface-subtle text-ink hover:border-gold"
                   }`}
                 >
                   {label}
@@ -825,7 +825,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             {/* Every N days — interval input */}
             {form.schedule === "every_n_days" && (
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink uppercase tracking-wide">
                   Every how many days?
                 </label>
                 <div className="flex items-center gap-2">
@@ -837,9 +837,9 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                     onChange={(e) => setField("intervalDays", Math.max(1, parseInt(e.target.value, 10) || 1))}
                     className="w-24 rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink focus:border-gold focus:outline-none"
                   />
-                  <span className="text-sm text-ink/50">days</span>
+                  <span className="text-sm text-ink">days</span>
                 </div>
-                <p className="text-[11px] text-ink/40">
+                <p className="text-[11px] text-ink">
                   First run in {form.intervalDays} {form.intervalDays === 1 ? "day" : "days"}.
                 </p>
               </div>
@@ -860,7 +860,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             )}
             {/* Time */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+              <label className="text-xs font-medium text-ink uppercase tracking-wide">
                 Time
               </label>
               <input
@@ -874,7 +874,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Routine name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
+            <label className="text-xs font-medium text-ink uppercase tracking-wide">
               Routine name
             </label>
             <input
@@ -882,13 +882,13 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value, nameEdited: true }))}
               placeholder="Auto-filled — edit if you want"
-              className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none"
+              className="w-full rounded-xl border border-border bg-surface-subtle px-3.5 py-2.5 text-sm text-ink placeholder:text-ink focus:border-gold focus:outline-none"
             />
           </div>
 
           {/* Form error */}
           {formError && (
-            <p className="rounded-xl border border-danger/35 bg-danger/10 px-3.5 py-2.5 text-sm text-danger">
+            <p className="rounded-xl border border-gold/35 bg-surface-subtle px-3.5 py-2.5 text-sm text-ink">
               {formError}
             </p>
           )}
@@ -899,7 +899,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="inline-flex items-center gap-2 rounded-full bg-sage px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-full bg-gold px-5 py-2 text-sm font-medium text-cream shadow-sm transition hover:brightness-105 disabled:opacity-50"
             >
               {saving ? (
                 <>
@@ -914,7 +914,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               type="button"
               onClick={handleCancelForm}
               disabled={saving}
-              className="rounded-full px-5 py-2 text-sm font-medium text-ink/60 transition hover:text-ink/80 disabled:opacity-50"
+              className="rounded-full px-5 py-2 text-sm font-medium text-ink transition hover:text-gold disabled:opacity-50"
             >
               Cancel
             </button>
@@ -925,7 +925,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Empty state ── */}
       {showEmpty && (
         <div className="rounded-2xl border border-border bg-surface-subtle px-5 py-10 text-center">
-          <p className="text-sm text-ink/50">
+          <p className="text-sm text-ink">
             {LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE}
           </p>
         </div>
@@ -934,7 +934,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Active (automations first, then legacy routines) ── */}
       {(activeAutomations.length > 0 || activeRoutines.length > 0) && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-soft">Active</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-ink">Active</p>
           {activeAutomations.map((a) => (
             <AutomationCard
               key={a.id}
@@ -967,7 +967,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Paused ── */}
       {(pausedAutomations.length > 0 || pausedRoutines.length > 0) && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-soft">Paused</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-ink">Paused</p>
           {pausedAutomations.map((a) => (
             <AutomationCard
               key={a.id}
@@ -1079,23 +1079,23 @@ export function resolveStateConfig(
     case "escalated":
       return {
         label: "Escalated — needs attention",
-        dot:   "bg-danger",
-        text:  "text-danger",
-        border: "border-l-danger/50",
+        dot:   "bg-gold",
+        text:  "text-ink",
+        border: "border-l-gold/50",
       };
     case "failed":
     case "skipped":
       return {
         label: state === "failed" ? "Failed" : "Skipped",
-        dot:   "bg-danger",
-        text:  "text-danger",
-        border: "border-l-danger/50",
+        dot:   "bg-gold",
+        text:  "text-ink",
+        border: "border-l-gold/50",
       };
     default:
       return {
         label: "Not run yet",
         dot:   "bg-text-muted",
-        text:  "text-text-muted",
+        text:  "text-ink",
         border: "border-l-sand",
       };
   }
@@ -1130,7 +1130,7 @@ function AutomationCard({
     ? {
         label: "Legacy WhatsApp disabled",
         dot: "bg-text-muted",
-        text: "text-text-soft",
+        text: "text-ink",
         border: "border-l-border-strong",
       }
     : resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type, ownerOnly);
@@ -1151,7 +1151,7 @@ function AutomationCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-ink leading-snug">{automation.title}</span>
             {automation.automation_type === "message" ? (
-              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink">
                 Message
               </span>
             ) : ownerOnly ? (
@@ -1159,24 +1159,24 @@ function AutomationCard({
                 Reminder
               </span>
             ) : (
-              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink">
                 Automation
               </span>
             )}
             {isPaused && (
-              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink">
                 Paused
               </span>
             )}
             {unsupportedRecurringWhatsapp && (
-              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink">
                 Unsupported
               </span>
             )}
           </div>
 
           {/* Cadence + assignee */}
-          <p className="text-xs text-text-soft">
+          <p className="text-xs text-ink">
             {automationCadenceLabel(automation)}
             {assigneeName ? ` · ${assigneeName}` : ""}
           </p>
@@ -1186,18 +1186,18 @@ function AutomationCard({
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
             {latestRunTimestamp && !unsupportedRecurringWhatsapp && (
-              <span className="text-[11px] text-text-muted">· {latestRunTimestamp}</span>
+              <span className="text-[11px] text-ink">· {latestRunTimestamp}</span>
             )}
           </div>
           {failureReason && (
-            <p className={`text-[11px] leading-snug ${unsupportedRecurringWhatsapp ? "text-text-muted" : "text-danger"}`}>
+            <p className="text-[11px] leading-snug text-ink">
               {failureReason}
             </p>
           )}
 
           {/* Next run */}
           {nextRun && isActive && !unsupportedRecurringWhatsapp && (
-            <p className="text-[11px] text-text-muted">Next run {nextRun}</p>
+            <p className="text-[11px] text-ink">Next run {nextRun}</p>
           )}
 
         </div>
@@ -1212,8 +1212,8 @@ function AutomationCard({
             aria-label={confirmingDelete ? "Confirm delete" : "Delete unsupported automation"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingDelete
-                ? "bg-danger/15 text-danger"
-                : "text-text-muted hover:text-danger"
+                ? "border border-gold bg-surface-subtle text-ink"
+                : "text-ink hover:text-gold"
             }`}
           >
             {actioning ? "…" : confirmingDelete ? "Confirm?" : "Delete"}
@@ -1228,7 +1228,7 @@ function AutomationCard({
               onClick={onPause}
               disabled={actioning}
               aria-label="Pause automation"
-              className="rounded-full px-2.5 py-1 text-xs font-medium text-text-soft transition hover:bg-surface-subtle hover:text-ink disabled:opacity-40"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-ink transition hover:bg-surface-subtle hover:text-gold disabled:opacity-40"
             >
               {actioning ? "…" : "Pause"}
             </button>
@@ -1253,8 +1253,8 @@ function AutomationCard({
             aria-label={confirmingStop ? "Confirm stop" : "Stop automation"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingStop
-                ? "bg-danger/15 text-danger"
-                : "text-text-muted hover:text-danger"
+                ? "border border-gold bg-surface-subtle text-ink"
+                : "text-ink hover:text-gold"
             }`}
           >
             {actioning ? "…" : confirmingStop ? "Confirm?" : "Stop"}
@@ -1290,7 +1290,7 @@ function RoutineCard({
     routine.type === "message"  ? "Message"  : "Delegation";
   const typeBadgeClass =
     routine.type === "reminder" ? "border border-gold/35 bg-gold/10 text-gold-soft" :
-    "border border-border bg-surface-subtle text-text-soft";
+    "border border-border bg-surface-subtle text-ink";
 
   return (
     <div
@@ -1306,12 +1306,12 @@ function RoutineCard({
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${typeBadgeClass}`}>
               {typeLabel}
             </span>
-            <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
+            <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-ink">
               Legacy
             </span>
           </div>
-          <p className="text-xs text-text-soft">{scheduleLabel(routine)}</p>
-          <p className="text-[11px] text-text-muted">{lastRunLabel(routine.last_run_at)}</p>
+          <p className="text-xs text-ink">{scheduleLabel(routine)}</p>
+          <p className="text-[11px] text-ink">{lastRunLabel(routine.last_run_at)}</p>
         </div>
 
         {/* Controls */}
@@ -1341,8 +1341,8 @@ function RoutineCard({
             aria-label={confirmingDelete ? "Confirm delete" : "Delete routine"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingDelete
-                ? "bg-danger/15 text-danger"
-                : "text-text-muted hover:text-danger"
+                ? "border border-gold bg-surface-subtle text-ink"
+                : "text-ink hover:text-gold"
             }`}
           >
             {deleting ? "…" : confirmingDelete ? "Confirm?" : "Delete"}

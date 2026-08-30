@@ -6,11 +6,12 @@ const SOURCE = readFileSync(join(__dirname, "SettingsModal.tsx"), "utf8");
 
 describe("SettingsModal dark-system readability", () => {
   it("uses readable shared text tokens for calendar and notification helper actions", () => {
-    expect(SOURCE).toContain('const statusClass = isRevoked ? "text-danger" : "text-text-soft"');
+    expect(SOURCE).toContain('const statusClass = isRevoked ? "text-gold" : "text-ink"');
     expect(SOURCE).toContain("Connect to let Carson read and manage your Google Calendar.");
     expect(SOURCE).toContain("Install Ra7etBal to enable notifications on your iPhone or iPad.");
-    expect(SOURCE).toContain("text-[11px] text-text-soft underline");
-    expect(SOURCE).toContain("text-[11px] leading-snug text-text-muted");
+    expect(SOURCE).toContain("text-[11px] font-medium text-ink underline");
+    expect(SOURCE).toContain("text-[11px] leading-snug text-ink");
+    expect(SOURCE).not.toContain("text-danger");
   });
 
   it("keeps legal rows on the primary readable ActionRow contract", () => {
