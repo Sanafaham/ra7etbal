@@ -364,9 +364,9 @@ function SettingsList({
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Household Delegation Rules</span>
-            <span className="block text-xs text-ink/65">Global rules Carson follows when delegating.</span>
+            <span className="block text-xs text-text-soft">Global rules Carson follows when delegating.</span>
           </span>
-          <span aria-hidden className="text-ink/30">›</span>
+          <span aria-hidden className="text-text-muted">›</span>
         </button>
       </Group>
 
@@ -429,7 +429,7 @@ function DisplayNameRow({
   if (editing) {
     return (
       <div className="border-b border-border px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-ink/60">Your name</p>
+        <p className="mb-1.5 text-xs text-text-soft">Your name</p>
         <input
           ref={inputRef}
           type="text"
@@ -444,7 +444,7 @@ function DisplayNameRow({
           maxLength={80}
           className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
-        {error && <p className="mb-2 text-xs text-rose-700">{error}</p>}
+        {error && <p className="mb-2 text-xs text-danger">{error}</p>}
         <div className="flex gap-2">
           <button
             type="button"
@@ -476,11 +476,11 @@ function DisplayNameRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Your name</span>
-        <span className="block text-xs text-ink/65">
+        <span className="block text-xs text-text-soft">
           {saved ? "Saved ✓" : (displayName ?? "Not set")}
         </span>
       </span>
-      <span aria-hidden className="text-ink/30">
+      <span aria-hidden className="text-text-muted">
         ›
       </span>
     </button>
@@ -534,7 +534,7 @@ function WeatherCityRow({
   if (editing) {
     return (
       <div className="border-b border-border px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-ink/60">Weather city</p>
+        <p className="mb-1.5 text-xs text-text-soft">Weather city</p>
         <input
           ref={inputRef}
           type="text"
@@ -549,7 +549,7 @@ function WeatherCityRow({
           maxLength={80}
           className="mb-2 w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-base text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
         />
-        {error && <p className="mb-2 text-xs text-rose-700">{error}</p>}
+        {error && <p className="mb-2 text-xs text-danger">{error}</p>}
         <div className="flex gap-2">
           <button
             type="button"
@@ -581,11 +581,11 @@ function WeatherCityRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Weather city</span>
-        <span className="block text-xs text-ink/65">
+        <span className="block text-xs text-text-soft">
           {saved ? "Saved ✓" : (weatherCity ?? "Not set — tap to add")}
         </span>
       </span>
-      <span aria-hidden className="text-ink/30">
+      <span aria-hidden className="text-text-muted">
         ›
       </span>
     </button>
@@ -595,7 +595,7 @@ function WeatherCityRow({
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/60">
+      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-text-soft">
         {label}
       </h3>
       <div className="overflow-hidden rounded-2xl border border-border bg-surface/90 shadow-sm">
@@ -613,7 +613,7 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
       className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
     >
       <span className="text-base text-ink">{label}</span>
-      <span aria-hidden className="text-ink/30">
+      <span aria-hidden className="text-text-muted">
         ›
       </span>
     </button>
@@ -735,13 +735,13 @@ function ReminderNotificationsRow({
       {showIOSInstallPrompt ? (
         <div className="px-4 py-3">
           <span className="block text-base text-ink">Push notifications</span>
-          <p className="mt-1 text-xs text-ink/65">
+          <p className="mt-1 text-xs text-text-soft">
             Install Ra7etBal to enable notifications on your iPhone or iPad.
           </p>
           <button
             type="button"
             onClick={() => setShowInstallGuidance(true)}
-            className="mt-2 text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+            className="mt-2 text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
           >
             How to install Ra7etBal
           </button>
@@ -757,7 +757,7 @@ function ReminderNotificationsRow({
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Push notifications</span>
-            <span className="block text-xs text-ink/65">{statusText}</span>
+            <span className="block text-xs text-text-soft">{statusText}</span>
           </span>
           <span
             aria-hidden
@@ -767,7 +767,7 @@ function ReminderNotificationsRow({
                 ? "bg-gold"
                 : status === "denied" || status === "error"
                   ? "bg-danger"
-                  : "bg-ink/20")
+                  : "bg-text-muted")
             }
           />
         </button>
@@ -779,7 +779,7 @@ function ReminderNotificationsRow({
           <button
             type="button"
             onClick={() => void handleDisable()}
-            className="text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+            className="text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
           >
             Disable notifications
           </button>
@@ -794,7 +794,7 @@ function ReminderNotificationsRow({
           <button
             type="button"
             onClick={onClickManageDevices}
-            className="text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+            className="text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
           >
             Manage notification devices
           </button>
@@ -803,7 +803,7 @@ function ReminderNotificationsRow({
 
       {/* iOS Settings hint when permission is denied */}
       {status === "denied" && (
-        <p className="px-4 pb-2.5 text-[11px] leading-snug text-ink/40">
+        <p className="px-4 pb-2.5 text-[11px] leading-snug text-text-muted">
           Open iOS Settings → Safari (or Ra7etBal app) → Notifications, then enable and return here to subscribe.
         </p>
       )}
@@ -939,14 +939,14 @@ function GoogleCalendarRow({
 
   const dotColor =
     connected === null
-      ? "bg-ink/20"
+      ? "bg-text-muted"
       : isRevoked
         ? "bg-danger"
         : connected
           ? "bg-gold"
-          : "bg-ink/20";
+          : "bg-text-muted";
 
-  const statusClass = isRevoked ? "text-amber-700" : "text-ink/65";
+  const statusClass = isRevoked ? "text-danger" : "text-text-soft";
 
   // Show the disconnect link when calendar is connected or in a revoked-but-was-connected state.
   const showDisconnect = onDisconnect && (connected === true || isRevoked);
@@ -971,12 +971,12 @@ function GoogleCalendarRow({
         <button
           type="button"
           onClick={onDisconnect}
-          className="mt-1.5 text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/60"
+          className="mt-1.5 text-[11px] text-text-soft underline underline-offset-2 transition hover:text-ink"
         >
           Disconnect Google Calendar
         </button>
       )}
-      <p className="mt-1 text-[11px] leading-snug text-ink/40">
+      <p className="mt-1 text-[11px] leading-snug text-text-muted">
         Connect to let Carson read and manage your Google Calendar.
       </p>
     </div>
@@ -1020,7 +1020,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-ink/65 transition hover:text-ink"
+        className="flex items-center gap-1.5 text-sm text-text-soft transition hover:text-ink"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
@@ -1031,7 +1031,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       {/* Header */}
       <div>
         <h3 className="text-base font-semibold text-ink">Household Delegation Rules</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink/65">
+        <p className="mt-0.5 text-xs leading-relaxed text-text-soft">
           Global rules Carson follows when helping you delegate. Applies to all people.
         </p>
       </div>
@@ -1134,7 +1134,7 @@ function NotificationDevicesPanel({
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-ink/65 transition hover:text-ink"
+        className="flex items-center gap-1.5 text-sm text-text-soft transition hover:text-ink"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
@@ -1145,7 +1145,7 @@ function NotificationDevicesPanel({
       {/* Header */}
       <div>
         <h3 className="text-base font-semibold text-ink">Notification devices</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink/65">
+        <p className="mt-0.5 text-xs leading-relaxed text-text-soft">
           Every device currently set up to receive your reminders and updates. Remove any you no longer use. "No confirmed delivery yet" doesn't mean a device is broken — it may just not have received a notification yet.
         </p>
       </div>
@@ -1160,7 +1160,7 @@ function NotificationDevicesPanel({
       )}
 
       {status === "ready" && devices.length === 0 && (
-        <p className="py-6 text-center text-sm text-ink/50">No devices currently receive notifications.</p>
+        <p className="py-6 text-center text-sm text-text-soft">No devices currently receive notifications.</p>
       )}
 
       {status === "ready" && devices.length > 0 && (
@@ -1176,15 +1176,15 @@ function NotificationDevicesPanel({
                 <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
                   {device.platform || "Unknown device"}
                   {isThisDevice && (
-                    <span className="shrink-0 rounded-full bg-sage/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sage">
+                    <span className="shrink-0 rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
                       This device
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 block truncate text-[11px] text-ink/50">
+                <span className="mt-0.5 block truncate text-[11px] text-text-soft">
                   {device.userAgent || "No device details available"}
                 </span>
-                <span className="mt-1 block text-[11px] text-ink/40">
+                <span className="mt-1 block text-[11px] text-text-muted">
                   Added {formatDeviceDate(device.createdAt)}
                   {device.lastConfirmedDeliveredAt
                     ? ` · Last confirmed delivery ${formatDeviceDate(device.lastConfirmedDeliveredAt)}`

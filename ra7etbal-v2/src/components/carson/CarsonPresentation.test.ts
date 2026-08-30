@@ -22,6 +22,12 @@ describe("Carson V1 final presentation", () => {
     expect(widgetSource).toContain("shouldShowCarsonVoiceTranscript({");
   });
 
+  it("uses the approved dark surface tokens whenever the finalized voice response is displayed", () => {
+    expect(widgetSource).toContain("rounded-2xl border border-border bg-surface");
+    expect(widgetSource).toContain("text-[12px] leading-relaxed text-text-soft");
+    expect(widgetSource).not.toContain("border border-charcoal/10 bg-white/90");
+  });
+
   it("keeps the existing image input and live-session attachment path", () => {
     expect(widgetSource).toContain('accept="image/*"');
     expect(widgetSource).toContain("onChange={handleImageFileChange}");

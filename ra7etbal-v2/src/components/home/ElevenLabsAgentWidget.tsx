@@ -8448,7 +8448,7 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {channel === "voice" && status !== "connected" && lastUserTranscript && (
-        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink/45">
+        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-text-muted">
           Carson heard: “{lastUserTranscript}”
         </p>
       )}
@@ -8459,8 +8459,8 @@ export default function ElevenLabsAgentWidget({
         channel,
         hasMessage: Boolean(lastCarsonMessage),
       }) && lastCarsonMessage && (
-        <div className="mt-2 max-w-[280px] rounded-2xl border border-charcoal/10 bg-white/90 px-3.5 py-2.5 shadow-sm">
-          <p className="text-[12px] leading-relaxed text-ink/70">{lastCarsonMessage}</p>
+        <div className="mt-2 max-w-[280px] rounded-2xl border border-border bg-surface px-3.5 py-2.5 shadow-sm">
+          <p className="text-[12px] leading-relaxed text-text-soft">{lastCarsonMessage}</p>
         </div>
       )}
     </div>

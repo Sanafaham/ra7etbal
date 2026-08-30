@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const SOURCE = readFileSync(join(__dirname, "Routines.tsx"), "utf8");
 
 vi.mock("../hooks/useAuth", () => ({
   useAuth: () => ({ user: null }),
@@ -99,6 +103,15 @@ describe("owner-only automation UI status", () => {
 
     expect(state.label).toBe("Reminder sent");
     expect(state.label).not.toBe("Waiting for confirmation");
+    expect(state.dot).toBe("bg-gold");
+    expect(state.text).toBe("text-gold-soft");
+  });
+
+  it("keeps paused automation and legacy routine content readable without fading the whole card", () => {
+    expect(SOURCE).toContain('routine.enabled ? "border-border" : "border-border/70"');
+    expect(SOURCE).not.toContain('"border-border/60 opacity-60"');
+    expect(SOURCE).toContain('text-xs text-text-soft">{scheduleLabel(routine)}');
+    expect(SOURCE).toContain('text-[11px] text-text-muted">{lastRunLabel(routine.last_run_at)}');
   });
 
   it("keeps delegated automation sent state waiting for confirmation", () => {

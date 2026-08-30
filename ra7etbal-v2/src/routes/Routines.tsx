@@ -934,7 +934,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Active (automations first, then legacy routines) ── */}
       {(activeAutomations.length > 0 || activeRoutines.length > 0) && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Active</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-text-soft">Active</p>
           {activeAutomations.map((a) => (
             <AutomationCard
               key={a.id}
@@ -967,7 +967,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Paused ── */}
       {(pausedAutomations.length > 0 || pausedRoutines.length > 0) && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Paused</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-text-soft">Paused</p>
           {pausedAutomations.map((a) => (
             <AutomationCard
               key={a.id}
@@ -1032,9 +1032,9 @@ export function resolveStateConfig(
       if (automationType === "message") {
         return {
           label: "Sent",
-          dot:   "bg-sage",
-          text:  "text-sage",
-          border: "border-l-sage/40",
+          dot:   "bg-gold",
+          text:  "text-gold-soft",
+          border: "border-l-gold/40",
         };
       }
       if (ownerOnly) {
@@ -1043,59 +1043,59 @@ export function resolveStateConfig(
         // genuinely represents a delivered reminder, not just a setup step.
         return {
           label: "Reminder sent",
-          dot:   "bg-sage",
-          text:  "text-sage",
-          border: "border-l-sage/40",
+          dot:   "bg-gold",
+          text:  "text-gold-soft",
+          border: "border-l-gold/40",
         };
       }
       return {
         label: "Waiting for confirmation",
-        dot:   "bg-amber-400",
-        text:  "text-amber-600",
-        border: "border-l-amber-300",
+        dot:   "bg-gold",
+        text:  "text-gold-soft",
+        border: "border-l-gold/40",
       };
     case "task_created":
       return {
         label: "Waiting for confirmation",
-        dot:   "bg-amber-400",
-        text:  "text-amber-600",
-        border: "border-l-amber-300",
+        dot:   "bg-gold",
+        text:  "text-gold-soft",
+        border: "border-l-gold/40",
       };
     case "followup_sent":
       return {
         label: "Follow-up sent",
-        dot:   "bg-amber-500",
-        text:  "text-amber-700",
-        border: "border-l-amber-400",
+        dot:   "bg-gold",
+        text:  "text-gold-soft",
+        border: "border-l-gold/40",
       };
     case "confirmed":
     case "completed":
       return {
         label: "Confirmed",
-        dot:   "bg-sage",
-        text:  "text-sage",
-        border: "border-l-sage/40",
+        dot:   "bg-gold",
+        text:  "text-gold-soft",
+        border: "border-l-gold/40",
       };
     case "escalated":
       return {
         label: "Escalated — needs attention",
-        dot:   "bg-red-400",
-        text:  "text-red-600",
-        border: "border-l-red-300",
+        dot:   "bg-danger",
+        text:  "text-danger",
+        border: "border-l-danger/50",
       };
     case "failed":
     case "skipped":
       return {
         label: state === "failed" ? "Failed" : "Skipped",
-        dot:   "bg-red-400",
-        text:  "text-red-600",
-        border: "border-l-red-300",
+        dot:   "bg-danger",
+        text:  "text-danger",
+        border: "border-l-danger/50",
       };
     default:
       return {
         label: "Not run yet",
-        dot:   "bg-ink/20",
-        text:  "text-ink/40",
+        dot:   "bg-text-muted",
+        text:  "text-text-muted",
         border: "border-l-sand",
       };
   }
@@ -1129,9 +1129,9 @@ function AutomationCard({
   const state = unsupportedRecurringWhatsapp
     ? {
         label: "Legacy WhatsApp disabled",
-        dot: "bg-ink/25",
-        text: "text-ink/45",
-        border: "border-l-ink/15",
+        dot: "bg-text-muted",
+        text: "text-text-soft",
+        border: "border-l-border-strong",
       }
     : resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type, ownerOnly);
   const failureReason =
@@ -1151,32 +1151,32 @@ function AutomationCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-ink leading-snug">{automation.title}</span>
             {automation.automation_type === "message" ? (
-              <span className="rounded-full bg-blush/20 px-2 py-0.5 text-[11px] font-medium text-blush">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
                 Message
               </span>
             ) : ownerOnly ? (
-              <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-espresso/70">
+              <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[11px] font-medium text-gold-soft">
                 Reminder
               </span>
             ) : (
-              <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
                 Automation
               </span>
             )}
             {isPaused && (
-              <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-ink/50">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-soft">
                 Paused
               </span>
             )}
             {unsupportedRecurringWhatsapp && (
-              <span className="rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-medium text-ink/45">
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
                 Unsupported
               </span>
             )}
           </div>
 
           {/* Cadence + assignee */}
-          <p className="text-xs text-ink/50">
+          <p className="text-xs text-text-soft">
             {automationCadenceLabel(automation)}
             {assigneeName ? ` · ${assigneeName}` : ""}
           </p>
@@ -1186,18 +1186,18 @@ function AutomationCard({
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
             {latestRunTimestamp && !unsupportedRecurringWhatsapp && (
-              <span className="text-[11px] text-ink/35">· {latestRunTimestamp}</span>
+              <span className="text-[11px] text-text-muted">· {latestRunTimestamp}</span>
             )}
           </div>
           {failureReason && (
-            <p className={`text-[11px] leading-snug ${unsupportedRecurringWhatsapp ? "text-ink/45" : "text-red-600/80"}`}>
+            <p className={`text-[11px] leading-snug ${unsupportedRecurringWhatsapp ? "text-text-muted" : "text-danger"}`}>
               {failureReason}
             </p>
           )}
 
           {/* Next run */}
           {nextRun && isActive && !unsupportedRecurringWhatsapp && (
-            <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
+            <p className="text-[11px] text-text-muted">Next run {nextRun}</p>
           )}
 
         </div>
@@ -1212,8 +1212,8 @@ function AutomationCard({
             aria-label={confirmingDelete ? "Confirm delete" : "Delete unsupported automation"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingDelete
-                ? "bg-red-100 text-red-600 hover:bg-red-200"
-                : "text-ink/30 hover:text-red-500"
+                ? "bg-danger/15 text-danger"
+                : "text-text-muted hover:text-danger"
             }`}
           >
             {actioning ? "…" : confirmingDelete ? "Confirm?" : "Delete"}
@@ -1228,7 +1228,7 @@ function AutomationCard({
               onClick={onPause}
               disabled={actioning}
               aria-label="Pause automation"
-              className="rounded-full px-2.5 py-1 text-xs font-medium text-ink/40 transition hover:bg-sand hover:text-ink/70 disabled:opacity-40"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-text-soft transition hover:bg-surface-subtle hover:text-ink disabled:opacity-40"
             >
               {actioning ? "…" : "Pause"}
             </button>
@@ -1239,7 +1239,7 @@ function AutomationCard({
               onClick={onResume}
               disabled={actioning}
               aria-label="Resume automation"
-              className="rounded-full px-2.5 py-1 text-xs font-medium text-sage transition hover:bg-sage/10 disabled:opacity-40"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-gold-soft transition hover:bg-gold/10 disabled:opacity-40"
             >
               {actioning ? "…" : "Resume"}
             </button>
@@ -1253,8 +1253,8 @@ function AutomationCard({
             aria-label={confirmingStop ? "Confirm stop" : "Stop automation"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingStop
-                ? "bg-red-100 text-red-600 hover:bg-red-200"
-                : "text-ink/30 hover:text-red-500"
+                ? "bg-danger/15 text-danger"
+                : "text-text-muted hover:text-danger"
             }`}
           >
             {actioning ? "…" : confirmingStop ? "Confirm?" : "Stop"}
@@ -1289,14 +1289,13 @@ function RoutineCard({
     routine.type === "reminder" ? "Reminder" :
     routine.type === "message"  ? "Message"  : "Delegation";
   const typeBadgeClass =
-    routine.type === "reminder" ? "bg-stone/40 text-espresso/70" :
-    routine.type === "message"  ? "bg-sky-400/10 text-sky-300"  :
-    "bg-sage/15 text-sage";
+    routine.type === "reminder" ? "border border-gold/35 bg-gold/10 text-gold-soft" :
+    "border border-border bg-surface-subtle text-text-soft";
 
   return (
     <div
       className={`rounded-2xl border bg-surface px-4 py-3.5 shadow-sm transition ${
-        routine.enabled ? "border-border" : "border-border/60 opacity-60"
+        routine.enabled ? "border-border" : "border-border/70"
       }`}
     >
       <div className="flex items-start gap-3">
@@ -1307,12 +1306,12 @@ function RoutineCard({
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${typeBadgeClass}`}>
               {typeLabel}
             </span>
-            <span className="rounded-full bg-stone/30 px-2 py-0.5 text-[11px] font-medium text-ink/40">
+            <span className="rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[11px] font-medium text-text-muted">
               Legacy
             </span>
           </div>
-          <p className="text-xs text-ink/50">{scheduleLabel(routine)}</p>
-          <p className="text-[11px] text-ink/35">{lastRunLabel(routine.last_run_at)}</p>
+          <p className="text-xs text-text-soft">{scheduleLabel(routine)}</p>
+          <p className="text-[11px] text-text-muted">{lastRunLabel(routine.last_run_at)}</p>
         </div>
 
         {/* Controls */}
@@ -1324,11 +1323,11 @@ function RoutineCard({
             disabled={toggling}
             aria-label={routine.enabled ? "Pause routine" : "Activate routine"}
             className={`relative h-6 w-10 rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-              routine.enabled ? "bg-sage" : "bg-stone/50"
+              routine.enabled ? "bg-gold" : "bg-stone/70"
             }`}
           >
             <span
-              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-cream shadow transition-transform ${
                 routine.enabled ? "translate-x-4" : "translate-x-0.5"
               }`}
             />
@@ -1342,8 +1341,8 @@ function RoutineCard({
             aria-label={confirmingDelete ? "Confirm delete" : "Delete routine"}
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingDelete
-                ? "bg-red-100 text-red-600 hover:bg-red-200"
-                : "text-ink/30 hover:text-red-500"
+                ? "bg-danger/15 text-danger"
+                : "text-text-muted hover:text-danger"
             }`}
           >
             {deleting ? "…" : confirmingDelete ? "Confirm?" : "Delete"}
