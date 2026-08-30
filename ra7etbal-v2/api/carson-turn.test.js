@@ -358,10 +358,13 @@ describe("Carson turn handler — CARSON_OPENAI_AGENT_ATTENTION_V1 routing (2026
     expect(reasonOverEvidence).toHaveBeenCalled();
   });
 
-  it("flag on: an admitted attention turn is routed to the agent coordinator instead of reasonOverEvidence", async () => {
+  it("flag on: an admitted attention turn is routed to the agent coordinator instead of reasonOverEvidence, and the grounded result requires an actual tool call", async () => {
     vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
     const reasonOverEvidence = vi.fn();
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "Nothing is due yet, so nothing needs to happen right now.", newItems: [], lastResponseId: "resp_agent_1" });
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput: "Nothing is due yet, so nothing needs to happen right now.", newItems: [{ type: "tool_call_item" }] };
+    });
     const buildAgent = (opts) => ({ __fakeAgent: true, ...opts });
     const fetchAttentionEvidence = vi.fn().mockResolvedValue({
       evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
@@ -387,14 +390,17 @@ describe("Carson turn handler — CARSON_OPENAI_AGENT_ATTENTION_V1 routing (2026
       capability: "attention_summary_read",
       groundingStatus: "grounded",
       ownerResult: "Nothing is due yet, so nothing needs to happen right now.",
-      previousResponseId: "resp_agent_1",
     });
+    expect(response.payload).not.toHaveProperty("previousResponseId");
     vi.unstubAllEnvs();
   });
 
-  it("flag on: previousResponseId from the request body is threaded through to the agent run for natural continuation", async () => {
+  it("flag on: a previousResponseId in the request body is never read into the owner turn, never reaches runAgent, and never appears in the response (2026-08-30, CodeRabbit finding on PR #381 — removed client trust)", async () => {
     vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "ok", newItems: [], lastResponseId: "resp_2" });
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput: "ok", newItems: [{ type: "tool_call_item" }] };
+    });
     const buildAgent = (opts) => ({ __fakeAgent: true, ...opts });
     const fetchAttentionEvidence = vi.fn().mockResolvedValue({
       evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
@@ -410,18 +416,24 @@ describe("Carson turn handler — CARSON_OPENAI_AGENT_ATTENTION_V1 routing (2026
     });
     const response = res();
 
+    // An arbitrary, even another-account-shaped, response id — the point
+    // is that NOTHING the client sends here is ever trusted or forwarded.
     await handler(
       req({
         ...AGENT_ATTENTION_TURN,
         previousCapability: "attention_summary_read",
         previousGroundingStatus: "grounded",
-        previousResponseId: "resp_1",
+        previousResponseId: "resp-belongs-to-a-different-account-entirely",
       }),
       response,
     );
 
-    expect(runAgent.mock.calls[0][2]).toMatchObject({ previousResponseId: "resp_1" });
-    vi.unstubAllEnvs();
+    // Exactly two positional args (agent, transcript) reached runAgent —
+    // no options object, so there is no field the client-supplied id could
+    // have ridden in on, let alone reached OpenAI's own API.
+    expect(runAgent.mock.calls[0]).toHaveLength(2);
+    expect(JSON.stringify(runAgent.mock.calls[0])).not.toContain("resp-belongs-to-a-different-account-entirely");
+    expect(response.payload).not.toHaveProperty("previousResponseId");
   });
 
   it("flag on: still fails closed to unauthorized before any retrieval, exactly like the existing path", async () => {

@@ -20,13 +20,32 @@
  * is unchanged. Only the reasoning/response layer on top of that evidence
  * is new.
  *
- * GROUNDING RULE: the agent's instructions require it to call the tool
- * before answering any operational question, and to say plainly that it
- * cannot confirm the live state if the tool reports failure — never to
- * fall back to a plausible-sounding generic summary. This is enforced by
- * instruction text (the model must reason honestly), not by a code branch
- * — there is no separate "generic fallback" render path in this file at
- * all, unlike the old pipeline's renderAttentionSummary fallback.
+ * GROUNDING RULE (2026-08-30, CodeRabbit finding on PR #381, hardened):
+ * the agent's instructions tell it to call the tool before answering, but
+ * instruction text alone is not treated as the enforcement mechanism — a
+ * model can still produce plausible-sounding text without actually calling
+ * the tool, or after the tool failed. Grounding is therefore enforced in
+ * EXECUTION STATE: a small mutable object closed over by the tool's own
+ * execute() function records whether the tool was actually called and
+ * whether the live evidence fetch actually succeeded. The coordinator only
+ * returns the model's finalOutput as a grounded answer when ALL THREE are
+ * true: the tool was called, the live fetch succeeded, and the model
+ * produced final output text. Any other combination fails closed to an
+ * honest "can't confirm" response — never a fabricated answer.
+ *
+ * previousResponseId (2026-08-30, CodeRabbit finding on PR #381, REMOVED):
+ * an earlier version of this file accepted a client-supplied
+ * previousResponseId and passed it straight through to OpenAI's Responses
+ * API chaining. That is a real cross-tenant trust boundary — an opaque
+ * pointer into OpenAI's own stored conversation state, unauthenticated
+ * against the caller's actual account. Removed entirely for this first
+ * vertical slice, in both directions: no previousResponseId is ever read
+ * from the request, ever sent to OpenAI, or ever returned to the client.
+ * Each turn runs as a standalone request. Durable, server-owned response
+ * chaining (verified against the caller's own account) can be added later
+ * as a separate, deliberately-scoped capability if cross-turn memory turns
+ * out to matter in practice — not smuggled in here as a client-trusted
+ * shortcut.
  */
 
 import { Agent, run, tool } from "@openai/agents";
@@ -83,7 +102,11 @@ Rules:
 // WHEN to call it, matching a normal agent tool-call loop), but the model
 // itself never sees accountId/authorization — only the tool's returned
 // JSON result, same security boundary as the old pipeline's reasoning call.
-function buildAttentionStateTool({ fetchEvidence, accountId, authorization }) {
+//
+// executionState is a mutable object OWNED BY THE COORDINATOR (not the
+// model, not the SDK) — this is the actual grounding-enforcement
+// mechanism, independent of whether the model followed its instructions.
+function buildAttentionStateTool({ fetchEvidence, accountId, authorization, executionState }) {
   return tool({
     name: "get_ra7etbal_attention_state",
     description:
@@ -93,6 +116,7 @@ function buildAttentionStateTool({ fetchEvidence, accountId, authorization }) {
       "waiting, or what can wait — never answer from memory.",
     parameters: z.object({}),
     async execute() {
+      executionState.called = true;
       let result;
       try {
         result = await fetchEvidence({ accountId, authorization });
@@ -101,11 +125,13 @@ function buildAttentionStateTool({ fetchEvidence, accountId, authorization }) {
       }
       const evidence = result?.evidence ?? null;
       if (!evidence || evidence.ok !== true) {
+        executionState.evidenceOk = false;
         return {
           ok: false,
           message: "The live Ra7etBal check did not complete — do not answer as if you know the current state.",
         };
       }
+      executionState.evidenceOk = true;
       return { ok: true, ...describeEvidenceForAgent(evidence) };
     },
   });
@@ -141,10 +167,12 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       return { handled: false, status: 400, code: "invalid_owner_turn" };
     }
 
+    const executionState = { called: false, evidenceOk: false };
     const attentionStateTool = buildAttentionStateTool({
       fetchEvidence,
       accountId: ownerTurn.accountId,
       authorization: ownerTurn.authorization,
+      executionState,
     });
     const model = process.env.CARSON_AGENT_MODEL ?? DEFAULT_ATTENTION_AGENT_MODEL;
     const makeAgent = buildAgent ?? ((opts) => new Agent(opts));
@@ -155,16 +183,14 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       tools: [attentionStateTool],
     });
 
+    // Standalone per turn — no previousResponseId, no client-supplied
+    // conversation pointer of any kind (see the file-level doc comment for
+    // why). Each turn is a fresh run(agent, transcript) call.
     const startedAt = Date.now();
     let result = null;
     let runThrew = false;
     try {
-      result = await runAgent(agent, ownerTurn.transcript, {
-        previousResponseId:
-          typeof ownerTurn.previousResponseId === "string" && ownerTurn.previousResponseId.trim()
-            ? ownerTurn.previousResponseId
-            : undefined,
-      });
+      result = await runAgent(agent, ownerTurn.transcript);
     } catch {
       runThrew = true;
     }
@@ -175,12 +201,17 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       : 0;
 
     const finalOutput = typeof result?.finalOutput === "string" ? result.finalOutput.trim() : "";
+    // The actual grounding gate: not "did text come back" but "did a
+    // successful live tool call actually happen for THIS run."
+    const grounded = executionState.called && executionState.evidenceOk;
 
-    if (runThrew || !finalOutput) {
+    if (runThrew || !finalOutput || !grounded) {
       logAgentRunDiagnostic({
         turnId: ownerTurn.turnId ?? null,
         model,
         toolCallCount,
+        toolCalled: executionState.called,
+        toolEvidenceOk: executionState.evidenceOk,
         runSuccess: false,
         renderedPath: "agent_run_failed",
         latencyMs,
@@ -199,6 +230,8 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       turnId: ownerTurn.turnId ?? null,
       model,
       toolCallCount,
+      toolCalled: executionState.called,
+      toolEvidenceOk: executionState.evidenceOk,
       runSuccess: true,
       renderedPath: "agent_answer",
       latencyMs,
@@ -211,7 +244,6 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       capability: "attention_summary_read",
       groundingStatus: "grounded",
       ownerResult: finalOutput,
-      previousResponseId: typeof result.lastResponseId === "string" ? result.lastResponseId : null,
     };
   };
 }

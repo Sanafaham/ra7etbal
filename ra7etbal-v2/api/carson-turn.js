@@ -225,12 +225,14 @@ export function createCarsonTurnHandler({
         ? req.body.previouslySurfacedEvidenceIds.filter((id) => typeof id === "string")
         : [],
       priorObjective: typeof req.body?.priorObjective === "string" ? req.body.priorObjective : null,
-      // previousResponseId (2026-08-30, OpenAI agent slice): same
-      // non-authoritative continuity trust tier as the fields above — the
-      // OpenAI Responses API's own opaque chaining id, only meaningful to
-      // createAttentionAgentCoordinator when CARSON_OPENAI_AGENT_ATTENTION_V1
-      // is enabled; ignored entirely by the existing coordinator.
-      previousResponseId: typeof req.body?.previousResponseId === "string" ? req.body.previousResponseId : null,
+      // NOTE (2026-08-30, CodeRabbit finding on PR #381): a client-supplied
+      // previousResponseId was deliberately removed here — it would have
+      // been an unauthenticated pointer into OpenAI's own stored
+      // conversation state, forwarded to OpenAI without any verification
+      // that it actually belonged to this account/session. req.body's
+      // previousResponseId (if a client sends one) is intentionally never
+      // read into ownerTurn, so it can never reach runAgent. See
+      // api/_carson-attention-agent.js's file-level doc comment.
     };
 
     // Admission (2026-08-28, structured Second Brain admission correction):

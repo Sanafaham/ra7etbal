@@ -33,6 +33,17 @@ function fakeBuildAgent(captured) {
   };
 }
 
+// A runAgent fake that actually invokes the built agent's tool (simulating
+// a real grounded run) before returning finalOutput — the only way for a
+// test to legitimately produce a "grounded" result under the 2026-08-30
+// execution-state grounding fix (see api/_carson-attention-agent.js).
+function makeGroundedRunAgent(finalOutput) {
+  return vi.fn(async (agent) => {
+    await agent.tools[0].invoke({}, "{}");
+    return { finalOutput, newItems: [{ type: "tool_call_item" }] };
+  });
+}
+
 describe("createAttentionAgentCoordinator", () => {
   it("throws if fetchEvidence is not provided", () => {
     expect(() => createAttentionAgentCoordinator({})).toThrow();
@@ -45,9 +56,12 @@ describe("createAttentionAgentCoordinator", () => {
     expect(await coordinate({ accountId: "", transcript: "hi" })).toEqual({ handled: false, status: 400, code: "invalid_owner_turn" });
   });
 
-  it("builds the agent with the default model, the one narrow tool, and calls runAgent with the transcript", async () => {
+  it("builds the agent with the default model, the one narrow tool, and calls runAgent with the transcript, standalone — no continuation options at all", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "Here's what's active.", newItems: [], lastResponseId: "resp_1" });
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput: "Here's what's active.", newItems: [{ type: "tool_call_item" }] };
+    });
     const captured = {};
     const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent(captured) });
 
@@ -56,17 +70,22 @@ describe("createAttentionAgentCoordinator", () => {
     expect(captured.agentOpts.model).toBe(DEFAULT_ATTENTION_AGENT_MODEL);
     expect(captured.agentOpts.tools).toHaveLength(1);
     expect(captured.agentOpts.tools[0].name).toBe("get_ra7etbal_attention_state");
-    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ __fakeAgent: true }), "What can wait?", expect.any(Object));
+    // Exactly two positional args (agent, transcript) — no third options
+    // arg carrying any continuation/session/response-id mechanism at all
+    // (2026-08-30, CodeRabbit finding — previousResponseId removed).
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({ __fakeAgent: true }), "What can wait?");
+    expect(runAgent.mock.calls[0]).toHaveLength(2);
     expect(result.handled).toBe(true);
     expect(result.ownerResult).toBe("Here's what's active.");
     expect(result.capability).toBe("attention_summary_read");
     expect(result.groundingStatus).toBe("grounded");
+    expect(result).not.toHaveProperty("previousResponseId");
   });
 
   it("uses CARSON_AGENT_MODEL when configured, instead of the default", async () => {
     vi.stubEnv("CARSON_AGENT_MODEL", "some-other-model-id");
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "ok", newItems: [], lastResponseId: null });
+    const runAgent = makeGroundedRunAgent("ok");
     const captured = {};
     const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent(captured) });
 
@@ -76,35 +95,11 @@ describe("createAttentionAgentCoordinator", () => {
     vi.unstubAllEnvs();
   });
 
-  it("passes previousResponseId through to runAgent when the owner turn carries one, and omits it when absent", async () => {
-    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "ok", newItems: [], lastResponseId: "resp_2" });
-    const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
-
-    await coordinate({ ...OWNER_TURN, previousResponseId: "resp_1" });
-    expect(runAgent.mock.calls[0][2]).toMatchObject({ previousResponseId: "resp_1" });
-
-    runAgent.mockClear();
-    await coordinate(OWNER_TURN);
-    expect(runAgent.mock.calls[0][2].previousResponseId).toBeUndefined();
-  });
-
-  it("returns the new lastResponseId for the next turn's continuity", async () => {
-    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "ok", newItems: [], lastResponseId: "resp_next" });
-    const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
-
-    const result = await coordinate(OWNER_TURN);
-
-    expect(result.previousResponseId).toBe("resp_next");
-  });
-
   it("counts tool_call_item entries in newItems as the tool-call count for observability (never exposed to the owner)", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({
-      finalOutput: "ok",
-      newItems: [{ type: "tool_call_item" }, { type: "message_output_item" }, { type: "tool_call_output_item" }],
-      lastResponseId: null,
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput: "ok", newItems: [{ type: "tool_call_item" }, { type: "message_output_item" }, { type: "tool_call_output_item" }] };
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
@@ -134,7 +129,10 @@ describe("createAttentionAgentCoordinator", () => {
 
   it("returns an honest failure message when the run resolves but produces no final output text", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: undefined, newItems: [], lastResponseId: null });
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput: undefined, newItems: [{ type: "tool_call_item" }] };
+    });
     const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
 
     const result = await coordinate(OWNER_TURN);
@@ -145,7 +143,7 @@ describe("createAttentionAgentCoordinator", () => {
 
   it("the safe diagnostic log never contains the owner's transcript or the model's final answer text", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "call the dentist is overdue by 3 days", newItems: [], lastResponseId: null });
+    const runAgent = makeGroundedRunAgent("call the dentist is overdue by 3 days");
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
 
@@ -155,6 +153,71 @@ describe("createAttentionAgentCoordinator", () => {
     expect(serialized).not.toContain("a very specific private question about my lease");
     expect(serialized).not.toContain("call the dentist is overdue by 3 days");
     logSpy.mockRestore();
+  });
+
+  describe("grounding is enforced in execution state, never by trusting instruction text alone (2026-08-30, CodeRabbit finding on PR #381)", () => {
+    it("REJECTED: the model produces final output text without ever calling the tool", async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+      // Simulates a model that ignored its instructions and answered anyway
+      // — the tool is simply never invoked by this fake.
+      const runAgent = vi.fn().mockResolvedValue({ finalOutput: "Nothing needs your attention.", newItems: [] });
+      const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
+
+      const result = await coordinate(OWNER_TURN);
+
+      expect(result.groundingStatus).toBe("failed");
+      expect(result.ownerResult).toBe("I couldn't check your live Ra7etBal state right now — please try again in a moment.");
+      expect(result.ownerResult).not.toBe("Nothing needs your attention.");
+      expect(fetchEvidence).not.toHaveBeenCalled();
+    });
+
+    it("REJECTED: the tool was called but the live retrieval failed, even though the model still produced text", async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue({ evidence: { ok: false, code: "attention_read_failed" } });
+      const runAgent = vi.fn(async (agent) => {
+        await agent.tools[0].invoke({}, "{}"); // called, but the tool itself reports ok:false
+        return { finalOutput: "Nothing needs your attention.", newItems: [{ type: "tool_call_item" }] };
+      });
+      const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
+
+      const result = await coordinate(OWNER_TURN);
+
+      expect(result.groundingStatus).toBe("failed");
+      expect(result.ownerResult).toBe("I couldn't check your live Ra7etBal state right now — please try again in a moment.");
+      expect(result.ownerResult).not.toBe("Nothing needs your attention.");
+    });
+
+    it("ACCEPTED: the tool was called, the live retrieval succeeded, and the model produced final output — the ONLY combination that is grounded", async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+      const runAgent = makeGroundedRunAgent("You need to decide: sign the lease.");
+      const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
+
+      const result = await coordinate(OWNER_TURN);
+
+      expect(result.groundingStatus).toBe("grounded");
+      expect(result.ownerResult).toBe("You need to decide: sign the lease.");
+      expect(fetchEvidence).toHaveBeenCalledTimes(1);
+    });
+
+    it("no invented operational answer is ever produced on any failure path — always the exact same honest fixed message", async () => {
+      const scenarios = [
+        { name: "tool never called", fetchEvidence: vi.fn(), runAgent: vi.fn().mockResolvedValue({ finalOutput: "made up answer", newItems: [] }) },
+        {
+          name: "tool called, retrieval failed",
+          fetchEvidence: vi.fn().mockResolvedValue({ evidence: { ok: false } }),
+          runAgent: vi.fn(async (agent) => {
+            await agent.tools[0].invoke({}, "{}");
+            return { finalOutput: "made up answer", newItems: [{ type: "tool_call_item" }] };
+          }),
+        },
+        { name: "run throws", fetchEvidence: vi.fn().mockResolvedValue(GROUNDED_RESULT), runAgent: vi.fn().mockRejectedValue(new Error("boom")) },
+      ];
+      for (const { fetchEvidence, runAgent } of scenarios) {
+        const coordinate = createAttentionAgentCoordinator({ fetchEvidence, runAgent, buildAgent: fakeBuildAgent({}) });
+        const result = await coordinate(OWNER_TURN);
+        expect(result.ownerResult).toBe("I couldn't check your live Ra7etBal state right now — please try again in a moment.");
+        expect(result.ownerResult).not.toContain("made up answer");
+      }
+    });
   });
 });
 
@@ -352,6 +415,10 @@ describe("First acceptance journey (2026-08-30) — wiring proof across the four
 
     const result = await coordinate({ accountId: "a", authorization: "Bearer s", turnId: "t-fail", transcript: "What can wait?" });
 
-    expect(result.ownerResult).toBe("I could not confirm your live state right now.");
+    // The coordinator's own fixed fail-closed message — not the fake
+    // model's per-branch text — since the tool reported ok:false, and
+    // grounding is enforced by execution state, not the model's wording.
+    expect(result.groundingStatus).toBe("failed");
+    expect(result.ownerResult).toBe("I couldn't check your live Ra7etBal state right now — please try again in a moment.");
   });
 });
