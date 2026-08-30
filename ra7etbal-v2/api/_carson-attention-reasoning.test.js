@@ -111,6 +111,104 @@ describe("reasonOverOperationalEvidenceWithClaude", () => {
     ).rejects.toThrow("Anthropic API key is not configured.");
     if (original) process.env.ANTHROPIC_API_KEY = original;
   });
+
+  describe("Stage 2 request timeout (2026-08-30, Turn 4 canary FAIL — proven root cause: production requests exceeded the prior 8000ms budget and aborted)", () => {
+    it("configures the abort timeout at exactly 15000ms, not the prior 8000ms", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = vi.fn().mockResolvedValue(toolResponse({ responseIntent: "list", selectedEvidenceIds: ["task-1"] }));
+      const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+
+      await reasonOverOperationalEvidenceWithClaude(
+        { userMessage: "What can wait?", conversationState: {}, authorizedEvidence: EVIDENCE },
+        fetchMock,
+      );
+
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 15000)).toBe(true);
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 8000)).toBe(false);
+      setTimeoutSpy.mockRestore();
+    });
+
+    it("does not abort a request that is still pending at 14999ms, and does abort once 15000ms elapses", async () => {
+      vi.useFakeTimers();
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      let capturedSignal;
+      const fetchMock = vi.fn((_url, options) => {
+        capturedSignal = options.signal;
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            const err = new Error("The operation was aborted.");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      });
+
+      const promise = reasonOverOperationalEvidenceWithClaude(
+        { userMessage: "What can wait?", conversationState: {}, authorizedEvidence: EVIDENCE },
+        fetchMock,
+      );
+      // Attach a no-op catch immediately so the eventual rejection is never
+      // "unhandled" while we assert the pre-abort state below.
+      const guarded = promise.catch((err) => err);
+
+      await vi.advanceTimersByTimeAsync(14999);
+      expect(capturedSignal.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2);
+      expect(capturedSignal.aborted).toBe(true);
+      const rejection = await guarded;
+      expect(rejection.name).toBe("AbortError");
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("safe httpStatus attachment on thrown errors (2026-08-30, Turn 4 canary root-cause narrowing) — never the response body/headers, only a numeric status when an HTTP response actually arrived", () => {
+    it("attaches the real numeric HTTP status when Anthropic returns a non-2xx response", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: "rate limited — this text must never be logged" } }),
+      });
+
+      await expect(
+        reasonOverOperationalEvidenceWithClaude(
+          { userMessage: "What can wait?", conversationState: {}, authorizedEvidence: EVIDENCE },
+          fetchMock,
+        ),
+      ).rejects.toMatchObject({ httpStatus: 429 });
+    });
+
+    it("attaches the real numeric HTTP status (200) when Anthropic responds 2xx but omits the expected tool-use block", async () => {
+      process.env.ANTHROPIC_API_KEY = "test-key";
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ content: [{ type: "text", text: "Sure!" }] }),
+      });
+
+      await expect(
+        reasonOverOperationalEvidenceWithClaude(
+          { userMessage: "What can wait?", conversationState: {}, authorizedEvidence: EVIDENCE },
+          fetchMock,
+        ),
+      ).rejects.toMatchObject({ httpStatus: 200 });
+    });
+
+    it("has no httpStatus at all when there is no HTTP response (missing credential)", async () => {
+      const original = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      let caught;
+      try {
+        await reasonOverOperationalEvidenceWithClaude({ userMessage: "x", conversationState: {}, authorizedEvidence: EVIDENCE }, vi.fn());
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught.httpStatus).toBeUndefined();
+      if (original) process.env.ANTHROPIC_API_KEY = original;
+    });
+  });
 });
 
 describe("validateAttentionDecision", () => {

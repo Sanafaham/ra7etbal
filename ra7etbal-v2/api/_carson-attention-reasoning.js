@@ -174,7 +174,13 @@ export async function reasonOverOperationalEvidenceWithClaude(
   ].join("\n");
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  // 2026-08-30 (Turn 4 canary FAIL, live production diagnostic proof): the
+  // prior 8000ms budget was too tight for a real-world Claude Haiku
+  // tool-use round-trip under production latency — production logs showed
+  // this exact call aborting on a genuine owner turn. 15000ms is a modest,
+  // still-bounded increase; this is the entire fix, no retry/model/prompt
+  // change accompanies it.
+  const timeout = setTimeout(() => controller.abort(), 15000);
   let response;
   try {
     response = await fetchImpl("https://api.anthropic.com/v1/messages", {
@@ -197,11 +203,24 @@ export async function reasonOverOperationalEvidenceWithClaude(
     clearTimeout(timeout);
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok || !body) throw new Error("Reasoning model request failed.");
+  if (!response.ok || !body) {
+    // httpStatus attached (2026-08-30, Turn 4 diagnostic hardening) so the
+    // caller's diagnostic logging can safely record the numeric status
+    // only — never the response body, headers, or provider error text —
+    // to distinguish an HTTP-level failure from the case below (a 2xx
+    // response that simply omitted the expected tool-use block).
+    const err = new Error("Reasoning model request failed.");
+    err.httpStatus = response.status;
+    throw err;
+  }
   const toolUse = body.content?.find(
     (block) => block?.type === "tool_use" && block?.name === "decide_attention_response",
   );
-  if (!toolUse?.input) throw new Error("Reasoning model returned no structured decision.");
+  if (!toolUse?.input) {
+    const err = new Error("Reasoning model returned no structured decision.");
+    err.httpStatus = response.status;
+    throw err;
+  }
   return toolUse.input;
 }
 
