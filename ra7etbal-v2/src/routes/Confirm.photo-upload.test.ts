@@ -24,6 +24,16 @@ function functionBlock(name: string): string {
 // server-side half (x-upsert, task_attachments replace) is covered in
 // api/task-confirm.test.js.
 describe("Confirm — proof photo upload (up to 5, remove/replace, honest failure reporting)", () => {
+  it("uses the approved dark surface, text, input, and action tokens throughout the staff flow", () => {
+    expect(SOURCE).toContain("border border-border bg-surface p-6");
+    expect(SOURCE).toContain("border border-dashed border-border bg-surface-subtle");
+    expect(SOURCE).toContain("border border-border bg-surface-subtle px-3 py-2 text-sm text-ink");
+    expect(SOURCE).toContain("bg-gold px-5 py-3 text-base font-medium text-cream");
+    expect(SOURCE).not.toContain("bg-white/85");
+    expect(SOURCE).not.toContain("bg-white/70");
+    expect(SOURCE).not.toContain("bg-cream/40");
+  });
+
   it("caps proof photos at 5 and defines the block-copy message", () => {
     expect(SOURCE).toContain("const MAX_PROOF_PHOTOS = 5");
     expect(SOURCE).toContain('const PROOF_LIMIT_MESSAGE = "You can attach up to 5 photos."');

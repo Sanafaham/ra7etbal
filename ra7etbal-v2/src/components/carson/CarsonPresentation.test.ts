@@ -20,6 +20,7 @@ describe("Carson V1 final presentation", () => {
     expect(widgetSource).toContain("const [lastUserTranscript, setLastUserTranscript]");
     expect(widgetSource).toContain('channel === "voice" && status !== "connected" && lastUserTranscript');
     expect(widgetSource).toContain("shouldShowCarsonVoiceTranscript({");
+    expect(widgetSource).toContain("Keep spoken output voice-only in this surface");
   });
 
   it("keeps the existing image input and live-session attachment path", () => {

@@ -1043,9 +1043,9 @@ export function resolveStateConfig(
         // genuinely represents a delivered reminder, not just a setup step.
         return {
           label: "Reminder sent",
-          dot:   "bg-sage",
-          text:  "text-sage",
-          border: "border-l-sage/40",
+          dot:   "bg-gold",
+          text:  "text-gold-soft",
+          border: "border-l-gold/40",
         };
       }
       return {
@@ -1155,7 +1155,7 @@ function AutomationCard({
                 Message
               </span>
             ) : ownerOnly ? (
-              <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-espresso/70">
+              <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[11px] font-medium text-gold-soft">
                 Reminder
               </span>
             ) : (
@@ -1186,7 +1186,7 @@ function AutomationCard({
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
             {latestRunTimestamp && !unsupportedRecurringWhatsapp && (
-              <span className="text-[11px] text-ink/35">· {latestRunTimestamp}</span>
+              <span className="text-[11px] text-text-muted">· {latestRunTimestamp}</span>
             )}
           </div>
           {failureReason && (
@@ -1197,7 +1197,7 @@ function AutomationCard({
 
           {/* Next run */}
           {nextRun && isActive && !unsupportedRecurringWhatsapp && (
-            <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
+            <p className="text-[11px] text-text-muted">Next run {nextRun}</p>
           )}
 
         </div>
@@ -1228,7 +1228,7 @@ function AutomationCard({
               onClick={onPause}
               disabled={actioning}
               aria-label="Pause automation"
-              className="rounded-full px-2.5 py-1 text-xs font-medium text-ink/40 transition hover:bg-sand hover:text-ink/70 disabled:opacity-40"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-text-soft transition hover:bg-surface-subtle hover:text-ink disabled:opacity-40"
             >
               {actioning ? "…" : "Pause"}
             </button>
@@ -1254,7 +1254,7 @@ function AutomationCard({
             className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
               confirmingStop
                 ? "bg-red-100 text-red-600 hover:bg-red-200"
-                : "text-ink/30 hover:text-red-500"
+                : "text-text-muted hover:text-danger"
             }`}
           >
             {actioning ? "…" : confirmingStop ? "Confirm?" : "Stop"}

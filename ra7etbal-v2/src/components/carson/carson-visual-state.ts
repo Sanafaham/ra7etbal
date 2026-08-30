@@ -17,16 +17,14 @@ export interface CarsonVisualSignals {
   outcome: CarsonVisualOutcome;
 }
 
-export function shouldShowCarsonVoiceTranscript({
-  status,
-  channel,
-  hasMessage,
-}: {
+export function shouldShowCarsonVoiceTranscript(_signals: {
   status: CarsonVisualSignals["status"];
   channel: CarsonVisualSignals["channel"];
   hasMessage: boolean;
 }): boolean {
-  return channel === "voice" && status !== "connected" && hasMessage;
+  // Voice responses remain available to conversation history, but this live
+  // Carson surface never duplicates spoken output as a written result card.
+  return false;
 }
 
 export function deriveCarsonVisualState({

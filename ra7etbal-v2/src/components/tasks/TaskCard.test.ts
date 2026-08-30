@@ -30,6 +30,14 @@ describe("TaskCard.tsx — substitute_review card wiring", () => {
     expect(cardSource).toMatch(/task\.worker_reply/);
   });
 
+  it("uses the approved dark surface hierarchy without the legacy pink approval card", () => {
+    expect(cardSource).toContain("border border-gold/30 bg-surface-subtle");
+    expect(cardSource).toContain("text-sm text-ink");
+    expect(cardSource).toContain("text-text-soft");
+    expect(cardSource).not.toContain("border-rose-300 bg-rose-50");
+    expect(cardSource).not.toContain("text-rose-900");
+  });
+
   it("offers exactly the three approved owner actions", () => {
     expect(cardSource).toContain("Approve Alternative");
     expect(cardSource).toContain("Reject Alternative");
