@@ -92,7 +92,7 @@ export default function Notifications() {
             <div className={`relative w-full rounded-2xl border p-4 shadow-sm ${item.read_at ? "border-border bg-surface/80" : "border-border-strong bg-surface"}`}>
             <button type="button" onClick={() => void openNotification(item)} className="w-full pr-10 text-left transition active:scale-[0.99]">
               <div className="flex items-start gap-3">
-                {!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-sage" aria-label="Unread" />}
+                {!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-gold" aria-label="Unread" />}
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-ink">{item.title}</p>
                   <p className="mt-1 text-sm leading-relaxed text-text-soft">{item.body}</p>
