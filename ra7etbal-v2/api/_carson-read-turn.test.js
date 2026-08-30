@@ -1036,6 +1036,7 @@ describe("CARSON_STAGE2_DIAGNOSTIC_LOGGING — temporary, feature-flagged, allow
     "callNumber",
     "providerThrew",
     "errorClass",
+    "httpStatus",
     "providerCallCompleted",
     "responseIntent",
     "selectedEvidenceIds",
@@ -1289,6 +1290,71 @@ describe("CARSON_STAGE2_DIAGNOSTIC_LOGGING — temporary, feature-flagged, allow
       expect(payload.call1.errorClass).toBe("unknown_error");
       const serialized = JSON.stringify(payload);
       expect(serialized).not.toContain(maliciousName);
+    });
+  });
+
+  describe("httpStatus (2026-08-30, Turn 4 canary root-cause narrowing) — safe numeric status only, distinguishing an HTTP failure from a 2xx with no structured decision", () => {
+    it("logs the real numeric httpStatus when the provider call throws an error carrying one (e.g. a non-2xx Anthropic response)", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const sensitiveBody = "rate limited — provider body text must never appear in logs";
+      const err = new Error(sensitiveBody);
+      err.httpStatus = 429;
+      const reasonOverEvidence = vi.fn().mockRejectedValue(err);
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.httpStatus).toBe(429);
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain(sensitiveBody);
+    });
+
+    it("logs httpStatus: null when the thrown error has no HTTP response at all (e.g. a timeout/AbortError)", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const err = new Error("The operation was aborted.");
+      err.name = "AbortError";
+      const reasonOverEvidence = vi.fn().mockRejectedValue(err);
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.errorClass).toBe("abort");
+      expect(payload.call1.httpStatus).toBeNull();
+    });
+
+    it("logs httpStatus: null (not the raw value) when a thrown error carries a non-numeric httpStatus", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const err = new Error("malformed");
+      err.httpStatus = "not-a-number";
+      const reasonOverEvidence = vi.fn().mockRejectedValue(err);
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.httpStatus).toBeNull();
+    });
+
+    it("logs httpStatus: null on the successful path (a resolved decision never carries an httpStatus field)", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.providerThrew).toBe(false);
+      expect(payload.call1.httpStatus).toBeNull();
     });
   });
 });

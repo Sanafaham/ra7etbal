@@ -48,6 +48,18 @@ function describeErrorClass(err) {
   return "unknown_error";
 }
 
+// httpStatus (2026-08-30, Turn 4 canary FAIL root-cause narrowing) — a
+// plain numeric HTTP status code, never the response body/headers/provider
+// error text. Only reasonOverOperationalEvidenceWithClaude's own two
+// post-fetch throw paths attach err.httpStatus (see api/_carson-attention-
+// reasoning.js); a missing-credential throw or a network/timeout throw has
+// no HTTP response at all, so this is null there — that null vs. number
+// distinction is exactly what separates "no HTTP response ever arrived"
+// from "a response arrived but was itself the problem."
+function describeHttpStatus(err) {
+  return typeof err?.httpStatus === "number" ? err.httpStatus : null;
+}
+
 function describeDecisionShape(decision) {
   if (decision === null || decision === undefined) return { providerCallCompleted: false };
   return {
@@ -366,12 +378,14 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     let rawDecision;
     let call1Threw = false;
     let call1ErrorClass = null;
+    let call1HttpStatus = null;
     try {
       rawDecision = await askReasoning();
     } catch (err) {
       rawDecision = null;
       call1Threw = true;
       call1ErrorClass = describeErrorClass(err);
+      call1HttpStatus = describeHttpStatus(err);
     }
 
     let validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false, reason: "no_decision" };
@@ -379,6 +393,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       callNumber: 1,
       providerThrew: call1Threw,
       errorClass: call1Threw ? call1ErrorClass : null,
+      httpStatus: call1Threw ? call1HttpStatus : null,
       ...describeDecisionShape(rawDecision),
       validatorOk: validated.ok,
       validatorReason: validated.ok ? null : (validated.reason ?? null),
@@ -400,18 +415,21 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       let retryDecision;
       let call2Threw = false;
       let call2ErrorClass = null;
+      let call2HttpStatus = null;
       try {
         retryDecision = await askReasoning();
       } catch (err) {
         retryDecision = null;
         call2Threw = true;
         call2ErrorClass = describeErrorClass(err);
+        call2HttpStatus = describeHttpStatus(err);
       }
       validated = retryDecision ? validateAttentionDecision(retryDecision, evidence) : { ok: false, reason: "no_decision" };
       call2Diagnostic = {
         callNumber: 2,
         providerThrew: call2Threw,
         errorClass: call2Threw ? call2ErrorClass : null,
+        httpStatus: call2Threw ? call2HttpStatus : null,
         ...describeDecisionShape(retryDecision),
         validatorOk: validated.ok,
         validatorReason: validated.ok ? null : (validated.reason ?? null),
