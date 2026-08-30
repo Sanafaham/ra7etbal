@@ -1609,6 +1609,13 @@ export default function ElevenLabsAgentWidget({
   // minimal label — never a transcript — passed through as conversational
   // context only.
   const priorAttentionObjectiveRef = useRef<string | null>(null);
+  // NOTE (2026-08-30, CodeRabbit finding on PR #381): a previousResponseIdRef
+  // for OpenAI Responses API chaining was deliberately removed here — it
+  // would have round-tripped an unauthenticated, client-held pointer into
+  // OpenAI's own stored conversation state to the server on every turn.
+  // The OpenAI-agent attention path (CARSON_OPENAI_AGENT_ATTENTION_V1) runs
+  // each turn standalone for this first vertical slice; see
+  // api/_carson-attention-agent.js's file-level doc comment.
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {

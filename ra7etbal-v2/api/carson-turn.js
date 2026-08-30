@@ -2,6 +2,7 @@ import googleCalendarHandler from "./google-calendar.js";
 import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator, ATTENTION_CAPABILITY } from "./_carson-read-turn.js";
 import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
 import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
+import { createAttentionAgentCoordinator } from "./_carson-attention-agent.js";
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 
 const MAX_DEDUP_ENTRIES = 200;
@@ -162,13 +163,32 @@ export function createCarsonTurnHandler({
   readCalendar = readCalendarThroughExistingHandler,
   fetchAttentionEvidence = fetchAttentionEvidenceThroughServerPath,
   reasonOverEvidence = reasonOverOperationalEvidenceWithClaude,
+  // OpenAI Agents SDK vertical slice (2026-08-30, owner decision after
+  // repeated Stage 1/2 production canary failures) — runAgent/buildAgent
+  // are DI-only for tests; production always uses their real defaults
+  // inside createAttentionAgentCoordinator itself.
+  runAgent,
+  buildAgent,
   dedupStore = completedTurns,
 } = {}) {
   const coordinateCalendar = createReadOnlyTurnCoordinator({ interpretIntent, readCalendar });
-  const coordinateAttention = createAttentionReadCoordinator({
-    fetchEvidence: fetchAttentionEvidence,
-    reasonOverEvidence,
-  });
+  // CARSON_OPENAI_AGENT_ATTENTION_V1: narrow, owner-only production flag.
+  // Disabled (default): the existing Stage 1/2 typed attention path is
+  // unchanged below. Enabled: the SAME admission/routing logic below picks
+  // which coordinator answers an admitted attention turn — nothing else
+  // about admission, calendar fallback, dedup, or the not_attention
+  // contract changes.
+  const coordinateAttention =
+    process.env.CARSON_OPENAI_AGENT_ATTENTION_V1 === "1"
+      ? createAttentionAgentCoordinator({
+          fetchEvidence: fetchAttentionEvidence,
+          ...(runAgent ? { runAgent } : {}),
+          ...(buildAgent ? { buildAgent } : {}),
+        })
+      : createAttentionReadCoordinator({
+          fetchEvidence: fetchAttentionEvidence,
+          reasonOverEvidence,
+        });
   return async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
     const accountId = await authenticate(req);
@@ -205,6 +225,14 @@ export function createCarsonTurnHandler({
         ? req.body.previouslySurfacedEvidenceIds.filter((id) => typeof id === "string")
         : [],
       priorObjective: typeof req.body?.priorObjective === "string" ? req.body.priorObjective : null,
+      // NOTE (2026-08-30, CodeRabbit finding on PR #381): a client-supplied
+      // previousResponseId was deliberately removed here — it would have
+      // been an unauthenticated pointer into OpenAI's own stored
+      // conversation state, forwarded to OpenAI without any verification
+      // that it actually belonged to this account/session. req.body's
+      // previousResponseId (if a client sends one) is intentionally never
+      // read into ownerTurn, so it can never reach runAgent. See
+      // api/_carson-attention-agent.js's file-level doc comment.
     };
 
     // Admission (2026-08-28, structured Second Brain admission correction):
