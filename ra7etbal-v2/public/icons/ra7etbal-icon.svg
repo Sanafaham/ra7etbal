@@ -1,5 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
-  <title id="title">Ra7etBal</title>
-  <rect width="100" height="100" rx="22" fill="#151310"/>
-  <path d="M 47.51 25.27 Q 54 14 59.68 25.69 L 82.32 72.31 Q 88 84 75.02 83.28 L 28.98 80.72 Q 16 80 22.49 68.73 Z" fill="#C9AE73"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Ra7etbal · راحة بال</title>
+  <rect width="512" height="512" fill="#151310"/>
+  <path
+    fill="#C9AE73"
+    fill-rule="evenodd"
+    d="M256 54c13 0 24 7 31 20l72 139c8 15 7 30-2 42-9 12-22 18-40 17l-142-8c-18-1-31-8-39-21-8-13-7-28 2-43l83-127c8-12 20-19 35-19Zm1 51-67 103c-3 5-3 8-1 11 2 3 5 4 11 5l116 6c6 0 9-1 11-4 2-3 2-7-1-12l-59-113c-2-4-5-6-8-6-1 0-2 0-2 1v9Zm5 34c4 0 7 2 9 6l23 45c2 4 2 8 0 11-3 3-6 5-11 4l-46-2c-5 0-8-2-10-6-2-3-2-7 1-11l27-41c2-4 4-6 7-6Z"
+  />
+  <text x="256" y="349" fill="#F3EEE6" font-family="Inter, Arial, sans-serif" font-size="82" font-weight="600" text-anchor="middle" letter-spacing="-2">Ra7etbal</text>
+  <text x="256" y="424" fill="#F3EEE6" font-family="Arial, sans-serif" font-size="54" font-weight="500" text-anchor="middle" direction="rtl" unicode-bidi="bidi-override">راحة بال</text>
 </svg>

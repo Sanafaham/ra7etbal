@@ -30,10 +30,14 @@ describe("PWA visual identity", () => {
     }
   });
 
-  it("retains one canonical mark with a dark tile and stronger champagne gold", () => {
+  it("serves the complete bilingual brand lockup instead of a triangle-only tile", () => {
     for (const source of [icon, maskableIcon]) {
       expect(source).toContain('fill="#151310"');
       expect(source).toContain('fill="#C9AE73"');
+      expect(source).toContain('fill="#F3EEE6"');
+      expect(source).toContain(">Ra7etbal</text>");
+      expect(source).toContain(">راحة بال</text>");
+      expect(source).toContain('fill-rule="evenodd"');
       expect(source).not.toContain("#FAF9F7");
       expect(source).not.toContain("#B89B5E");
     }
