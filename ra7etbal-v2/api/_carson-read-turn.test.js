@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   READ_CAPABILITY_REGISTRY,
   authorizeReadIntent,
@@ -1003,5 +1003,292 @@ describe("Carson deferral/timing semantics are derived deterministically from du
     expect(rankResult.ownerResult).toBe(
       "In order: call the dentist (Overdue by 1 day); then pay the electricity bill (Due in 3 days).",
     );
+  });
+});
+
+describe("CARSON_STAGE2_DIAGNOSTIC_LOGGING — temporary, feature-flagged, allowlisted/redacted Turn 4 production diagnostic (2026-08-29)", () => {
+  const DIAG_EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    completeness: "full",
+    needsYou: [],
+    overdueReminders: [
+      { id: "r1", label: "call Loulya", type: "reminder", status: "pending", dueAt: "2026-08-28T08:48:21.59Z", dueDescription: "Overdue by 1 day", assignee: null, category: "overdueReminders" },
+    ],
+    upcomingReminders: [],
+    waiting: [],
+    later: [],
+    unresolvedCaptures: [],
+  };
+  const DIAG_GROUNDED_RESULT = { evidence: DIAG_EVIDENCE, text: "Needs your attention: call Loulya." };
+  const diagActiveContext = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-diag-1",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+    previouslySurfacedEvidenceIds: ["r1"],
+    priorObjective: "reviewing overdue reminders",
+  };
+
+  const ALLOWED_TOP_LEVEL_KEYS = new Set(["diagnostic", "turnId", "retryInvoked", "call1", "call2", "renderedPath"]);
+  const ALLOWED_CALL_KEYS = new Set([
+    "callNumber",
+    "providerThrew",
+    "errorClass",
+    "providerCallCompleted",
+    "responseIntent",
+    "selectedEvidenceIds",
+    "rankedEvidenceIds",
+    "contrastedEvidenceIds",
+    "needsClarificationPresent",
+    "validatorOk",
+    "validatorReason",
+  ]);
+  const ALLOWED_ID_FIELD_KEYS = new Set(["shape", "count"]);
+  const FORBIDDEN_SUBSTRINGS = [
+    "task-1",
+    "call Loulya",
+    "account-a",
+    "Bearer session-a",
+    "reviewing overdue reminders",
+    "session-a",
+  ];
+
+  function readLoggedPayloads(logSpy) {
+    return logSpy.mock.calls.map(([line]) => JSON.parse(line));
+  }
+
+  function assertOnlyAllowedKeys(obj, allowed, path) {
+    for (const key of Object.keys(obj)) {
+      expect(allowed.has(key), `unexpected key "${key}" at ${path}`).toBe(true);
+    }
+  }
+
+  function assertCallShapeAllowed(call, path) {
+    if (call === null) return;
+    assertOnlyAllowedKeys(call, ALLOWED_CALL_KEYS, path);
+    for (const idField of ["selectedEvidenceIds", "rankedEvidenceIds", "contrastedEvidenceIds"]) {
+      if (call[idField] !== undefined) assertOnlyAllowedKeys(call[idField], ALLOWED_ID_FIELD_KEYS, `${path}.${idField}`);
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("emits nothing at all when the flag is unset (default off)", async () => {
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", undefined);
+    delete process.env.CARSON_STAGE2_DIAGNOSTIC_LOGGING;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ nonsense: true }); // invalid decision -> fallback path
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("emits nothing when the flag is set to any value other than the exact string '1'", async () => {
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "true");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ nonsense: true });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("when enabled, logs only allowlisted structural fields for the invalid-first-decision fallback path, with no user content/evidence/ids leaked", async () => {
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ nonsense: true }); // fails validation both attempts
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+
+    const payloads = readLoggedPayloads(logSpy);
+    expect(payloads).toHaveLength(1);
+    const payload = payloads[0];
+    assertOnlyAllowedKeys(payload, ALLOWED_TOP_LEVEL_KEYS, "payload");
+    expect(payload.diagnostic).toBe("carson_stage2_turn4_2026_08_29");
+    expect(payload.turnId).toBe("turn-diag-1");
+    expect(payload.retryInvoked).toBe(true);
+    expect(payload.renderedPath).toBe("generic_attention_fallback");
+    assertCallShapeAllowed(payload.call1, "payload.call1");
+    assertCallShapeAllowed(payload.call2, "payload.call2");
+    expect(payload.call1.validatorOk).toBe(false);
+    expect(typeof payload.call1.validatorReason).toBe("string");
+    expect(payload.call2.validatorOk).toBe(false);
+
+    const serialized = JSON.stringify(payload);
+    for (const forbidden of FORBIDDEN_SUBSTRINGS) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("when enabled, logs a redacted error class (never the raw error message) when the provider call throws", async () => {
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+    const sensitiveMessage = "provider rejected key sk-secret-value-should-never-appear";
+    const reasonOverEvidence = vi.fn().mockRejectedValue(new TypeError(sensitiveMessage));
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+    const payloads = readLoggedPayloads(logSpy);
+    expect(payloads).toHaveLength(1);
+    const payload = payloads[0];
+    expect(payload.retryInvoked).toBe(false); // a thrown first call is never retried
+    expect(payload.call1.providerThrew).toBe(true);
+    expect(payload.call1.errorClass).toBe("type_error");
+    expect(payload.call2).toBeNull();
+
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain(sensitiveMessage);
+    expect(serialized).not.toContain("sk-secret-value-should-never-appear");
+  });
+
+  it("when enabled, logs only allowlisted fields for the successful reasoning-renderer path, and owner-visible output is identical to the flag being off", async () => {
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] });
+
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", undefined);
+    delete process.env.CARSON_STAGE2_DIAGNOSTIC_LOGGING;
+    const coordinateOff = createAttentionReadCoordinator({
+      fetchEvidence: vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT),
+      reasonOverEvidence,
+    });
+    const resultOff = await coordinateOff({ ...diagActiveContext, transcript: "What can wait?" });
+
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const coordinateOn = createAttentionReadCoordinator({
+      fetchEvidence: vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT),
+      reasonOverEvidence,
+    });
+    const resultOn = await coordinateOn({ ...diagActiveContext, transcript: "What can wait?" });
+
+    expect(resultOn.ownerResult).toBe(resultOff.ownerResult);
+    expect(resultOn.responseIntent).toBe(resultOff.responseIntent);
+    expect(resultOn.surfacedEvidenceIds).toEqual(resultOff.surfacedEvidenceIds);
+
+    const payloads = readLoggedPayloads(logSpy);
+    expect(payloads).toHaveLength(1);
+    const payload = payloads[0];
+    assertOnlyAllowedKeys(payload, ALLOWED_TOP_LEVEL_KEYS, "payload");
+    expect(payload.renderedPath).toBe("reasoning_renderer");
+    expect(payload.retryInvoked).toBe(false);
+    assertCallShapeAllowed(payload.call1, "payload.call1");
+    expect(payload.call1.responseIntent).toBe("list");
+    expect(payload.call1.selectedEvidenceIds).toEqual({ shape: "array", count: 1 });
+
+    const serialized = JSON.stringify(payload);
+    for (const forbidden of FORBIDDEN_SUBSTRINGS) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("a diagnostic logging failure never breaks the actual turn (console.log throwing is swallowed)", async () => {
+    vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+    vi.spyOn(console, "log").mockImplementation(() => {
+      throw new Error("logging pipe broken");
+    });
+    const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+    expect(result.ownerResult).toContain("call Loulya");
+  });
+
+  describe("redaction hardening (2026-08-29 CodeRabbit finding on PR #376) — responseIntent allowlist + fixed errorClass mapping", () => {
+    it("preserves a valid, known responseIntent exactly", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "defer_timing", selectedEvidenceIds: ["r1"] });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.responseIntent).toBe("defer_timing");
+    });
+
+    it("collapses a malformed/unexpected responseIntent to the fixed sentinel 'invalid', never the raw value — including a sentinel that looks like injected content", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const sentinelPayload = "user-message-leak-should-never-appear-in-logs";
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: sentinelPayload, selectedEvidenceIds: ["r1"] });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.responseIntent).toBe("invalid");
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain(sentinelPayload);
+    });
+
+    it("collapses a missing responseIntent to 'invalid' as well (not a separate null case)", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ selectedEvidenceIds: ["r1"] }); // no responseIntent at all -> invalid decision
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.responseIntent).toBe("invalid");
+    });
+
+    it.each([
+      ["AbortError", "abort"],
+      ["TimeoutError", "timeout"],
+      ["TypeError", "type_error"],
+      ["Error", "error"],
+    ])("maps the known error class %s to the fixed safe code %s", async (errorName, expectedCode) => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const err = new Error("irrelevant message");
+      err.name = errorName;
+      const reasonOverEvidence = vi.fn().mockRejectedValue(err);
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.errorClass).toBe(expectedCode);
+    });
+
+    it("collapses a custom/malicious error name to the fixed sentinel 'unknown_error', and the raw name never appears in the serialized diagnostic line", async () => {
+      vi.stubEnv("CARSON_STAGE2_DIAGNOSTIC_LOGGING", "1");
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const fetchEvidence = vi.fn().mockResolvedValue(DIAG_GROUNDED_RESULT);
+      const maliciousName = "sk-secret-value-should-never-appear-as-a-name";
+      const err = new Error("also irrelevant");
+      err.name = maliciousName;
+      const reasonOverEvidence = vi.fn().mockRejectedValue(err);
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
+
+      const payload = readLoggedPayloads(logSpy)[0];
+      expect(payload.call1.errorClass).toBe("unknown_error");
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain(maliciousName);
+    });
   });
 });

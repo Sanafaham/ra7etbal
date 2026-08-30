@@ -1,6 +1,74 @@
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 import { renderAttentionSummary, renderAttentionDecision } from "../shared/carson-attention-summary.js";
-import { validateAttentionDecision } from "./_carson-attention-reasoning.js";
+import { validateAttentionDecision, RESPONSE_INTENTS } from "./_carson-attention-reasoning.js";
+
+// Temporary, feature-flagged, allowlisted/redacted production diagnostic
+// (2026-08-29) for the Turn 4 canary FAIL investigation — proves exactly
+// where a Stage 2 reasoning call/validation fails in the live deployed
+// flow, since that cannot be inferred from unit tests. Off by default;
+// enabled only via CARSON_STAGE2_DIAGNOSTIC_LOGGING=1. Emits ONLY the
+// owner-approved allowlisted structural fields below — never user
+// message text, evidence contents, ids/uuids, phone numbers, names,
+// tenant/user ids, raw model responses, prompts, secrets, or tokens.
+// No behavior change: this never affects control flow, only observes it
+// after the fact. Remove this block (and its call sites below) once the
+// root cause is proven — see the diagnostic-only PR this shipped in.
+function describeIdField(value) {
+  if (value === undefined) return { shape: "missing" };
+  if (value === null) return { shape: "null" };
+  if (Array.isArray(value)) return { shape: "array", count: value.length };
+  return { shape: "invalid" };
+}
+
+// Allowlisted, not merely typeof-checked (2026-08-29, CodeRabbit finding
+// on PR #376) — decision.responseIntent is raw, PRE-validation provider
+// output at this point, so a malformed response could in principle carry
+// unexpected content in that field. Logging it verbatim just because it
+// happens to be a string is not a strong enough redaction guarantee; only
+// a value that is exactly one of the known RESPONSE_INTENTS is safe to
+// pass through, everything else collapses to the fixed sentinel "invalid".
+function describeResponseIntent(value) {
+  return typeof value === "string" && RESPONSE_INTENTS.includes(value) ? value : "invalid";
+}
+
+// Fixed internal error-code mapping (2026-08-29, CodeRabbit finding on
+// PR #376) — Error.name is caller/library-settable in JS, so it is not
+// inherently safe to log verbatim either. Map to a small fixed allowlist
+// covering the error shapes this specific call site can actually produce
+// (a provider fetch timing out via AbortController, a thrown TypeError
+// from malformed JSON/response handling, or a generic Error) — anything
+// else, including any custom/unexpected .name value, collapses to
+// "unknown_error".
+function describeErrorClass(err) {
+  const name = err?.name;
+  if (name === "AbortError") return "abort";
+  if (name === "TimeoutError") return "timeout";
+  if (name === "TypeError") return "type_error";
+  if (name === "Error") return "error";
+  return "unknown_error";
+}
+
+function describeDecisionShape(decision) {
+  if (decision === null || decision === undefined) return { providerCallCompleted: false };
+  return {
+    providerCallCompleted: true,
+    responseIntent: describeResponseIntent(decision.responseIntent),
+    selectedEvidenceIds: describeIdField(decision.selectedEvidenceIds),
+    rankedEvidenceIds: describeIdField(decision.rankedEvidenceIds),
+    contrastedEvidenceIds: describeIdField(decision.contrastedEvidenceIds),
+    needsClarificationPresent: decision.needsClarification !== undefined && decision.needsClarification !== null,
+  };
+}
+
+function logStage2Diagnostic(fields) {
+  if (process.env.CARSON_STAGE2_DIAGNOSTIC_LOGGING !== "1") return;
+  try {
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ diagnostic: "carson_stage2_turn4_2026_08_29", ...fields }));
+  } catch {
+    // Diagnostic logging must never affect or interrupt the actual turn.
+  }
+}
 
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
@@ -296,13 +364,25 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       });
 
     let rawDecision;
+    let call1Threw = false;
+    let call1ErrorClass = null;
     try {
       rawDecision = await askReasoning();
-    } catch {
+    } catch (err) {
       rawDecision = null;
+      call1Threw = true;
+      call1ErrorClass = describeErrorClass(err);
     }
 
-    let validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
+    let validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false, reason: "no_decision" };
+    const call1Diagnostic = {
+      callNumber: 1,
+      providerThrew: call1Threw,
+      errorClass: call1Threw ? call1ErrorClass : null,
+      ...describeDecisionShape(rawDecision),
+      validatorOk: validated.ok,
+      validatorReason: validated.ok ? null : (validated.reason ?? null),
+    };
 
     // Bounded structural retry (2026-08-29, Turn 4 canary fix): exactly one
     // retry, and only when the FIRST call itself succeeded (rawDecision
@@ -314,17 +394,38 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // only for "the call succeeded but the shape was wrong." Same turn,
     // same authorized evidence, same task — never a changed prompt. At most
     // 2 reasoning calls total per turn; no loop, no counter, no recursion.
-    if (!validated.ok && rawDecision) {
+    const retryInvoked = !validated.ok && !!rawDecision;
+    let call2Diagnostic = null;
+    if (retryInvoked) {
       let retryDecision;
+      let call2Threw = false;
+      let call2ErrorClass = null;
       try {
         retryDecision = await askReasoning();
-      } catch {
+      } catch (err) {
         retryDecision = null;
+        call2Threw = true;
+        call2ErrorClass = describeErrorClass(err);
       }
-      validated = retryDecision ? validateAttentionDecision(retryDecision, evidence) : { ok: false };
+      validated = retryDecision ? validateAttentionDecision(retryDecision, evidence) : { ok: false, reason: "no_decision" };
+      call2Diagnostic = {
+        callNumber: 2,
+        providerThrew: call2Threw,
+        errorClass: call2Threw ? call2ErrorClass : null,
+        ...describeDecisionShape(retryDecision),
+        validatorOk: validated.ok,
+        validatorReason: validated.ok ? null : (validated.reason ?? null),
+      };
     }
 
     if (!validated.ok) {
+      logStage2Diagnostic({
+        turnId: ownerTurn.turnId,
+        retryInvoked,
+        call1: call1Diagnostic,
+        call2: call2Diagnostic,
+        renderedPath: "generic_attention_fallback",
+      });
       // Reasoning failed/returned invalid output, but fresh evidence IS
       // valid — fall back to the existing full deterministic render
       // (truthful, just not intelligently filtered), never a fabricated
@@ -344,6 +445,13 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     }
 
     if (validated.decision.responseIntent === "not_attention") {
+      logStage2Diagnostic({
+        turnId: ownerTurn.turnId,
+        retryInvoked,
+        call1: call1Diagnostic,
+        call2: call2Diagnostic,
+        renderedPath: "not_attention_unclaimed",
+      });
       // Not an error — a resolved, valid decision that this turn does not
       // belong to the attention topic. Left unclaimed so the normal typed
       // path (unrelated to this coordinator) can handle it.
@@ -362,6 +470,14 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         ...(validated.decision.contrastedEvidenceIds ?? []),
       ]),
     );
+
+    logStage2Diagnostic({
+      turnId: ownerTurn.turnId,
+      retryInvoked,
+      call1: call1Diagnostic,
+      call2: call2Diagnostic,
+      renderedPath: "reasoning_renderer",
+    });
 
     return {
       handled: true,
