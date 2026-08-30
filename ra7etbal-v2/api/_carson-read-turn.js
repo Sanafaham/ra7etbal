@@ -1,6 +1,6 @@
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 import { renderAttentionSummary, renderAttentionDecision } from "../shared/carson-attention-summary.js";
-import { validateAttentionDecision } from "./_carson-attention-reasoning.js";
+import { validateAttentionDecision, RESPONSE_INTENTS } from "./_carson-attention-reasoning.js";
 
 // Temporary, feature-flagged, allowlisted/redacted production diagnostic
 // (2026-08-29) for the Turn 4 canary FAIL investigation — proves exactly
@@ -20,11 +20,39 @@ function describeIdField(value) {
   return { shape: "invalid" };
 }
 
+// Allowlisted, not merely typeof-checked (2026-08-29, CodeRabbit finding
+// on PR #376) — decision.responseIntent is raw, PRE-validation provider
+// output at this point, so a malformed response could in principle carry
+// unexpected content in that field. Logging it verbatim just because it
+// happens to be a string is not a strong enough redaction guarantee; only
+// a value that is exactly one of the known RESPONSE_INTENTS is safe to
+// pass through, everything else collapses to the fixed sentinel "invalid".
+function describeResponseIntent(value) {
+  return typeof value === "string" && RESPONSE_INTENTS.includes(value) ? value : "invalid";
+}
+
+// Fixed internal error-code mapping (2026-08-29, CodeRabbit finding on
+// PR #376) — Error.name is caller/library-settable in JS, so it is not
+// inherently safe to log verbatim either. Map to a small fixed allowlist
+// covering the error shapes this specific call site can actually produce
+// (a provider fetch timing out via AbortController, a thrown TypeError
+// from malformed JSON/response handling, or a generic Error) — anything
+// else, including any custom/unexpected .name value, collapses to
+// "unknown_error".
+function describeErrorClass(err) {
+  const name = err?.name;
+  if (name === "AbortError") return "abort";
+  if (name === "TimeoutError") return "timeout";
+  if (name === "TypeError") return "type_error";
+  if (name === "Error") return "error";
+  return "unknown_error";
+}
+
 function describeDecisionShape(decision) {
   if (decision === null || decision === undefined) return { providerCallCompleted: false };
   return {
     providerCallCompleted: true,
-    responseIntent: typeof decision.responseIntent === "string" ? decision.responseIntent : null,
+    responseIntent: describeResponseIntent(decision.responseIntent),
     selectedEvidenceIds: describeIdField(decision.selectedEvidenceIds),
     rankedEvidenceIds: describeIdField(decision.rankedEvidenceIds),
     contrastedEvidenceIds: describeIdField(decision.contrastedEvidenceIds),
@@ -343,7 +371,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     } catch (err) {
       rawDecision = null;
       call1Threw = true;
-      call1ErrorClass = err?.name ?? "UnknownError";
+      call1ErrorClass = describeErrorClass(err);
     }
 
     let validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false, reason: "no_decision" };
@@ -377,7 +405,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       } catch (err) {
         retryDecision = null;
         call2Threw = true;
-        call2ErrorClass = err?.name ?? "UnknownError";
+        call2ErrorClass = describeErrorClass(err);
       }
       validated = retryDecision ? validateAttentionDecision(retryDecision, evidence) : { ok: false, reason: "no_decision" };
       call2Diagnostic = {

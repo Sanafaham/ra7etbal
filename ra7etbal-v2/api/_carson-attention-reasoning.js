@@ -22,7 +22,11 @@
  * response, using only each item's own already-known label/category.
  */
 
-const RESPONSE_INTENTS = [
+// Exported (2026-08-29, Turn 4 diagnostic hardening — CodeRabbit finding on
+// PR #376) so api/_carson-read-turn.js's diagnostic-only logging can
+// allowlist a raw, pre-validation responseIntent against this exact same
+// list rather than trusting it as safe to log verbatim.
+export const RESPONSE_INTENTS = [
   "list",
   "rank",
   "contrast",
