@@ -1609,6 +1609,12 @@ export default function ElevenLabsAgentWidget({
   // minimal label — never a transcript — passed through as conversational
   // context only.
   const priorAttentionObjectiveRef = useRef<string | null>(null);
+  // OpenAI Agents SDK vertical slice (2026-08-30, CARSON_OPENAI_AGENT_
+  // ATTENTION_V1) — the opaque OpenAI Responses API chaining id for
+  // natural agent-loop continuation. Same non-authoritative continuity
+  // trust tier as the refs above; ignored server-side when the flag is
+  // off. Cleared at the same points as priorAttentionObjectiveRef.
+  const previousResponseIdRef = useRef<string | null>(null);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -5622,6 +5628,7 @@ export default function ElevenLabsAgentWidget({
       lastTurnWasAttentionIntentRef.current = false;
       previouslySurfacedEvidenceIdsRef.current = [];
       priorAttentionObjectiveRef.current = null;
+      previousResponseIdRef.current = null;
 
       if (conv) {
         if (activeChannelRef.current === "voice") {
@@ -7013,6 +7020,7 @@ export default function ElevenLabsAgentWidget({
           lastTurnWasAttentionIntentRef.current = false;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
+          previousResponseIdRef.current = null;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -7079,6 +7087,7 @@ export default function ElevenLabsAgentWidget({
           lastTurnWasAttentionIntentRef.current = false;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
+          previousResponseIdRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
@@ -7784,6 +7793,7 @@ export default function ElevenLabsAgentWidget({
         let surfacedEvidenceIds: string[] = [];
         let responseIntent: string | null = null;
         let resultCapability: string | null = null;
+        let resultPreviousResponseId: string | null = null;
         try {
           const { data: attentionSessionData } = await supabase.auth.getSession();
           const attentionJwt = attentionSessionData?.session?.access_token;
@@ -7804,6 +7814,7 @@ export default function ElevenLabsAgentWidget({
                   previousGroundingStatus: "grounded",
                   previouslySurfacedEvidenceIds: previouslySurfacedEvidenceIdsRef.current,
                   priorObjective: priorAttentionObjectiveRef.current,
+                  previousResponseId: previousResponseIdRef.current,
                 }
               : {};
             const response = await fetch("/api/carson-turn", {
@@ -7829,6 +7840,7 @@ export default function ElevenLabsAgentWidget({
               if (typeof result.capability === "string") resultCapability = result.capability;
               if (Array.isArray(result.surfacedEvidenceIds)) surfacedEvidenceIds = result.surfacedEvidenceIds;
               if (typeof result.responseIntent === "string") responseIntent = result.responseIntent;
+              if (typeof result.previousResponseId === "string") resultPreviousResponseId = result.previousResponseId;
             }
             if (typeof result?.groundingStatus === "string") {
               typedGroundingStatus = result.groundingStatus;
@@ -7857,6 +7869,7 @@ export default function ElevenLabsAgentWidget({
           lastAttentionTurnWasGroundedRef.current = false;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
+          previousResponseIdRef.current = null;
         } else {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
           // Attention-continuity refs are meaningful ONLY for the
@@ -7879,6 +7892,7 @@ export default function ElevenLabsAgentWidget({
             // unrelated turn (CodeRabbit finding).
             previouslySurfacedEvidenceIdsRef.current = [];
             priorAttentionObjectiveRef.current = null;
+            previousResponseIdRef.current = null;
           }
           if (isAttentionCapability && typedGroundingStatus === "grounded") {
             // Accumulate across the whole conversation (deduped) — lets a
@@ -7887,6 +7901,7 @@ export default function ElevenLabsAgentWidget({
             const merged = new Set([...previouslySurfacedEvidenceIdsRef.current, ...surfacedEvidenceIds]);
             previouslySurfacedEvidenceIdsRef.current = Array.from(merged);
             if (responseIntent) priorAttentionObjectiveRef.current = responseIntent;
+            if (resultPreviousResponseId) previousResponseIdRef.current = resultPreviousResponseId;
           }
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,

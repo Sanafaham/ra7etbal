@@ -332,6 +332,117 @@ describe("Carson turn handler — attention_summary_read routing (typed hard-gro
   });
 });
 
+describe("Carson turn handler — CARSON_OPENAI_AGENT_ATTENTION_V1 routing (2026-08-30, owner decision after repeated Stage 1/2 canary failures)", () => {
+  const AGENT_ATTENTION_TURN = { turnId: "turn-agent-1", providerEventId: "eleven-event-agent-1", transcript: "What can wait?" };
+
+  it("flag off (default): an admitted attention turn still goes through the existing reasonOverEvidence path, never the agent", async () => {
+    const runAgent = vi.fn();
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: [] });
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
+      text: "Nothing needs your direct decision right now.",
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      runAgent,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req(AGENT_ATTENTION_TURN), response);
+
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(reasonOverEvidence).toHaveBeenCalled();
+  });
+
+  it("flag on: an admitted attention turn is routed to the agent coordinator instead of reasonOverEvidence", async () => {
+    vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
+    const reasonOverEvidence = vi.fn();
+    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "Nothing is due yet, so nothing needs to happen right now.", newItems: [], lastResponseId: "resp_agent_1" });
+    const buildAgent = (opts) => ({ __fakeAgent: true, ...opts });
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
+      text: "irrelevant — the agent path never uses the deterministic text",
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      runAgent,
+      buildAgent,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req(AGENT_ATTENTION_TURN), response);
+
+    expect(reasonOverEvidence).not.toHaveBeenCalled();
+    expect(runAgent).toHaveBeenCalled();
+    expect(response.payload).toMatchObject({
+      handled: true,
+      capability: "attention_summary_read",
+      groundingStatus: "grounded",
+      ownerResult: "Nothing is due yet, so nothing needs to happen right now.",
+      previousResponseId: "resp_agent_1",
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it("flag on: previousResponseId from the request body is threaded through to the agent run for natural continuation", async () => {
+    vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
+    const runAgent = vi.fn().mockResolvedValue({ finalOutput: "ok", newItems: [], lastResponseId: "resp_2" });
+    const buildAgent = (opts) => ({ __fakeAgent: true, ...opts });
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
+      text: "irrelevant",
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+      fetchAttentionEvidence,
+      runAgent,
+      buildAgent,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(
+      req({
+        ...AGENT_ATTENTION_TURN,
+        previousCapability: "attention_summary_read",
+        previousGroundingStatus: "grounded",
+        previousResponseId: "resp_1",
+      }),
+      response,
+    );
+
+    expect(runAgent.mock.calls[0][2]).toMatchObject({ previousResponseId: "resp_1" });
+    vi.unstubAllEnvs();
+  });
+
+  it("flag on: still fails closed to unauthorized before any retrieval, exactly like the existing path", async () => {
+    vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
+    const fetchAttentionEvidence = vi.fn();
+    const runAgent = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue(null),
+      fetchAttentionEvidence,
+      runAgent,
+      dedupStore: new Map(),
+    });
+    const response = res();
+    await handler(req(AGENT_ATTENTION_TURN), response);
+    expect(response.statusCode).toBe(401);
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+});
+
 describe("Carson turn handler — Second Brain stateful reasoning admission (2026-08-28)", () => {
   const EVIDENCE = {
     ok: true,
