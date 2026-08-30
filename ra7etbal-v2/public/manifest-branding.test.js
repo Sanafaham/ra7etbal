@@ -30,16 +30,12 @@ describe("PWA visual identity", () => {
     }
   });
 
-  it("serves the complete bilingual brand lockup instead of a triangle-only tile", () => {
+  it("serves the owner-supplied raster lockup without generated SVG geometry", () => {
     for (const source of [icon, maskableIcon]) {
-      expect(source).toContain('fill="#151310"');
-      expect(source).toContain('fill="#C9AE73"');
-      expect(source).toContain('fill="#F3EEE6"');
-      expect(source).toContain(">Ra7etbal</text>");
-      expect(source).toContain(">راحة بال</text>");
-      expect(source).toContain('fill-rule="evenodd"');
-      expect(source).not.toContain("#FAF9F7");
-      expect(source).not.toContain("#B89B5E");
+      expect(source).toContain("Ra7etbal · راحة بال");
+      expect(source).toContain('href="data:image/png;base64,');
+      expect(source).not.toContain("OWNER_SUPPLIED_LOCKUP_DATA");
+      expect(source).not.toContain("<path");
     }
   });
 });
