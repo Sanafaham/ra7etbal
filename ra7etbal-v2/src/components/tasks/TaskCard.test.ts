@@ -30,6 +30,16 @@ describe("TaskCard.tsx — substitute_review card wiring", () => {
     expect(cardSource).toMatch(/task\.worker_reply/);
   });
 
+  it("uses the approved dark review surface and gold/neutral status accents", () => {
+    expect(cardSource).toContain("border border-gold/30 bg-surface-subtle");
+    expect(cardSource).toContain("text-sm text-ink");
+    expect(cardSource).toContain("text-ink");
+    expect(cardSource).not.toContain("text-text-soft");
+    expect(cardSource).not.toContain("bg-rose-50");
+    expect(SOURCE).not.toContain("bg-sky-400/10");
+    expect(SOURCE).not.toContain("bg-emerald-50");
+  });
+
   it("offers exactly the three approved owner actions", () => {
     expect(cardSource).toContain("Approve Alternative");
     expect(cardSource).toContain("Reject Alternative");
@@ -108,10 +118,11 @@ describe("TaskCard.tsx — reminder card creation-time display", () => {
     expect(followUpBlock).not.toContain("formatReminderCreatedTime");
   });
 
-  it("does not change reminder scheduling, due-date computation, or the due-date rendering already in place", () => {
+  it("keeps reminder scheduling and due-date computation intact while using the approved gold status role", () => {
     const block = reminderDueBlock();
     expect(block).toContain("{reminderDue.dueTime}");
-    expect(block).toContain('reminderDue.overdue ? "text-rose-800" : "text-amber-900"');
+    expect(block).toContain('className="text-gold"');
+    expect(block).not.toContain("text-danger");
     // getReminderDue / reminderDue itself is computed once, above this
     // block, and is untouched by this change.
     expect(SOURCE).toContain('const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;');

@@ -8379,10 +8379,10 @@ export default function ElevenLabsAgentWidget({
           type="button"
           onClick={() => { stopSession("error-dismiss-button"); onRequestClose?.(); }}
           aria-label="Connection failed"
-          className="flex items-center gap-2 rounded-full border border-danger/30 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-white active:scale-95"
+          className="flex items-center gap-2 rounded-full border border-gold bg-surface px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-surface-subtle active:scale-95"
         >
-          <span className="h-2 w-2 flex-shrink-0 rounded-full bg-danger" />
-          <span className="max-w-[180px] truncate text-[12px] font-medium text-danger">
+          <span className="h-2 w-2 flex-shrink-0 rounded-full bg-gold" />
+          <span className="max-w-[180px] truncate text-[12px] font-medium text-ink">
             {errorMsg ?? "Couldn't connect."}
           </span>
         </button>
@@ -8395,7 +8395,7 @@ export default function ElevenLabsAgentWidget({
           is the one and only way in, by design. */}
       {channel === "voice" && isIosStandalonePwa && audioDiagnosticsEnabled && (
         <div className="mt-1 flex max-w-[280px] flex-wrap items-center gap-1.5 px-2">
-          <p className="text-[11px] font-medium text-danger/80">
+          <p className="text-[11px] font-medium text-ink">
             iPhone PWA voice beta: audio quality under investigation.
           </p>
         </div>
@@ -8448,7 +8448,7 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {channel === "voice" && status !== "connected" && lastUserTranscript && (
-        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink/45">
+        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink">
           Carson heard: “{lastUserTranscript}”
         </p>
       )}
@@ -8459,8 +8459,8 @@ export default function ElevenLabsAgentWidget({
         channel,
         hasMessage: Boolean(lastCarsonMessage),
       }) && lastCarsonMessage && (
-        <div className="mt-2 max-w-[280px] rounded-2xl border border-charcoal/10 bg-white/90 px-3.5 py-2.5 shadow-sm">
-          <p className="text-[12px] leading-relaxed text-ink/70">{lastCarsonMessage}</p>
+        <div className="mt-2 max-w-[280px] rounded-2xl border border-border bg-surface px-3.5 py-2.5 shadow-sm">
+          <p className="text-[12px] leading-relaxed text-ink">{lastCarsonMessage}</p>
         </div>
       )}
     </div>

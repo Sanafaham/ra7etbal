@@ -76,7 +76,7 @@ export default function Notifications() {
       )}
 
       {status === "loading" && items.length === 0 && (
-        <div className="flex justify-center py-12 text-ink/60"><Spinner size={20} label="Loading notifications" /></div>
+        <div className="flex justify-center py-12 text-ink"><Spinner size={20} label="Loading notifications" /></div>
       )}
 
       {status === "ready" && items.length === 0 && (
@@ -92,7 +92,7 @@ export default function Notifications() {
             <div className={`relative w-full rounded-2xl border p-4 shadow-sm ${item.read_at ? "border-border bg-surface/80" : "border-border-strong bg-surface"}`}>
             <button type="button" onClick={() => void openNotification(item)} className="w-full pr-10 text-left transition active:scale-[0.99]">
               <div className="flex items-start gap-3">
-                {!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-sage" aria-label="Unread" />}
+                {!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-gold" aria-label="Unread" />}
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-ink">{item.title}</p>
                   <p className="mt-1 text-sm leading-relaxed text-text-soft">{item.body}</p>
@@ -100,7 +100,7 @@ export default function Notifications() {
                 </div>
               </div>
             </button>
-            <button type="button" aria-label={`Dismiss ${item.title}`} onClick={() => void dismissNotification(item.id)} className="absolute right-3 top-3 rounded-full px-2 py-1 text-lg leading-none text-ink/45 hover:bg-sage/10 hover:text-ink">×</button>
+            <button type="button" aria-label={`Dismiss ${item.title}`} onClick={() => void dismissNotification(item.id)} className="absolute right-3 top-3 rounded-full px-2 py-1 text-lg leading-none text-ink hover:bg-gold/10 hover:text-gold">×</button>
             </div>
           </li>
         ))}

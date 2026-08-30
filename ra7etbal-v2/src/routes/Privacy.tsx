@@ -8,10 +8,10 @@ export default function Privacy() {
           ← Back
         </Link>
         <h1 className="text-3xl font-semibold text-ink">Privacy Policy</h1>
-        <p className="text-sm text-ink/50">Last updated: July 2026</p>
+        <p className="text-sm text-ink">Last updated: July 2026</p>
       </header>
 
-      <div className="space-y-6 text-sm leading-relaxed text-ink/80">
+      <div className="space-y-6 text-sm leading-relaxed text-ink">
         <section className="space-y-2">
           <h2 className="text-base font-semibold text-ink">1. About Ra7etBal</h2>
           <p>

@@ -321,13 +321,13 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       {!headerless && (
         <header>
           <h1 className="text-2xl font-semibold text-ink">Inbox</h1>
-          <p className="text-sm text-ink/55">Ideas, thoughts, and items to process.</p>
+          <p className="text-sm text-ink">Ideas, thoughts, and items to process.</p>
         </header>
       )}
 
       {/* ── Search ── */}
       <div className="relative">
-        <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink/30" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
         </svg>
         <input
@@ -342,7 +342,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       {/* ── Add a note ── */}
       {!searchQuery && (
         <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
-          <label htmlFor="manual-note-inbox" className="text-xs font-medium uppercase tracking-wide text-ink/60">
+          <label htmlFor="manual-note-inbox" className="text-xs font-medium uppercase tracking-wide text-ink">
             Add a note
           </label>
           <textarea
@@ -359,7 +359,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
               onClick={() => void handleSave()}
               disabled={!canSave}
               aria-busy={saving}
-              className="inline-flex min-h-[38px] items-center justify-center gap-2 rounded-full bg-sage px-4 py-1.5 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-sage/35"
+              className="inline-flex min-h-[38px] items-center justify-center gap-2 rounded-full bg-gold px-4 py-1.5 text-sm font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving && <Spinner size={13} />}
               <span>{saving ? "Saving..." : "Save"}</span>
@@ -376,7 +376,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       )}
 
       {initialLoading && (
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={20} label="Loading notes" />
         </div>
       )}
@@ -385,7 +385,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       {status === "ready" && (
         <section className="space-y-2.5">
           {filteredNotes.length > 0 && (
-            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-ink/50">
+            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-ink">
               Notes{searchQuery ? ` · ${filteredNotes.length} result${filteredNotes.length !== 1 ? "s" : ""}` : ""}
             </h2>
           )}
@@ -488,10 +488,10 @@ function NoteCard({
   return (
     <article className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
-        <span className="rounded-full border border-sage/25 bg-sage/8 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-sage">
+        <span className="rounded-full border border-border bg-surface-subtle px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-ink">
           {note.category || "general"}
         </span>
-        <time className="shrink-0 text-xs text-ink/40" dateTime={note.created_at}>
+        <time className="shrink-0 text-xs text-ink" dateTime={note.created_at}>
           {formatNoteTime(note.created_at)}
         </time>
       </header>
@@ -501,7 +501,7 @@ function NoteCard({
       {/* ── Remind Me inline ── */}
       {reminding && (
         <div className="mt-3 space-y-2 rounded-xl border border-gold/25 bg-surface-subtle p-3">
-          <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 5pm)</label>
+          <label className="text-xs font-medium text-ink">When? (e.g. tomorrow at 5pm)</label>
           <div className="flex gap-2">
             <input type="text" value={remindTimeText} onChange={(e) => onRemindTimeChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void onRemindSubmit(note); if (e.key === "Escape") onRemindCancel(); }}
@@ -510,12 +510,12 @@ function NoteCard({
               autoFocus disabled={settingReminder}
               className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-text-muted focus:border-gold disabled:opacity-50" />
             <button type="button" onClick={() => void onRemindSubmit(note)} disabled={settingReminder || !remindTimeText.trim()}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-cream transition hover:brightness-105 disabled:opacity-50">
               {settingReminder && <Spinner size={11} />}
               <span>{settingReminder ? "Setting…" : "Set"}</span>
             </button>
             <button type="button" onClick={onRemindCancel} disabled={settingReminder}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-gold/35 px-2.5 py-1.5 text-xs text-ink transition hover:border-gold disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -526,7 +526,7 @@ function NoteCard({
       {/* ── Delegate inline ── */}
       {delegating && (
         <div className="mt-3 space-y-2 rounded-xl border border-border bg-surface-subtle p-3">
-          <label className="text-xs font-medium text-ink/55">Who should handle this?</label>
+          <label className="text-xs font-medium text-ink">Who should handle this?</label>
           <div className="flex gap-2">
             <select value={delegatePersonId} onChange={(e) => onDelegatePersonChange(e.target.value)} disabled={sendingDelegate}
               // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -536,12 +536,12 @@ function NoteCard({
               {peopleItems.map((p) => <option key={p.id} value={p.id}>{p.name}{p.phone ? "" : " (no phone)"}</option>)}
             </select>
             <button type="button" onClick={() => void onDelegateSubmit(note)} disabled={sendingDelegate || !delegatePersonId}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-cream transition hover:brightness-110 disabled:opacity-50">
               {sendingDelegate && <Spinner size={11} />}
               <span>{sendingDelegate ? "Sending…" : "Send"}</span>
             </button>
             <button type="button" onClick={onDelegateCancel} disabled={sendingDelegate}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-gold/35 px-2.5 py-1.5 text-xs text-ink transition hover:border-gold disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -552,7 +552,7 @@ function NoteCard({
       {/* ── Calendar inline ── */}
       {addingToCalendar && (
         <div className="mt-3 space-y-2 rounded-xl border border-border bg-surface-subtle p-3">
-          <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 11, Monday at 2pm)</label>
+          <label className="text-xs font-medium text-ink">When? (e.g. tomorrow at 11, Monday at 2pm)</label>
           <div className="flex gap-2">
             <input type="text" value={calendarTimeText} onChange={(e) => onCalendarTimeChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void onCalendarSubmit(note); if (e.key === "Escape") onCalendarCancel(); }}
@@ -561,12 +561,12 @@ function NoteCard({
               autoFocus disabled={settingCalendar}
               className="flex-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-text-muted focus:border-gold disabled:opacity-50" />
             <button type="button" onClick={() => void onCalendarSubmit(note)} disabled={settingCalendar || !calendarTimeText.trim()}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-cream transition hover:brightness-105 disabled:opacity-50">
               {settingCalendar && <Spinner size={11} />}
               <span>{settingCalendar ? "Adding…" : "Add"}</span>
             </button>
             <button type="button" onClick={onCalendarCancel} disabled={settingCalendar}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-gold/35 px-2.5 py-1.5 text-xs text-ink transition hover:border-gold disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -581,14 +581,14 @@ function NoteCard({
           <span className="text-xs font-medium text-gold">Reminder set ✓</span>
         ) : !reminding ? (
           <button type="button" onClick={() => onRemindMe(note)} disabled={busy || delegating || addingToCalendar}
-            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-gold/10 px-3 py-1 text-xs font-medium text-gold-soft transition hover:bg-gold/15 disabled:opacity-50">
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold bg-gold px-3 py-1 text-xs font-medium text-cream transition hover:brightness-105 disabled:opacity-50">
             Remind Me
           </button>
         ) : null}
 
         {/* Delegate */}
         {delegatedName ? (
-          <span className="text-xs font-medium text-ink/60">Sent to {delegatedName} ✓</span>
+          <span className="text-xs font-medium text-ink">Sent to {delegatedName} ✓</span>
         ) : !delegating ? (
           <button type="button" onClick={() => void onDelegate(note)} disabled={busy || reminding || addingToCalendar}
             className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-3 py-1 text-xs font-medium text-text-soft transition hover:bg-surface disabled:opacity-50">
@@ -602,7 +602,7 @@ function NoteCard({
             normal clarification/approval flow; nothing here executes
             anything or changes the note. */}
         <button type="button" onClick={() => onSendToCarson(note)} disabled={busy || reminding || delegating || addingToCalendar}
-          className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/25 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:opacity-50">
+          className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-surface-subtle px-3 py-1 text-xs font-medium text-ink transition hover:border-gold disabled:opacity-50">
           Discuss with Carson
         </button>
 
@@ -624,10 +624,10 @@ function NoteCard({
             <div className="absolute right-0 bottom-full mb-1.5 z-20 min-w-[160px] rounded-2xl border border-border bg-surface shadow-xl">
               {/* Make Task */}
               {taskMade ? (
-                <div className="px-4 py-3 text-xs font-medium text-sage">Task created ✓</div>
+                <div className="px-4 py-3 text-xs font-medium text-gold">Task created ✓</div>
               ) : (
                 <button type="button" onClick={() => void onMakeTask(note)} disabled={busy}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-ink transition hover:bg-sage/5 rounded-t-2xl disabled:opacity-50">
+                  className="flex w-full items-center gap-3 rounded-t-2xl px-4 py-3 text-sm text-ink transition hover:bg-gold/10 disabled:opacity-50">
                   {makingTask && <Spinner size={12} />}
                   <span>{makingTask ? "Creating…" : "Make Task"}</span>
                 </button>
@@ -635,17 +635,17 @@ function NoteCard({
 
               {/* Add to Calendar */}
               {calendarAdded ? (
-                <div className="px-4 py-3 text-xs font-medium text-sky-700">Added to calendar ✓</div>
+                <div className="px-4 py-3 text-xs font-medium text-gold">Added to calendar ✓</div>
               ) : (
                 <button type="button" onClick={() => onAddToCalendar(note)} disabled={busy}
-                  className="flex w-full items-center gap-3 border-t border-sage/10 px-4 py-3 text-sm text-ink transition hover:bg-sage/5 disabled:opacity-50">
+                  className="flex w-full items-center gap-3 border-t border-gold/20 px-4 py-3 text-sm text-ink transition hover:bg-gold/10 disabled:opacity-50">
                   Add to Calendar
                 </button>
               )}
 
               {/* Delete */}
               <button type="button" onClick={() => void onDelete(note)} disabled={deleting || reminding || delegating || addingToCalendar}
-                className="flex w-full items-center gap-3 border-t border-border px-4 py-3 text-sm text-danger transition hover:bg-danger/10 rounded-b-2xl disabled:opacity-50">
+                className="flex w-full items-center gap-3 rounded-b-2xl border-t border-border px-4 py-3 text-sm text-ink transition hover:text-gold disabled:opacity-50">
                 {deleting ? <Spinner size={12} /> : null}
                 <span>{deleting ? "Deleting..." : confirmingDelete ? "Tap again to confirm" : "Delete"}</span>
               </button>
