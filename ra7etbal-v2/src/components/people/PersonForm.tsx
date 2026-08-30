@@ -138,7 +138,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
       {/* ── Basic fields ──────────────────────────────────────────── */}
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={nameId} className="text-xs font-medium uppercase tracking-wide text-ink/60">Name</label>
+        <label htmlFor={nameId} className="text-xs font-medium uppercase tracking-wide text-ink">Name</label>
         <input
           id={nameId} type="text" value={name} onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Grace" autoComplete="off" disabled={!!busy}
@@ -147,7 +147,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={roleId} className="text-xs font-medium uppercase tracking-wide text-ink/60">Role</label>
+        <label htmlFor={roleId} className="text-xs font-medium uppercase tracking-wide text-ink">Role</label>
         <input
           id={roleId} list={roleListId} type="text" value={role} onChange={(e) => setRole(e.target.value)}
           placeholder="e.g. House Manager" autoComplete="off" disabled={!!busy}
@@ -159,8 +159,8 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={notesId} className="text-xs font-medium uppercase tracking-wide text-ink/60">
-          Description / Notes <span className="font-normal normal-case text-ink/40">(optional)</span>
+        <label htmlFor={notesId} className="text-xs font-medium uppercase tracking-wide text-ink">
+          Description / Notes <span className="font-normal normal-case text-ink">(optional)</span>
         </label>
         <textarea
           id={notesId} value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -174,16 +174,16 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         <input
           id="is-family" type="checkbox" checked={isFamily}
           onChange={(e) => setIsFamily(e.target.checked)} disabled={!!busy}
-          className="mt-0.5 h-4 w-4 shrink-0 rounded border-sage/40 text-sage focus:ring-sage/30"
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-gold/40 text-gold focus:ring-gold/30"
         />
-        <label htmlFor="is-family" className="text-sm text-ink/60 leading-snug">
+        <label htmlFor="is-family" className="text-sm leading-snug text-ink">
           Family member — Carson won't assign them household tasks or treat them as staff.
         </label>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={phoneId} className="text-xs font-medium uppercase tracking-wide text-ink/60">
-          Phone <span className="font-normal normal-case text-ink/40">(optional)</span>
+        <label htmlFor={phoneId} className="text-xs font-medium uppercase tracking-wide text-ink">
+          Phone <span className="font-normal normal-case text-ink">(optional)</span>
         </label>
         <input
           id={phoneId} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
@@ -202,20 +202,20 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
               checked={whatsappOptedIn}
               onChange={(e) => handleConsentToggle(e.target.checked)}
               disabled={!!busy}
-              className="h-4 w-4 rounded border-sage/40 text-sage focus:ring-sage/30"
+              className="h-4 w-4 rounded border-gold/40 text-gold focus:ring-gold/30"
             />
           </div>
           <div className="flex-1 min-w-0">
             <label htmlFor="whatsapp-consent" className="cursor-pointer text-sm font-medium text-ink leading-snug">
               WhatsApp consent recorded
             </label>
-            <p className="mt-0.5 text-xs leading-relaxed text-ink/50">
+            <p className="mt-0.5 text-xs leading-relaxed text-ink">
               {whatsappOptedIn
                 ? "This person agreed to receive Ra7etBal task messages by WhatsApp."
                 : "Without consent, Carson will not send WhatsApp messages to this person."}
             </p>
             {whatsappOptedIn && whatsappConsentAt && (
-              <p className="mt-1 text-[11px] text-ink/40">
+              <p className="mt-1 text-[11px] text-ink">
                 Recorded {new Date(whatsappConsentAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
                 {whatsappConsentMethod === "owner_confirmed" ? " · confirmed by you" : ""}
               </p>
@@ -231,7 +231,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
           onClick={() => setShowIntelligence((v) => !v)}
           className="flex w-full items-center justify-between px-4 py-3 text-left"
         >
-          <span className="text-xs font-semibold uppercase tracking-wide text-ink/50">
+          <span className="text-xs font-semibold uppercase tracking-wide text-ink">
             Carson Intelligence
           </span>
           <svg
@@ -246,13 +246,13 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
         {showIntelligence && (
           <div className="space-y-4 border-t border-border px-4 pb-4 pt-4">
-            <p className="text-[11px] leading-relaxed text-ink/45">
+            <p className="text-[11px] leading-relaxed text-ink">
               These fields teach Carson how to delegate to this person and when to follow up. None are required.
             </p>
 
             {/* Relationship */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Relationship to you
               </label>
               <input
@@ -265,7 +265,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
             {/* Responsibilities */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Responsibilities
               </label>
               <textarea
@@ -279,7 +279,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
             {/* Reliability + Follow-up */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+                <label className="text-xs font-medium uppercase tracking-wide text-ink">
                   Reliability
                 </label>
                 <select
@@ -295,7 +295,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+                <label className="text-xs font-medium uppercase tracking-wide text-ink">
                   Follow-up level
                 </label>
                 <select
@@ -314,7 +314,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
             {/* Delegation guidance */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Delegation guidance
               </label>
               <textarea
@@ -327,7 +327,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
             {/* Should not assign */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Do NOT assign
               </label>
               <input
@@ -340,7 +340,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
             {/* Escalate to */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Escalate to (if unresponsive)
               </label>
               <input
@@ -353,7 +353,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
 
             {/* Communication style */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium uppercase tracking-wide text-ink/55">
+              <label className="text-xs font-medium uppercase tracking-wide text-ink">
                 Communication style
               </label>
               <input
@@ -375,14 +375,14 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         {onDelete && !confirmingDelete && (
           <button
             type="button" onClick={() => setConfirmingDelete(true)} disabled={!!busy}
-            className="mr-auto rounded-full border border-danger/30 bg-surface-subtle px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-50"
+            className="mr-auto rounded-full border border-gold/35 bg-surface-subtle px-4 py-2 text-sm font-medium text-ink transition hover:border-gold disabled:opacity-50"
           >
             Delete
           </button>
         )}
         {onDelete && confirmingDelete && (
           <div className="mr-auto flex items-center gap-2">
-            <span className="text-xs text-ink/70">Are you sure?</span>
+            <span className="text-xs text-ink">Are you sure?</span>
             <button
               type="button" onClick={() => setConfirmingDelete(false)} disabled={!!busy}
               className="rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-surface disabled:opacity-50"
@@ -391,7 +391,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
             </button>
             <button
               type="button" onClick={handleDelete} disabled={!!busy}
-              className="inline-flex items-center gap-2 rounded-full bg-danger px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-full border border-gold bg-surface-subtle px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:border-gold disabled:opacity-50"
             >
               {busy === "delete" && <Spinner size={12} />}
               {busy === "delete" ? "Deleting…" : "Delete"}
@@ -406,7 +406,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         </button>
         <button
           type="submit" disabled={!canSave} aria-busy={busy === "save"}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-gold px-5 py-2.5 text-sm font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy === "save" && <Spinner size={14} />}
           <span>{busy === "save" ? "Saving…" : initial ? "Save changes" : "Add person"}</span>

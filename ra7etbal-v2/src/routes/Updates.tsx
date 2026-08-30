@@ -426,7 +426,7 @@ export default function Updates() {
                 <span className="text-[12px] font-medium text-ink">
                   Upcoming reminders
                 </span>
-                <span className="rounded-full border border-gold/35 bg-gold/10 px-1.5 py-0.5 text-[11px] font-medium text-gold">
+                <span className="rounded-full border border-gold bg-gold px-1.5 py-0.5 text-[11px] font-medium text-cream">
                   {upcomingReminders.length}
                 </span>
               </div>

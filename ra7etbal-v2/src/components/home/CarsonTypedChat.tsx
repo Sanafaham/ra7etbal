@@ -84,14 +84,14 @@ export default function CarsonTypedChat({
         <div className="mb-2 flex min-h-8 items-center justify-end gap-2 px-1">
           {confirmingClear ? (
             <>
-              <span className="mr-auto text-[11px] text-ink/55">
+              <span className="mr-auto text-[11px] text-ink">
                 Delete saved typed messages? Tasks and memory stay.
               </span>
               <button
                 type="button"
                 onClick={() => setConfirmingClear(false)}
                 disabled={clearingHistory}
-                className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink/55 disabled:opacity-50"
+                className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -99,7 +99,7 @@ export default function CarsonTypedChat({
                 type="button"
                 onClick={onClearHistory}
                 disabled={clearingHistory || awaitingResponse}
-                className="rounded-full border border-danger/25 bg-danger/5 px-2.5 py-1.5 text-[11px] font-semibold text-danger disabled:opacity-50"
+                className="rounded-full border border-gold bg-surface-subtle px-2.5 py-1.5 text-[11px] font-semibold text-ink disabled:opacity-50"
               >
                 {clearingHistory ? "Clearing…" : "Delete chat"}
               </button>
@@ -109,7 +109,7 @@ export default function CarsonTypedChat({
               type="button"
               onClick={() => setConfirmingClear(true)}
               disabled={awaitingResponse || clearingHistory}
-              className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink/45 transition hover:bg-charcoal/5 hover:text-ink/70 disabled:opacity-40"
+              className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink transition hover:bg-gold/10 hover:text-gold disabled:opacity-40"
             >
               Clear chat
             </button>
@@ -123,13 +123,13 @@ export default function CarsonTypedChat({
         aria-label="Carson conversation"
       >
         {loadingHistory && (
-          <p className="py-6 text-center text-[12px] text-ink/45">Loading conversation…</p>
+          <p className="py-6 text-center text-[12px] text-ink">Loading conversation…</p>
         )}
 
         {!loadingHistory && messages.length === 0 && (
           <div className="px-3 py-8 text-center">
-            <p className="text-[13px] font-medium text-ink/75">Type for questions and planning.</p>
-            <p className="mt-1 text-[12px] leading-relaxed text-ink/45">
+            <p className="text-[13px] font-medium text-ink">Type for questions and planning.</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-ink">
               Ask about your day, plan, draft, or brainstorm. Use Talk to Carson to take action.
             </p>
           </div>
@@ -146,7 +146,7 @@ export default function CarsonTypedChat({
             <div key={message.id}>
               {showDayDivider && (
                 <div className="my-3 flex items-center justify-center">
-                  <span className="rounded-full bg-charcoal/5 px-3 py-1 text-[11px] font-medium text-ink/45">
+                  <span className="rounded-full bg-surface-subtle px-3 py-1 text-[11px] font-medium text-ink">
                     {formatChatDayDivider(messageDate, new Date())}
                   </span>
                 </div>
@@ -158,14 +158,14 @@ export default function CarsonTypedChat({
                   className={
                     "max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed " +
                     (message.role === "user"
-                      ? "rounded-br-md bg-charcoal text-white"
+                      ? "rounded-br-md bg-charcoal text-ink"
                       : "rounded-bl-md border border-border bg-surface text-text-soft")
                   }
                 >
                   <p className="whitespace-pre-wrap break-words">{message.content}</p>
                   {message.role === "user" &&
                     (message.delivery_status === "interrupted" || message.delivery_status === "failed") && (
-                      <p className="mt-1 text-[10px] text-white/65">
+                      <p className="mt-1 text-[10px] text-ink">
                         {message.delivery_status === "interrupted"
                           ? "Interrupted before Carson replied. It was not resent."
                           : "Not delivered."}
@@ -175,7 +175,7 @@ export default function CarsonTypedChat({
                     <p
                       className={
                         "mt-1 text-[10px] " +
-                        (message.role === "user" ? "text-right text-white/50" : "text-ink/40")
+                        (message.role === "user" ? "text-right text-ink" : "text-ink")
                       }
                     >
                       {formatTime(messageDate)}
@@ -218,7 +218,7 @@ export default function CarsonTypedChat({
                   onClick={() => onRemovePhoto(photo.id)}
                   disabled={awaitingResponse}
                   aria-label={`Remove attached photo ${index + 1}`}
-                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-ink/75 text-white shadow disabled:opacity-45"
+                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-cream text-ink shadow disabled:opacity-45"
                 >
                   <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
                     <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
@@ -227,7 +227,7 @@ export default function CarsonTypedChat({
               </div>
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] text-ink/50">
+          <p className="mt-1.5 text-[11px] text-ink">
             {photos.length} photo{photos.length === 1 ? "" : "s"} attached to this Carson session.
           </p>
         </div>

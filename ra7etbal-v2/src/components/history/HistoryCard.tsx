@@ -84,7 +84,7 @@ export default function HistoryCard({ task, message }: Props) {
 
       <footer className="mt-2 flex items-center gap-2 text-[11px] text-ink">
         {isDone && (
-          <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold">
+          <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
             Confirmed done
           </span>
         )}

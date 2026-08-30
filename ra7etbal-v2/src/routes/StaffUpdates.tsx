@@ -26,10 +26,10 @@ import type { StaffMessage, StaffMessageState, StaffMessageNextActionOwner } fro
 export type StaffUpdatesStatus = "idle" | "loading" | "ready" | "error";
 
 const STATE_BADGE_CLASS: Record<StaffMessageState, string> = {
-  "Needs You": "border-rose-300 bg-rose-50 text-rose-800",
-  Waiting: "border-amber-300 bg-amber-50 text-amber-800",
-  "In Progress": "border-sky-300 bg-sky-50 text-sky-800",
-  Completed: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  "Needs You": "border-gold bg-gold text-cream",
+  Waiting: "border-border bg-surface-subtle text-ink",
+  "In Progress": "border-gold bg-gold text-cream",
+  Completed: "border-gold bg-gold text-cream",
 };
 
 const NEXT_ACTION_LABEL: Record<StaffMessageNextActionOwner, string> = {
@@ -69,7 +69,7 @@ export function StaffUpdatesView({ headerless, status, error, messages, now, onR
     <section className="space-y-3">
       {!headerless && (
         <header>
-          <h2 className="text-xs font-medium uppercase tracking-wide text-ink/60">Staff</h2>
+          <h2 className="text-xs font-medium uppercase tracking-wide text-ink">Staff</h2>
         </header>
       )}
 
@@ -83,13 +83,13 @@ export function StaffUpdatesView({ headerless, status, error, messages, now, onR
       )}
 
       {initialLoading && (
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={20} label="Loading" />
         </div>
       )}
 
       {!initialLoading && status !== "error" && messages.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
+        <div className="rounded-2xl border border-dashed border-border bg-surface-subtle px-4 py-6 text-sm text-ink">
           No staff messages need your attention.
         </div>
       )}
@@ -111,7 +111,7 @@ export function StaffMessageCard({ message, now }: { message: StaffMessage; now:
   const displayState = getStaffMessageDisplayState(message);
 
   return (
-    <article className="rounded-2xl border border-sage/30 bg-white/85 p-4 shadow-sm">
+    <article className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
         <span className="text-sm font-medium text-ink">{message.staff_name}</span>
         <span
@@ -124,31 +124,31 @@ export function StaffMessageCard({ message, now }: { message: StaffMessage; now:
         </span>
       </header>
 
-      <p className="mt-1 text-[11px] text-ink/40">{formatReceivedAt(message.received_at, now)}</p>
+      <p className="mt-1 text-[11px] text-ink">{formatReceivedAt(message.received_at, now)}</p>
 
-      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
+      <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-ink">
         "{message.inbound_text}"
       </p>
 
       {message.carson_response && (
-        <p className="mt-2 whitespace-pre-wrap text-sm text-ink/80">
+        <p className="mt-2 whitespace-pre-wrap text-sm text-ink">
           <span className="font-medium text-ink">Carson replied: </span>
           {message.carson_response}
         </p>
       )}
 
       {message.owner_attention_required && message.escalation_reason && (
-        <div className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+        <div className="mt-2 rounded-lg border border-gold/35 bg-surface-subtle px-3 py-2 text-sm text-ink">
           <p className="font-medium">Decision needed</p>
           <p className="mt-0.5">{message.escalation_reason}</p>
         </div>
       )}
 
       {message.task && (
-        <p className="mt-2 text-[11px] text-ink/40">Related to: {message.task.description}</p>
+        <p className="mt-2 text-[11px] text-ink">Related to: {message.task.description}</p>
       )}
 
-      <p className="mt-2 text-[11px] text-ink/40">Next: {NEXT_ACTION_LABEL[message.next_action_owner]}</p>
+      <p className="mt-2 text-[11px] text-ink">Next: {NEXT_ACTION_LABEL[message.next_action_owner]}</p>
     </article>
   );
 }

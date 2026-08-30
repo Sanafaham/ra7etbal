@@ -177,7 +177,7 @@ export default function VoiceButton({
     "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50";
   const stateCls =
     mode === "recording"
-      ? "border-rose-300 bg-rose-50 text-rose-800"
+      ? "border-gold bg-gold text-cream"
       : mode === "processing"
         ? "border-border bg-warm-white text-text-soft"
         : "border-border bg-warm-white text-text hover:bg-cream";
@@ -195,10 +195,10 @@ export default function VoiceButton({
       {mode === "processing" ? (
         <Spinner size={12} />
       ) : mode === "recording" ? (
-        // Pulsing red dot.
+        // Pulsing active-state dot.
         <span className="relative inline-flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-60" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-600" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-gold" />
         </span>
       ) : (
         // Microphone glyph.

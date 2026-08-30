@@ -8,10 +8,10 @@ export default function Terms() {
           ← Back
         </Link>
         <h1 className="text-3xl font-semibold text-ink">Terms of Service</h1>
-        <p className="text-sm text-ink/50">Last updated: June 2026</p>
+        <p className="text-sm text-ink">Last updated: June 2026</p>
       </header>
 
-      <div className="space-y-6 text-sm leading-relaxed text-ink/80">
+      <div className="space-y-6 text-sm leading-relaxed text-ink">
         <section className="space-y-2">
           <h2 className="text-base font-semibold text-ink">1. Acceptance of Terms</h2>
           <p>

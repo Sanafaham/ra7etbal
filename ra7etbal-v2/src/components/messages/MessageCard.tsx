@@ -94,19 +94,19 @@ export default function MessageCard({
     <article
       className={
         "rounded-2xl border bg-surface/90 p-4 shadow-sm transition " +
-        (isConfirmed ? "border-emerald-200" : "border-sage/30")
+        (isConfirmed ? "border-gold" : "border-border")
       }
     >
       <header className="flex items-center justify-between gap-2 text-xs text-text-soft">
-        <span className="font-medium text-ink/80">→ {message.recipient}</span>
+        <span className="font-medium text-ink">→ {message.recipient}</span>
         <div className="flex items-center gap-2">
           {isConfirmed && (
-            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Confirmed done
             </span>
           )}
           {isWaiting && (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Waiting for confirmation
             </span>
           )}
@@ -121,12 +121,12 @@ export default function MessageCard({
         </div>
       </header>
 
-      <p className="mt-3 whitespace-pre-wrap text-base italic leading-snug text-ink/85">
+      <p className="mt-3 whitespace-pre-wrap text-base italic leading-snug text-ink">
         “{message.content}”
       </p>
 
       {isConfirmed && linkedTask?.confirmed_at && (
-        <p className="mt-2 text-xs text-emerald-800">
+        <p className="mt-2 text-xs text-gold">
           Confirmed on{" "}
           {new Date(linkedTask.confirmed_at).toLocaleString(undefined, {
             month: "short",
@@ -161,7 +161,7 @@ export default function MessageCard({
       </footer>
 
       {hasConfirmLink && (
-        <p className="mt-2 text-[11px] text-ink/55">
+        <p className="mt-2 text-[11px] text-ink">
           Sent through Ra7etBal WhatsApp. The task stays open until they tap
           Done.
           <button

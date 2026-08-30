@@ -32,9 +32,9 @@ interface Props {
 const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
   action:     { label: "Action",     cls: "bg-surface-subtle text-ink border-border" },
   errand:     { label: "Errand",     cls: "bg-surface-subtle text-ink border-border" },
-  reminder:   { label: "Reminder",   cls: "bg-gold/10 text-gold-soft border-gold/35" },
-  decision:   { label: "Decision",   cls: "bg-gold/10 text-gold-soft border-gold/35" },
-  parked:     { label: "Parked",     cls: "bg-gold/10 text-gold-soft border-gold/35" },
+  reminder:   { label: "Reminder",   cls: "bg-gold text-cream border-gold" },
+  decision:   { label: "Decision",   cls: "bg-gold text-cream border-gold" },
+  parked:     { label: "Parked",     cls: "bg-gold text-cream border-gold" },
   delegation: { label: "Delegation", cls: "bg-surface-subtle text-ink border-border" },
   followup:   { label: "Follow-up",  cls: "bg-surface-subtle text-ink border-border" },
 };
@@ -194,24 +194,24 @@ export default function TaskCard({
         </span>
         <div className="flex items-center gap-2 text-xs text-ink">
           {isWaitingDelegation && qualityLifecycle.badge === "Needs your review" ? (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Needs your review
             </span>
           ) : isWaitingDelegation && qualityLifecycle.badge === "Proof submitted" ? (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Proof submitted
             </span>
           ) : isWaitingDelegation && qualityLifecycle.badge === "Waiting for confirmation" ? (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Waiting for confirmation
             </span>
           ) : null}
           {task.type === "delegation" && qualityLifecycle.badge === "Completed" ? (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Completed
             </span>
           ) : isDone && task.type === "delegation" && (
-            <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+            <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
               Confirmed done
             </span>
           )}

@@ -1155,7 +1155,7 @@ function AutomationCard({
                 Message
               </span>
             ) : ownerOnly ? (
-              <span className="rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[11px] font-medium text-gold-soft">
+              <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[11px] font-medium text-cream">
                 Reminder
               </span>
             ) : (
@@ -1184,7 +1184,7 @@ function AutomationCard({
           {/* Run state */}
           <div className="flex items-center gap-1.5 pt-0.5">
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
-            <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
+            <span className={`text-[11px] font-medium ${unsupportedRecurringWhatsapp ? state.text : "rounded-full bg-gold px-2 py-0.5 text-cream"}`}>{state.label}</span>
             {latestRunTimestamp && !unsupportedRecurringWhatsapp && (
               <span className="text-[11px] text-ink">· {latestRunTimestamp}</span>
             )}
@@ -1289,7 +1289,7 @@ function RoutineCard({
     routine.type === "reminder" ? "Reminder" :
     routine.type === "message"  ? "Message"  : "Delegation";
   const typeBadgeClass =
-    routine.type === "reminder" ? "border border-gold/35 bg-gold/10 text-gold-soft" :
+    routine.type === "reminder" ? "border border-gold bg-gold text-cream" :
     "border border-border bg-surface-subtle text-ink";
 
   return (

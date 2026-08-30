@@ -582,7 +582,7 @@ function TodoCard({
           <span className="text-xs font-medium text-gold">Reminder set ✓</span>
         ) : !reminding ? (
           <button type="button" onClick={() => onRemindMe(todo)} disabled={busy || delegating || addingToCalendar}
-            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-gold/10 px-3 py-1 text-xs font-medium text-gold-soft transition hover:bg-gold/15 disabled:opacity-50">
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold bg-gold px-3 py-1 text-xs font-medium text-cream transition hover:brightness-105 disabled:opacity-50">
             Remind Me
           </button>
         ) : null}

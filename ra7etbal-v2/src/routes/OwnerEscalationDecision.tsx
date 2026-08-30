@@ -130,7 +130,7 @@ export function OwnerEscalationDecisionView({
   if (authStatus === "loading") {
     return (
       <div className="mx-auto max-w-lg px-5 py-16">
-        <div className="flex items-center justify-center py-12 text-ink/60">
+        <div className="flex items-center justify-center py-12 text-ink">
           <Spinner size={22} label="Loading" />
         </div>
       </div>
@@ -155,7 +155,7 @@ export function OwnerEscalationDecisionView({
       <h1 className="text-[22px] font-semibold text-ink">Owner decision</h1>
 
       {(loadState === "idle" || loadState === "loading") && (
-        <div className="mt-6 flex items-center justify-center py-12 text-ink/60">
+        <div className="mt-6 flex items-center justify-center py-12 text-ink">
           <Spinner size={22} label="Loading" />
         </div>
       )}
@@ -184,18 +184,18 @@ export function OwnerEscalationDecisionView({
 
           <article className="rounded-2xl border border-border bg-white/85 p-4 shadow-sm">
             <p className="text-sm font-medium text-ink">{detail.staffName}</p>
-            <p className="mt-1 text-[11px] text-ink/40">
+            <p className="mt-1 text-[11px] text-ink">
               {formatEscalationReceivedAt(detail.receivedAt, now)}
             </p>
 
             {detail.escalationReason && (
-              <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+              <div className="mt-3 rounded-lg border border-gold/35 bg-surface-subtle px-3 py-2 text-sm text-ink">
                 <p className="font-medium">Decision needed</p>
                 <p className="mt-0.5">{detail.escalationReason}</p>
               </div>
             )}
 
-            <p className="mt-3 whitespace-pre-wrap rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
+            <p className="mt-3 whitespace-pre-wrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-ink">
               "{detail.inboundText}"
             </p>
           </article>
@@ -218,7 +218,7 @@ export function OwnerEscalationDecisionView({
                   <button
                     type="button"
                     onClick={() => onSelectDecision("rejected")}
-                    className="rounded-full bg-rose-500 px-4 py-2 text-sm font-medium text-white"
+                    className="rounded-full border border-gold bg-surface-subtle px-4 py-2 text-sm font-medium text-ink"
                   >
                     Reject
                   </button>
@@ -264,8 +264,8 @@ export function OwnerEscalationDecisionView({
 
               {submitPhase === "confirming" && pendingDecision && (
                 <div className="space-y-2">
-                  <p className="text-sm text-ink/70">Send this to {detail.staffName}?</p>
-                  <p className="rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/85">
+                  <p className="text-sm text-ink">Send this to {detail.staffName}?</p>
+                  <p className="rounded-lg border border-border bg-surface-subtle px-3 py-2 text-sm italic text-ink">
                     {pendingDecision === "custom_instruction"
                       ? `"${customText.trim()}"`
                       : pendingDecision === "approved"
@@ -292,7 +292,7 @@ export function OwnerEscalationDecisionView({
               )}
 
               {submitPhase === "sending" && (
-                <div className="flex items-center gap-2 text-sm text-ink/60">
+                <div className="flex items-center gap-2 text-sm text-ink">
                   <Spinner size={16} label="Sending" />
                   Sending to {detail.staffName}…
                 </div>
@@ -302,7 +302,7 @@ export function OwnerEscalationDecisionView({
 
           {detail.status === "failed" && submitPhase === "idle" && (
             <div className="rounded-2xl border border-dashed border-border bg-white/40 p-4 space-y-2">
-              <p className="text-sm text-ink/70">
+              <p className="text-sm text-ink">
                 We couldn't reach {detail.staffName} with your answer. You can safely try again.
               </p>
               <button
@@ -316,7 +316,7 @@ export function OwnerEscalationDecisionView({
           )}
 
           {detail.status === "failed" && submitPhase === "sending" && (
-            <div className="flex items-center gap-2 text-sm text-ink/60">
+            <div className="flex items-center gap-2 text-sm text-ink">
               <Spinner size={16} label="Sending" />
               Sending to {detail.staffName}…
             </div>

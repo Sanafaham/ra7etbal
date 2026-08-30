@@ -27,15 +27,15 @@ export default function StaffEscalationCard({ escalation, now }: StaffEscalation
     <article className="rounded-2xl border border-danger/40 bg-surface p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
         <span className="text-sm font-medium text-ink">{escalation.staffName}</span>
-        <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+        <span className="rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
           Needs You
         </span>
       </header>
 
-      <p className="mt-1 text-[11px] text-ink/40">{formatEscalationReceivedAt(escalation.receivedAt, now)}</p>
+      <p className="mt-1 text-[11px] text-ink">{formatEscalationReceivedAt(escalation.receivedAt, now)}</p>
 
       {escalation.escalationReason && (
-        <div className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+        <div className="mt-2 rounded-lg border border-gold/35 bg-surface-subtle px-3 py-2 text-sm text-ink">
           <p className="font-medium">Decision needed</p>
           <p className="mt-0.5">{escalation.escalationReason}</p>
         </div>

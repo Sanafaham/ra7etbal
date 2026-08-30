@@ -1176,7 +1176,7 @@ function NotificationDevicesPanel({
                 <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
                   {device.platform || "Unknown device"}
                   {isThisDevice && (
-                    <span className="shrink-0 rounded-full border border-gold/35 bg-gold/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gold-soft">
+                    <span className="shrink-0 rounded-full border border-gold bg-gold px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cream">
                       This device
                     </span>
                   )}

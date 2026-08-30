@@ -11,7 +11,7 @@ function Badge({ count }: { count: number }) {
   return (
     <span
       aria-label={`${count} item${count !== 1 ? "s" : ""}`}
-      className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold leading-none text-white"
+      className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-gold px-1 text-[9px] font-bold leading-none text-cream"
     >
       {count > 9 ? "9+" : count}
     </span>
@@ -127,8 +127,8 @@ export default function BottomNav() {
             </svg>
             {callStatus === "connected" && (
               <span aria-label="Carson is active" className="absolute -right-0.5 -top-0.5 flex h-3 w-3 items-center justify-center">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sage opacity-60" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sage" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-gold" />
               </span>
             )}
           </span>
