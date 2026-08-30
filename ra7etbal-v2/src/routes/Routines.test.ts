@@ -99,6 +99,9 @@ describe("owner-only automation UI status", () => {
 
     expect(state.label).toBe("Reminder sent");
     expect(state.label).not.toBe("Waiting for confirmation");
+    expect(state.dot).toBe("bg-gold");
+    expect(state.text).toBe("text-gold-soft");
+    expect(state.border).toBe("border-l-gold/40");
   });
 
   it("keeps delegated automation sent state waiting for confirmation", () => {

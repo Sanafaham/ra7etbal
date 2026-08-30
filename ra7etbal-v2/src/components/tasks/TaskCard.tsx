@@ -532,25 +532,25 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
   const isBusy = !!busyAction;
 
   return (
-    <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+    <div className="rounded-lg border border-gold/30 bg-surface-subtle px-3 py-2 text-sm text-ink">
       <p className="font-medium">
         {assignedLabel === "Me" ? "Someone" : assignedLabel} sent an alternative — needs your review
       </p>
-      {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
+      {task.quality_review_note && <p className="mt-0.5 text-text-soft">{task.quality_review_note}</p>}
       {task.worker_reply && (
-        <p className="mt-1 italic">
+        <p className="mt-1 italic text-text-soft">
           {assignedLabel === "Me" ? "Their" : `${assignedLabel}'s`} note: "{task.worker_reply}"
         </p>
       )}
 
-      {error && <p className="mt-1.5 text-xs font-medium text-rose-700">{error}</p>}
+      {error && <p className="mt-1.5 text-xs font-medium text-danger">{error}</p>}
 
       <div className="mt-2 flex flex-wrap gap-1.5">
         <button
           type="button"
           onClick={() => void runDecision("approved_alternative")}
           disabled={isBusy}
-          className="inline-flex items-center gap-1.5 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold px-3 py-1.5 text-xs font-medium text-cream shadow-sm transition hover:brightness-105 disabled:opacity-50"
         >
           {busyAction === "approved_alternative" && <Spinner size={12} />}
           <span>Approve Alternative</span>
@@ -589,7 +589,7 @@ function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLab
             type="button"
             onClick={submitCustomInstruction}
             disabled={isBusy}
-            className="inline-flex items-center gap-1.5 rounded-full border border-rose-400 bg-rose-800 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold px-3 py-1.5 text-xs font-medium text-cream shadow-sm transition hover:brightness-110 disabled:opacity-50"
           >
             {busyAction === "custom_instruction" && <Spinner size={12} />}
             <span>Send instruction</span>

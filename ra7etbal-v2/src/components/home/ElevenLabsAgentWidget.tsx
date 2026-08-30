@@ -8453,7 +8453,7 @@ export default function ElevenLabsAgentWidget({
         </p>
       )}
 
-      {/* Keep the Core primary while voice is live; restore the finalized response after teardown. */}
+      {/* Keep spoken output voice-only in this surface; history storage is unchanged. */}
       {shouldShowCarsonVoiceTranscript({
         status,
         channel,

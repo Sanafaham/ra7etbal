@@ -434,16 +434,16 @@ export default function Confirm() {
     proofPhotos.length === 0;
 
   return (
-    <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
+    <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-border bg-surface p-6 shadow-sm">
       <header className="space-y-1">
-        <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
+        <p className="text-xs font-medium uppercase tracking-wide text-text-soft">
           Ra7etBal · راحة بال
         </p>
         <h1 className="text-2xl font-semibold text-ink">Task confirmation</h1>
       </header>
 
       {loadState === "loading" && (
-        <div className="flex items-center justify-center py-6 text-ink/60">
+        <div className="flex items-center justify-center py-6 text-text-soft">
           <Spinner size={20} label="Loading task" />
         </div>
       )}
@@ -456,17 +456,17 @@ export default function Confirm() {
         <>
           <div className="space-y-3">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-ink/50">Task</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-text-soft">Task</p>
               <p className="mt-1 text-base leading-snug text-ink">{info.description}</p>
               {info.assignedTo && (
-                <p className="mt-0.5 text-sm text-ink/55">For: {info.assignedTo}</p>
+                <p className="mt-0.5 text-sm text-text-soft">For: {info.assignedTo}</p>
               )}
             </div>
 
             {/* Reference photos — multi-photo grid or single image */}
             {info.attachmentUrls.length > 0 ? (
               <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                <p className="text-xs font-medium uppercase tracking-wide text-text-soft">
                   Reference photos ({info.attachmentUrls.length})
                 </p>
                 <div className={info.attachmentUrls.length === 1 ? "" : "grid grid-cols-2 gap-2"}>
@@ -475,20 +475,20 @@ export default function Confirm() {
                       key={i}
                       src={url}
                       alt={`Reference photo ${i + 1}`}
-                      className="w-full rounded-xl border border-sage/20 object-cover shadow-sm aspect-square"
+                      className="w-full rounded-xl border border-border object-cover shadow-sm aspect-square"
                     />
                   ))}
                 </div>
               </div>
             ) : info.imageUrl ? (
               <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                <p className="text-xs font-medium uppercase tracking-wide text-text-soft">
                   Reference image
                 </p>
                 <img
                   src={info.imageUrl}
                   alt="Reference image attached by owner"
-                  className="max-h-56 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+                  className="max-h-56 w-full rounded-xl border border-border object-cover shadow-sm"
                 />
               </div>
             ) : null}
@@ -496,7 +496,7 @@ export default function Confirm() {
             {/* Proof photo(s) — uploaded by recipient, shown after confirmation */}
             {info.status === "done" && info.proofImageUrls.length > 0 && (
               <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                <p className="text-xs font-medium uppercase tracking-wide text-text-soft">
                   Proof photo{info.proofImageUrls.length === 1 ? "" : "s"} ({info.proofImageUrls.length})
                 </p>
                 <div className={info.proofImageUrls.length === 1 ? "" : "grid grid-cols-2 gap-2"}>
@@ -505,7 +505,7 @@ export default function Confirm() {
                       key={i}
                       src={url}
                       alt={`Proof photo ${i + 1} from recipient`}
-                      className="w-full rounded-xl border border-emerald-200 object-cover shadow-sm aspect-square"
+                      className="w-full rounded-xl border border-gold/30 object-cover shadow-sm aspect-square"
                     />
                   ))}
                 </div>
@@ -542,7 +542,7 @@ export default function Confirm() {
                 onClick={() => void handleConfirm()}
                 disabled={isBusy}
                 aria-busy={isBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-base font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isBusy && <Spinner size={16} />}
                 <span>{confirming ? "Confirming…" : "Confirm completion"}</span>
@@ -562,9 +562,9 @@ export default function Confirm() {
 
               {/* Proof photo section — shown before Mark done */}
               <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
+                <p className="text-xs font-medium uppercase tracking-wide text-text-soft">
                   Proof photo
-                  <span className="ml-1 normal-case text-ink/35">
+                  <span className="ml-1 normal-case text-text-muted">
                     ({info.proofRequired ? "required" : "optional"}, up to 5)
                   </span>
                 </p>
@@ -576,7 +576,7 @@ export default function Confirm() {
                         <img
                           src={photo.previewUrl}
                           alt={`Proof photo preview ${i + 1}`}
-                          className="aspect-square w-full rounded-xl border border-sage/25 object-cover shadow-sm"
+                          className="aspect-square w-full rounded-xl border border-border object-cover shadow-sm"
                         />
                         <button
                           type="button"
@@ -599,7 +599,7 @@ export default function Confirm() {
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isBusy || proofPhotos.length >= MAX_PROOF_PHOTOS}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-sage/40 bg-cream/40 px-4 py-3 text-sm text-ink/60 transition hover:border-sage/60 hover:bg-cream/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-surface-subtle px-4 py-3 text-sm text-text-soft transition hover:border-gold hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -620,17 +620,17 @@ export default function Confirm() {
                 />
 
                 {proofLimitWarning && (
-                  <p className="text-xs text-ink/50">{proofLimitWarning}</p>
+                  <p className="text-xs text-text-soft">{proofLimitWarning}</p>
                 )}
 
                 {proofPhotos.length > 0 && !proofError && (
-                  <p className="text-xs text-ink/50">
+                  <p className="text-xs text-text-soft">
                     {proofPhotos.length} photo{proofPhotos.length === 1 ? "" : "s"} ready. Tap Mark done to send.
                   </p>
                 )}
 
                 {proofError && (
-                  <p className="text-xs text-rose-700">{proofError}</p>
+                  <p className="text-xs text-danger">{proofError}</p>
                 )}
               </div>
 
@@ -640,10 +640,10 @@ export default function Confirm() {
               <div className="space-y-1">
                 <label
                   htmlFor="worker-reply"
-                  className="text-xs font-medium uppercase tracking-wide text-ink/50"
+                  className="text-xs font-medium uppercase tracking-wide text-text-soft"
                 >
                   Note for the owner
-                  <span className="ml-1 normal-case text-ink/35">(optional)</span>
+                  <span className="ml-1 normal-case text-text-muted">(optional)</span>
                 </label>
                 <textarea
                   id="worker-reply"
@@ -653,7 +653,7 @@ export default function Confirm() {
                   maxLength={1000}
                   rows={2}
                   placeholder="e.g. Could not find the exact item, sent a similar one instead"
-                  className="w-full rounded-xl border border-sage/25 bg-white/70 px-3 py-2 text-sm text-ink placeholder:text-ink/35 focus:border-sage/50 focus:outline-none disabled:opacity-50"
+                  className="w-full rounded-xl border border-border bg-surface-subtle px-3 py-2 text-sm text-ink placeholder:text-text-muted focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-50"
                 />
               </div>
 
@@ -664,7 +664,7 @@ export default function Confirm() {
                 onClick={() => void handleConfirm()}
                 disabled={isBusy || needsNewProof}
                 aria-busy={isBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-gold px-5 py-3 text-base font-medium text-cream shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isBusy && <Spinner size={16} />}
                 <span>

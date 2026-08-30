@@ -44,13 +44,13 @@ describe("shouldShowCarsonVoiceTranscript", () => {
     ).toBe(false);
   });
 
-  it("restores the finalized response after the voice session ends", () => {
+  it("never duplicates a spoken response in the live Carson surface after teardown or error", () => {
     expect(
       shouldShowCarsonVoiceTranscript({ status: "idle", channel: "voice", hasMessage: true }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldShowCarsonVoiceTranscript({ status: "error", channel: "voice", hasMessage: true }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not affect typed chat or render an empty response", () => {
