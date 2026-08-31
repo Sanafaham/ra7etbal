@@ -21,6 +21,52 @@ describe("matchesAttentionIntent", () => {
     expect(matchesAttentionIntent("Ask Christopher to make dinner")).toBe(false);
     expect(matchesAttentionIntent("What happened with the passport reminder?")).toBe(false);
   });
+
+  it("2026-09-01 owner canary fix: matches the real phrasing Sana used, which the exact 'what am i waiting on' alternative did not cover", () => {
+    expect(matchesAttentionIntent("What about the things I'm waiting on?")).toBe(true);
+    expect(matchesAttentionIntent("Anything I'm waiting on?")).toBe(true);
+    expect(matchesAttentionIntent("What's waiting on me?")).toBe(true);
+  });
+
+  it("the broadened 'waiting on' phrasing still requires a question shape — a statement mentioning waiting is not attention intent", () => {
+    expect(matchesAttentionIntent("Christopher is waiting on the delivery guy.")).toBe(false);
+    expect(matchesAttentionIntent("Nothing is waiting on me right now.")).toBe(false);
+  });
+
+  it("a specific named-task delivery-status question is not attention intent — get_task_delivery_status's own routing is unaffected by the broadened pattern", () => {
+    expect(matchesAttentionIntent("Has Christopher confirmed the TEREA task?")).toBe(false);
+    expect(matchesAttentionIntent("Did Christopher get the pizza request?")).toBe(false);
+    expect(matchesAttentionIntent("What is the status of the TEREA task?")).toBe(false);
+  });
+});
+
+describe("2026-09-01 owner canary — the exact reported typed/voice contradiction is now impossible for this phrasing", () => {
+  it("reproduces the report: 'What about the things I'm waiting on?' now grounds identically regardless of which surface asked it or which tool the model happened to call", () => {
+    const canonicalAttentionResult =
+      "You're not currently waiting on anyone. Christopher's 'buy TEREA cigarettes...' is pending, but it's marked as needing your attention and has no due date.";
+
+    // Voice's own model, left unguarded, previously re-invoked
+    // get_task_delivery_status and composed a contradictory reply from
+    // that unrelated delivery-timeline data.
+    const voiceModelReplyFromWrongTool =
+      "The only open delegation is Christopher on the TEREA cigarettes — read over a day ago, no confirmation. Everything else from him is done. That's the one loop still waiting on someone.";
+
+    const utterance = "What about the things I'm waiting on?";
+    const attentionIntentDetected = matchesAttentionIntent(utterance);
+    expect(attentionIntentDetected).toBe(true); // was false before the fix
+
+    const result = resolveAttentionGuardedMessage({
+      agentMessage: voiceModelReplyFromWrongTool,
+      attentionIntentDetected,
+      groundedResult: canonicalAttentionResult,
+    });
+
+    // Same function, same input shape, used by both typed and voice — this
+    // is the structural guarantee that both surfaces now agree, not two
+    // independently-corrected paths that happen to match.
+    expect(result).toBe(canonicalAttentionResult);
+    expect(result).not.toContain("waiting on someone");
+  });
 });
 
 describe("matchesAttentionFollowUp", () => {

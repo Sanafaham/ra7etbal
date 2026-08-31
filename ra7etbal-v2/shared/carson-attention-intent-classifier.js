@@ -12,8 +12,25 @@
 // Matches the exact trigger phrases ATTENTION SUMMARY / DAILY BRIEF AND
 // STATUS already define, plus the close variants named in the 2026-08-25
 // investigation ("what's on my plate", "am I clear").
+//
+// 2026-09-01 owner canary: "What am I waiting on?" (this file's original
+// coverage) requires that exact word order and missed the real phrasing
+// Sana actually used — "What about the things I'm waiting on?". Neither
+// this pattern nor ATTENTION_FOLLOWUP_PATTERN matched it, so
+// attentionIntentDetected was false for that turn: no grounding fetch ran,
+// and resolveAttentionGuardedMessage's override never fired (it's a no-op
+// when attentionIntentDetected is false — see carson-attention-intent-
+// guard.ts) for EITHER surface, typed or voice. Voice's underlying model
+// then independently re-invoked get_task_delivery_status and composed a
+// reply from that unrelated data ("that's the one loop still waiting on
+// someone") that contradicted typed's separately-composed answer for the
+// exact same live state ("you're not currently waiting on anyone") —
+// diverging because neither answer was ever forced to the one canonical
+// attention_summary_read result, not because the underlying classifiers
+// disagreed. Adding a "waiting on" question-shape alternative here closes
+// that gap for both surfaces identically going forward.
 const ATTENTION_INTENT_PATTERN =
-  /\b(?:what needs my attention|what('?s| is) pending|what am i waiting on|what('?s| is) on my plate|am i clear|what('?s| is) outstanding|anything pending)\b/i;
+  /\b(?:what needs my attention|what('?s| is) pending|what am i waiting on|what(?:'s| is)?(?: about)?(?: the things?)? (?:i'?m |i am )?waiting on|anything (?:i'?m |i am )?waiting on|what('?s| is) on my plate|am i clear|what('?s| is) outstanding|anything pending)\b/i;
 
 // Only meaningful as a continuation of an attention exchange — the caller
 // gates this on the immediately preceding turn having been a grounded
