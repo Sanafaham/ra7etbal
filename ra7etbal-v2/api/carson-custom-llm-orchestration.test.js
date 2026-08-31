@@ -262,6 +262,24 @@ describe("SSE completion and no-duplicate-response", () => {
   });
 });
 
+describe("vercel.json routing — /chat/completions reaches the orchestration handler", () => {
+  it("rewrites /chat/completions to the new orchestration handler, not the fixed Stage 2A handler, ahead of the SPA catch-all", async () => {
+    const fs = await import("node:fs");
+    const raw = fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+    const config = JSON.parse(raw);
+    const rewrites = config.rewrites ?? [];
+    const chatCompletionsIndex = rewrites.findIndex((r) => r.source === "/chat/completions");
+    expect(chatCompletionsIndex).toBeGreaterThanOrEqual(0);
+    expect(rewrites[chatCompletionsIndex].destination).toBe("/api/carson-custom-llm-orchestration");
+    // Must not still point at the fixed-response Stage 2A handler.
+    expect(rewrites[chatCompletionsIndex].destination).not.toBe("/api/carson-custom-llm-stage2a");
+    // Must come before the SPA catch-all rewrite, or ElevenLabs' request
+    // falls through to a static-asset 405 (the original historical bug).
+    const catchAllIndex = rewrites.findIndex((r) => r.destination === "/index.html");
+    expect(catchAllIndex).toBeGreaterThan(chatCompletionsIndex);
+  });
+});
+
 describe("Production Carson untouched", () => {
   it("this module's source never imports or references the production widget file", async () => {
     const fs = await import("node:fs");
