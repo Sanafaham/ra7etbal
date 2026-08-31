@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type { CarsonTypedMessage } from "../../lib/carson-typed-messages";
 import {
   formatDate,
@@ -63,7 +63,43 @@ export default function CarsonTypedChat({
   onClearHistory,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+    const nextHeight = Number.isFinite(maxHeight)
+      ? Math.min(textarea.scrollHeight, maxHeight)
+      : textarea.scrollHeight;
+
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = Number.isFinite(maxHeight) && textarea.scrollHeight > maxHeight
+      ? "auto"
+      : "hidden";
+  }, [value]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    const keepFocusedComposerVisible = () => {
+      if (document.activeElement !== textareaRef.current) return;
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.scrollIntoView({ block: "nearest" });
+      });
+    };
+
+    viewport.addEventListener("resize", keepFocusedComposerVisible);
+    viewport.addEventListener("scroll", keepFocusedComposerVisible);
+    return () => {
+      viewport.removeEventListener("resize", keepFocusedComposerVisible);
+      viewport.removeEventListener("scroll", keepFocusedComposerVisible);
+    };
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
@@ -255,6 +291,7 @@ export default function CarsonTypedChat({
           Message Carson
         </label>
         <textarea
+          ref={textareaRef}
           id="carson-typed-message"
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -262,7 +299,12 @@ export default function CarsonTypedChat({
           maxLength={12_000}
           disabled={awaitingResponse}
           placeholder="Message Carson…"
-          className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-border bg-surface-subtle px-3.5 py-3 text-[14px] text-ink outline-none transition placeholder:text-text-muted focus:border-gold disabled:opacity-60"
+          className="min-h-[3.25rem] max-h-[11rem] min-w-0 flex-1 resize-none overflow-y-hidden rounded-2xl border border-border bg-surface-subtle px-3.5 py-3 text-base leading-6 text-ink outline-none transition placeholder:text-text-muted focus:border-gold disabled:opacity-60"
+          onFocus={() => {
+            window.requestAnimationFrame(() => {
+              textareaRef.current?.scrollIntoView({ block: "nearest" });
+            });
+          }}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
