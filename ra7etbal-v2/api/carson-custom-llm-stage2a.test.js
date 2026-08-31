@@ -4,6 +4,7 @@ import {
   createSessionBinding,
   createStage2aHandler,
   extractLatestOwnerMessage,
+  extractStage2ABindingToken,
   verifySessionBinding,
 } from "./carson-custom-llm-stage2a.js";
 
@@ -134,5 +135,42 @@ describe("Stage 2A Custom LLM boundary", () => {
     expect(first.chunks).toEqual([]);
     expect(second.chunks.join("")).toContain(STAGE2A_RESPONSE);
     vi.useRealTimers();
+  });
+});
+
+describe("extractStage2ABindingToken — deterministic transport precedence", () => {
+  it("reads the X-Carson-Stage2A-Binding header when present", () => {
+    const req = { headers: { "x-carson-stage2a-binding": "header-token" }, body: {} };
+    expect(extractStage2ABindingToken(req)).toBe("header-token");
+  });
+
+  it("falls back to the legacy elevenlabs_extra_body field when no header is present", () => {
+    const req = { headers: {}, body: { elevenlabs_extra_body: { carson_stage2a_binding: "legacy-token" } } };
+    expect(extractStage2ABindingToken(req)).toBe("legacy-token");
+  });
+
+  it("prefers the header over the legacy body field when both are present", () => {
+    const req = {
+      headers: { "x-carson-stage2a-binding": "header-token" },
+      body: { elevenlabs_extra_body: { carson_stage2a_binding: "legacy-token" } },
+    };
+    expect(extractStage2ABindingToken(req)).toBe("header-token");
+  });
+
+  it("returns undefined (fail closed) when neither transport supplies a value", () => {
+    expect(extractStage2ABindingToken({ headers: {}, body: {} })).toBeUndefined();
+  });
+
+  it("ignores a query-string value — never reads the binding from the URL", () => {
+    const req = { headers: {}, body: {}, query: { carson_stage2a_binding: "query-token" } };
+    expect(extractStage2ABindingToken(req)).toBeUndefined();
+  });
+
+  it("ignores an empty-string header and falls back to the legacy body field", () => {
+    const req = {
+      headers: { "x-carson-stage2a-binding": "" },
+      body: { elevenlabs_extra_body: { carson_stage2a_binding: "legacy-token" } },
+    };
+    expect(extractStage2ABindingToken(req)).toBe("legacy-token");
   });
 });

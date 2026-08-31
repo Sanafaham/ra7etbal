@@ -34,6 +34,7 @@ import {
   equalSecret,
   getBearer,
   verifySessionBinding,
+  extractStage2ABindingToken,
 } from "./carson-custom-llm-stage2a.js";
 import {
   CARSON_TOOL_ALLOWLIST,
@@ -172,7 +173,7 @@ export function createOrchestrationHandler({
       return json(res, 401, { error: "Unauthorized provider" });
     }
 
-    const token = req.body?.elevenlabs_extra_body?.carson_stage2a_binding;
+    const token = extractStage2ABindingToken(req);
     const binding = verifyBinding(token);
     if (!binding) return json(res, 401, { error: "Invalid or expired session binding" });
 

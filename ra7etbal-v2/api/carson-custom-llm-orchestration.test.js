@@ -81,6 +81,109 @@ function baseReq(overrides = {}) {
   };
 }
 
+function reqWithHeaders(extraHeaders, bodyOverrides = {}) {
+  return {
+    method: "POST",
+    headers: { authorization: `Bearer ${TEST_PROVIDER_SECRET}`, ...extraHeaders },
+    body: {
+      messages: [{ role: "user", content: "Add dentist Tuesday at 3 PM." }],
+      tools: [],
+      ...bodyOverrides,
+    },
+  };
+}
+
+describe("Stage 2A binding transport — X-Carson-Stage2A-Binding header", () => {
+  it("accepts a valid provider secret + a valid header binding", async () => {
+    const reason = vi.fn().mockResolvedValue({ type: "text", text: "Sure." });
+    const handler = createOrchestrationHandler({ reason });
+    const res = mockRes();
+    await handler(reqWithHeaders({ "x-carson-stage2a-binding": binding.token }), res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("fails closed (401) when neither the header nor the legacy body binding is supplied", async () => {
+    const handler = createOrchestrationHandler();
+    const res = mockRes();
+    await handler(reqWithHeaders({}), res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("rejects an invalid header binding", async () => {
+    const handler = createOrchestrationHandler();
+    const res = mockRes();
+    await handler(reqWithHeaders({ "x-carson-stage2a-binding": "garbage" }), res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("rejects an expired header binding", async () => {
+    const handler = createOrchestrationHandler();
+    const res = mockRes();
+    const expired = createSessionBinding({ accountId: "owner-123", now: Date.now() - 20 * 60 * 1000 }, TEST_SESSION_SECRET);
+    await handler(reqWithHeaders({ "x-carson-stage2a-binding": expired.token }), res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("rejects a wrong provider secret even with a valid header binding — the two controls are independent", async () => {
+    const handler = createOrchestrationHandler();
+    const res = mockRes();
+    await handler(
+      reqWithHeaders({ "x-carson-stage2a-binding": binding.token, authorization: "Bearer wrong" }),
+      res,
+    );
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("header transport takes precedence over the legacy body field — a valid header wins over an invalid legacy body", async () => {
+    const reason = vi.fn().mockResolvedValue({ type: "text", text: "Sure." });
+    const handler = createOrchestrationHandler({ reason });
+    const res = mockRes();
+    await handler(
+      reqWithHeaders(
+        { "x-carson-stage2a-binding": binding.token },
+        { elevenlabs_extra_body: { carson_stage2a_binding: "garbage" } },
+      ),
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("header transport takes precedence over the legacy body field — an invalid header loses even with a valid legacy body", async () => {
+    const handler = createOrchestrationHandler();
+    const res = mockRes();
+    await handler(
+      reqWithHeaders(
+        { "x-carson-stage2a-binding": "garbage" },
+        { elevenlabs_extra_body: { carson_stage2a_binding: binding.token } },
+      ),
+      res,
+    );
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("the legacy elevenlabs_extra_body transport still works when no header is present", async () => {
+    const reason = vi.fn().mockResolvedValue({ type: "text", text: "Sure." });
+    const handler = createOrchestrationHandler({ reason });
+    const res = mockRes();
+    await handler(
+      reqWithHeaders({}, { elevenlabs_extra_body: { carson_stage2a_binding: binding.token } }),
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("never echoes the binding token in the 401 error body or the SSE stream", async () => {
+    const rejectedRes = mockRes();
+    await createOrchestrationHandler()(reqWithHeaders({ "x-carson-stage2a-binding": "garbage-token" }), rejectedRes);
+    expect(JSON.stringify(rejectedRes.jsonBody)).not.toContain("garbage-token");
+
+    const reason = vi.fn().mockResolvedValue({ type: "text", text: "Sure." });
+    const acceptedRes = mockRes();
+    await createOrchestrationHandler({ reason })(reqWithHeaders({ "x-carson-stage2a-binding": binding.token }), acceptedRes);
+    expect(sseText(acceptedRes)).not.toContain(binding.token);
+  });
+});
+
 describe("auth boundary reuse (Stage 2A)", () => {
   it("rejects a missing/incorrect provider secret", async () => {
     const handler = createOrchestrationHandler();

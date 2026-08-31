@@ -86,6 +86,28 @@ export function getBearer(req) {
   return value.startsWith("Bearer ") ? value.slice(7) : "";
 }
 
+const STAGE2A_BINDING_HEADER = "x-carson-stage2a-binding";
+
+/**
+ * Extracts the Stage 2A session binding token from the request. The
+ * ElevenLabs Custom LLM dashboard UI exposes "Request headers" (no
+ * "extra body" field), so the documented/current transport is the
+ * X-Carson-Stage2A-Binding header. The legacy
+ * elevenlabs_extra_body.carson_stage2a_binding body field is retained only
+ * for backward compatibility with existing callers/tests. Precedence is
+ * deterministic: header first, then legacy body field, then undefined
+ * (caller fails closed). Never reads the binding from a query string,
+ * cookie, or any other body field.
+ */
+export function extractStage2ABindingToken(req) {
+  const headerValue = req.headers?.[STAGE2A_BINDING_HEADER];
+  const headerToken = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+  if (typeof headerToken === "string" && headerToken.length > 0) return headerToken;
+
+  const legacyToken = req.body?.elevenlabs_extra_body?.carson_stage2a_binding;
+  return typeof legacyToken === "string" && legacyToken.length > 0 ? legacyToken : undefined;
+}
+
 export function equalSecret(actual, expected) {
   const left = Buffer.from(actual || "");
   const right = Buffer.from(expected || "");
