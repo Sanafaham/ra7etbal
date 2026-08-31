@@ -167,7 +167,12 @@ const btnStyle: React.CSSProperties = {
   font: "inherit",
 };
 
-async function getSupabaseAccessToken(): Promise<string | undefined> {
+/**
+ * Exported so the real Carson conversation-start component's Stage 2A
+ * auto-binding gate can reuse the exact same owner-session lookup used
+ * here — one implementation, not a second copy.
+ */
+export async function getSupabaseAccessToken(): Promise<string | undefined> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token;
 }

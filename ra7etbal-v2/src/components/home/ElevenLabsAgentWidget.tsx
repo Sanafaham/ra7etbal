@@ -120,6 +120,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import { issueStage2ABinding, getSupabaseAccessToken as getStage2ASupabaseAccessToken } from "../../routes/CarsonStage2ABinding";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
@@ -948,6 +949,13 @@ export default function ElevenLabsAgentWidget({
   onPendingTypedDraftConsumed?: () => void;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
+  // C-03 gate: off (undefined/unset) everywhere by default, including
+  // Production Carson — set only on the isolated non-production project
+  // while the live acceptance gate is being run. When on, every real
+  // conversation automatically carries a fresh owner-authenticated Stage 2A
+  // binding (see startCarsonSession below); when off, this file's behavior
+  // is byte-for-byte what it was before this gate existed.
+  const stage2aAutoBindingEnabled = import.meta.env.VITE_ENABLE_CARSON_STAGE2A_BINDING === "true";
   const audioEnvironmentRef = useRef<CarsonAudioEnvironment>(getCarsonAudioEnvironment());
 
   const [status, setStatus] = useState<CallStatus>("idle");
@@ -5775,6 +5783,29 @@ export default function ElevenLabsAgentWidget({
       // Voice prompt changes belong in the ElevenLabs dashboard only,
       // unless SDK support for a specific field has been verified in staging.
       // ─────────────────────────────────────────────────────────────────────
+      // C-03: automatic Stage 2A owner-binding injection (gated — see
+      // stage2aAutoBindingEnabled above), fetched before the connect
+      // timeout is armed so that timer only ever bounds the actual SDK
+      // handshake, never our own pre-flight fetch. Reuses
+      // issueStage2ABinding/getSupabaseAccessToken from
+      // CarsonStage2ABinding.tsx unchanged — the owner never sees or
+      // handles this value. Fetched fresh for every conversation start (the
+      // SDK sends customLlmExtraBody once, at session init, same as
+      // dynamicVariables below — there is no supported way to update it
+      // mid-conversation, so "refresh on the conversation lifecycle" means:
+      // a new conversation always gets a new binding). Fails closed: if a
+      // fresh binding can't be issued, the session is not started at all —
+      // this throws into the existing catch block below, which already
+      // shows the owner a safe error.
+      let stage2aCustomLlmExtraBody: { carson_stage2a_binding: string } | undefined;
+      if (stage2aAutoBindingEnabled) {
+        const bindingResult = await issueStage2ABinding({ getAccessToken: getStage2ASupabaseAccessToken });
+        if (bindingResult.status !== "ready") {
+          throw new Error("Stage 2A owner binding unavailable");
+        }
+        stage2aCustomLlmExtraBody = { carson_stage2a_binding: bindingResult.binding };
+      }
+
       connectTimeoutRef.current = setTimeout(() => {
         if (!isCurrentSession()) return;
         console.warn("[carson-lifecycle] timeout", {
@@ -5787,6 +5818,7 @@ export default function ElevenLabsAgentWidget({
 
       const conv = await Conversation.startSession({
         agentId,
+        ...(stage2aCustomLlmExtraBody ? { customLlmExtraBody: stage2aCustomLlmExtraBody } : {}),
         // Both channels use this exact production agent. Text mode asks the
         // SDK for its lighter text transport, which creates no microphone or
         // audio context. Voice deliberately omits textOnly so its proven
@@ -6757,7 +6789,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, createAutomation, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, ensureTypedHistoryLoaded]);
+  }, [agentId, stage2aAutoBindingEnabled, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, createAutomation, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, ensureTypedHistoryLoaded]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");
