@@ -6875,11 +6875,40 @@ export default function ElevenLabsAgentWidget({
             // right after (proven in production to arrive up to ~500ms
             // after agent_message for tool turns) sees state "displayed"
             // and never blanks it. See carson-transcript-turn-state.ts.
+            //
+            // 2026-09-01 owner canary: ElevenLabs can deliver ONE logical
+            // Carson turn as more than one "agent" onMessage event (this
+            // file's own carson-transcript-turn-state.ts already documents
+            // exactly this for tool-invoking turns). Each call here used to
+            // overwrite lastCarsonMessage outright, so only the LAST
+            // segment stayed visible even though the full multi-part answer
+            // was actually spoken — confirmed reproduced as a truncated
+            // attention-summary bubble. carsonTranscriptTurnStateRef is
+            // "displayed" only when a real segment for THIS SAME turn
+            // already showed (it resets to "pending" solely on the next
+            // genuine user turn, line ~6701) — so checking it before
+            // reducing tells us whether this is a continuation, not a new
+            // turn's first segment. When it is a continuation, merge into
+            // one combined message for both the visible bubble and the
+            // persisted transcript entry, instead of two array entries and
+            // a display that drops the earlier one.
+            const wasAlreadyDisplayedThisTurn = carsonTranscriptTurnStateRef.current === "displayed";
             carsonTranscriptTurnStateRef.current = reduceCarsonTranscriptTurn(
               carsonTranscriptTurnStateRef.current,
               { type: "agent_message", text: finalDisplayMessage },
             ).state;
-            setLastCarsonMessage(finalDisplayMessage);
+            let mergedDisplayMessage = finalDisplayMessage;
+            if (wasAlreadyDisplayedThisTurn && sessionTranscriptRef.current.length >= 2) {
+              const previousSegment = sessionTranscriptRef.current[sessionTranscriptRef.current.length - 2];
+              if (previousSegment?.role === "agent") {
+                mergedDisplayMessage = `${previousSegment.message} ${finalDisplayMessage}`;
+                sessionTranscriptRef.current.splice(sessionTranscriptRef.current.length - 2, 2, {
+                  role,
+                  message: mergedDisplayMessage,
+                });
+              }
+            }
+            setLastCarsonMessage(mergedDisplayMessage);
 
             if (requestedChannel === "text") {
               if (typedResponseTimeoutRef.current) {

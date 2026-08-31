@@ -80,9 +80,15 @@ describe("ElevenLabsAgentWidget — Carson transcript turn-state wiring", () => 
   it("the agent_message handler dispatches an 'agent_message' event through the reducer BEFORE calling setLastCarsonMessage, so a racing speaking transition can never see stale state", () => {
     const idx = SOURCE.indexOf("carsonTranscriptTurnStateRef.current = reduceCarsonTranscriptTurn(");
     expect(idx).toBeGreaterThan(-1);
-    const nearby = SOURCE.slice(idx, idx + 400);
+    // 2026-09-01 owner canary: window widened (was 400) to include the
+    // multi-segment merge logic now sitting between the reducer call and
+    // setLastCarsonMessage — see
+    // ElevenLabsAgentWidget.multi-segment-agent-message.test.ts for that
+    // logic's own dedicated coverage. The invariant this test protects
+    // (reducer runs before the display commits) is unchanged.
+    const nearby = SOURCE.slice(idx, idx + 1000);
     expect(nearby).toContain('{ type: "agent_message", text: finalDisplayMessage }');
-    const setIdx = nearby.indexOf("setLastCarsonMessage(finalDisplayMessage);");
+    const setIdx = nearby.indexOf("setLastCarsonMessage(mergedDisplayMessage);");
     const stateIdx = nearby.indexOf("carsonTranscriptTurnStateRef.current = reduceCarsonTranscriptTurn(");
     expect(setIdx).toBeGreaterThan(stateIdx);
   });
@@ -101,8 +107,9 @@ describe("ElevenLabsAgentWidget — Carson transcript turn-state wiring", () => 
     expect(resetCount).toBe(SESSION_BOUNDARY_RESET_COUNT + 1);
   });
 
-  it("the real agent_response transcript continues to flow through the existing, unmodified display pipeline (resolveAttentionGuardedMessage -> resolveSanitizedCarsonDisplayMessage -> resolveConsequentialOwnerMessage -> setLastCarsonMessage)", () => {
-    expect(SOURCE).toContain("setLastCarsonMessage(finalDisplayMessage)");
+  it("the real agent_response transcript continues to flow through the existing, unmodified display pipeline (resolveAttentionGuardedMessage -> resolveSanitizedCarsonDisplayMessage -> resolveConsequentialOwnerMessage -> multi-segment merge -> setLastCarsonMessage)", () => {
+    expect(SOURCE).toContain("setLastCarsonMessage(mergedDisplayMessage)");
+    expect(SOURCE).toContain("let mergedDisplayMessage = finalDisplayMessage;");
   });
 
   it("no boolean carsonTranscriptClearedForTurnRef remains anywhere in the file", () => {
