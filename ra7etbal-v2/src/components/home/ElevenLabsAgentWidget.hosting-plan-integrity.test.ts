@@ -175,7 +175,7 @@ describe("ElevenLabsAgentWidget — canonical consequential owner result", () =>
     expect(agentBlock).toContain("resolveConsequentialOwnerMessage(");
     expect(agentBlock).toContain("? consequentialDisplayMessage");
     expect(agentBlock.indexOf("resolveConsequentialOwnerMessage(")).toBeLessThan(
-      agentBlock.indexOf("setLastCarsonMessage(finalDisplayMessage)"),
+      agentBlock.indexOf("setLastCarsonMessage(mergedDisplayMessage)"),
     );
   });
 
