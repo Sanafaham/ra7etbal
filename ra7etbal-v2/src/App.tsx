@@ -9,6 +9,7 @@ import Auth from "./routes/Auth";
 import ConfirmRouter from "./routes/ConfirmRouter";
 import Debug from "./routes/Debug";
 import CarsonDebugOverlay from "./routes/CarsonDebug";
+import CarsonStage2ABindingOverlay from "./routes/CarsonStage2ABinding";
 import FollowUps from "./routes/FollowUps";
 import History from "./routes/History";
 import Home from "./routes/Home";
@@ -540,6 +541,12 @@ export default function App() {
             ?carsonDebug=1; returns null for all normal users. Remove with
             carson-diagnostics.ts when no longer needed. */}
         <CarsonDebugOverlay />
+
+        {/* Hidden Stage 2A binding issuance (non-production only) — self-gates
+            on /debug/carson-binding or ?carsonBinding=1; returns null for all
+            normal users. Remove with CarsonStage2ABinding.tsx when no longer
+            needed. */}
+        <CarsonStage2ABindingOverlay />
 
         <Routes>
           <Route path="/" element={<HomeRoute />} />
