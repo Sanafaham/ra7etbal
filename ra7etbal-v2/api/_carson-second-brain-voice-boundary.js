@@ -104,6 +104,43 @@ export function verifySessionBinding(token, { now = Date.now(), secret } = {}) {
 }
 
 /**
+ * Safe, secret-free breakdown of why a binding failed verification — for
+ * diagnostics only, never for authorization. Mirrors verifySessionBinding's
+ * checks but returns only booleans (never the token, the signature, the
+ * owner's JWT, or either secret) so a rejected binding can be diagnosed
+ * from server logs without ever exposing anything sensitive.
+ */
+export function diagnoseSessionBinding(token, { now = Date.now(), secret } = {}) {
+  const empty = { binding_present: false, binding_parse_ok: false, binding_signature_ok: false, binding_expired: false, owner_jwt_present: false };
+  if (typeof token !== "string" || token.length === 0) return empty;
+
+  const [encodedPayload, suppliedSignature, extra] = token.split(".");
+  if (!encodedPayload || !suppliedSignature || extra) return { ...empty, binding_present: true };
+
+  let expectedSecret;
+  try {
+    expectedSecret = secret ?? sessionSigningSecret();
+  } catch {
+    return { ...empty, binding_present: true, binding_parse_ok: true };
+  }
+  const expectedSignature = sign(encodedPayload, expectedSecret);
+  const supplied = Buffer.from(suppliedSignature);
+  const expected = Buffer.from(expectedSignature);
+  const signatureOk = supplied.length === expected.length && timingSafeEqual(supplied, expected);
+  if (!signatureOk) return { ...empty, binding_present: true, binding_parse_ok: true };
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    const nowSeconds = Math.floor(now / 1_000);
+    const expired = typeof payload?.exp === "number" ? payload.exp <= nowSeconds : true;
+    const ownerJwtPresent = typeof payload?.jwt === "string" && payload.jwt.length > 0;
+    return { binding_present: true, binding_parse_ok: true, binding_signature_ok: true, binding_expired: expired, owner_jwt_present: ownerJwtPresent };
+  } catch {
+    return { ...empty, binding_present: true, binding_parse_ok: true, binding_signature_ok: true };
+  }
+}
+
+/**
  * Authenticates the owner requesting a fresh binding via their real
  * Supabase session, and returns the verified JWT alongside the account id
  * so the binding can embed it (see createSessionBinding's doc comment).

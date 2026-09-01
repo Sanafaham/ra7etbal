@@ -10,6 +10,7 @@ import {
   getBearer,
   verifySessionBinding,
   extractVoiceBindingToken,
+  diagnoseSessionBinding,
   authenticateOwner,
   createSessionBinding,
   looksLikeVoiceBoundaryRequest,
@@ -242,12 +243,24 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
     return res.status(503).json({ error: "Provider authentication unavailable" });
   }
   if (!equalSecret(getBearer(req), expectedProviderSecret)) {
+    // Diagnostic only — never the secret or the caller-supplied value, just
+    // whether a bearer token was present at all.
+    console.warn("[carson-second-brain-voice-boundary] provider_rejected", {
+      provider_secret_present: getBearer(req).length > 0,
+    });
     return res.status(401).json({ error: "Unauthorized provider" });
   }
 
   const token = extractVoiceBindingToken(req);
   const binding = verifySessionBinding(token);
-  if (!binding) return res.status(401).json({ error: "Invalid or expired session binding" });
+  if (!binding) {
+    // Safe, secret-free breakdown (see diagnoseSessionBinding's doc
+    // comment) — the only way to tell "no binding attached at all" from
+    // "signature mismatch" from "expired" from Vercel's own logs, without
+    // ever logging the token, the JWT, or either secret.
+    console.warn("[carson-second-brain-voice-boundary] binding_rejected", diagnoseSessionBinding(token));
+    return res.status(401).json({ error: "Invalid or expired session binding" });
+  }
 
   const transcript = extractLatestUserMessage(req.body?.messages).trim();
   if (!transcript) return res.status(400).json({ error: "No authoritative owner turn" });

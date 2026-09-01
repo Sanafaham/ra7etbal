@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import {
   createSessionBinding,
   verifySessionBinding,
+  diagnoseSessionBinding,
   providerSecret,
   equalSecret,
   getBearer,
@@ -187,5 +188,66 @@ describe("streamOwnerResultAsChatCompletion — relays the exact grounded text, 
     const res = mockRes();
     streamOwnerResultAsChatCompletion(res, { completionId: "c1", text: "x" });
     expect(res.headers["Content-Type"]).toContain("text/event-stream");
+  });
+});
+
+describe("diagnoseSessionBinding — safe, secret-free 401 diagnostics", () => {
+  it("reports absent when no token is supplied", () => {
+    expect(diagnoseSessionBinding(undefined)).toEqual({
+      binding_present: false,
+      binding_parse_ok: false,
+      binding_signature_ok: false,
+      binding_expired: false,
+      owner_jwt_present: false,
+    });
+  });
+
+  it("reports present-but-unparseable for a malformed token", () => {
+    const result = diagnoseSessionBinding("not-a-real-token");
+    expect(result.binding_present).toBe(true);
+    expect(result.binding_parse_ok).toBe(false);
+  });
+
+  it("reports parse-ok but signature-mismatch for a token signed with a different secret", () => {
+    configure();
+    const { token } = createSessionBinding({ accountId: "owner-1", jwt: "owner-jwt" }, "a-completely-different-secret-32b!!");
+    const result = diagnoseSessionBinding(token, { secret: TEST_SESSION_SECRET });
+    expect(result.binding_present).toBe(true);
+    expect(result.binding_parse_ok).toBe(true);
+    expect(result.binding_signature_ok).toBe(false);
+  });
+
+  it("reports a valid, unexpired binding as fully ok with owner_jwt_present true", () => {
+    configure();
+    const { token } = createSessionBinding({ accountId: "owner-1", jwt: "owner-jwt" }, TEST_SESSION_SECRET);
+    const result = diagnoseSessionBinding(token, { secret: TEST_SESSION_SECRET });
+    expect(result).toEqual({
+      binding_present: true,
+      binding_parse_ok: true,
+      binding_signature_ok: true,
+      binding_expired: false,
+      owner_jwt_present: true,
+    });
+  });
+
+  it("reports an expired binding as such even though its signature is valid", () => {
+    configure();
+    const { token } = createSessionBinding(
+      { accountId: "owner-1", jwt: "owner-jwt", now: Date.now() - 20 * 60 * 1000 },
+      TEST_SESSION_SECRET,
+    );
+    const result = diagnoseSessionBinding(token, { secret: TEST_SESSION_SECRET });
+    expect(result.binding_signature_ok).toBe(true);
+    expect(result.binding_expired).toBe(true);
+  });
+
+  it("never includes the token, the JWT, or either secret in its output", () => {
+    configure();
+    const { token } = createSessionBinding({ accountId: "owner-1", jwt: "super-secret-owner-jwt" }, TEST_SESSION_SECRET);
+    const result = diagnoseSessionBinding(token, { secret: TEST_SESSION_SECRET });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain("super-secret-owner-jwt");
+    expect(serialized).not.toContain(TEST_SESSION_SECRET);
   });
 });

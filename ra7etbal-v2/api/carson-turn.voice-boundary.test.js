@@ -145,6 +145,48 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
     expect(response.chunks.join("")).not.toMatch(/undefined|\[object Object\]/);
   });
 
+  it("logs a safe, secret-free diagnostic when the provider secret is wrong (C-03 live-gate 401 tracing)", async () => {
+    configure();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handler = createCarsonTurnHandler({ dedupStore: new Map() });
+    await handler(voiceReq({ authorization: "Bearer wrong" }), res());
+    expect(warn).toHaveBeenCalledWith(
+      "[carson-second-brain-voice-boundary] provider_rejected",
+      expect.objectContaining({ provider_secret_present: true }),
+    );
+    const serialized = JSON.stringify(warn.mock.calls);
+    expect(serialized).not.toContain(TEST_PROVIDER_SECRET);
+    expect(serialized).not.toContain("wrong");
+  });
+
+  it("logs a safe, secret-free binding diagnostic when the binding is missing/invalid/expired (C-03 live-gate 401 tracing)", async () => {
+    configure();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const handler = createCarsonTurnHandler({ dedupStore: new Map() });
+
+    await handler(voiceReq({}), res()); // no binding at all
+    expect(warn).toHaveBeenCalledWith(
+      "[carson-second-brain-voice-boundary] binding_rejected",
+      expect.objectContaining({ binding_present: false }),
+    );
+
+    warn.mockClear();
+    const expired = createSessionBinding({
+      accountId: "owner-1",
+      jwt: "super-secret-expired-owner-jwt",
+      now: Date.now() - 20 * 60 * 1000,
+    });
+    await handler(voiceReq({ bindingHeader: expired.token }), res());
+    expect(warn).toHaveBeenCalledWith(
+      "[carson-second-brain-voice-boundary] binding_rejected",
+      expect.objectContaining({ binding_present: true, binding_signature_ok: true, binding_expired: true }),
+    );
+    const serialized = JSON.stringify(warn.mock.calls);
+    expect(serialized).not.toContain(expired.token);
+    expect(serialized).not.toContain("super-secret-expired-owner-jwt");
+    expect(serialized).not.toContain(TEST_SESSION_SECRET);
+  });
+
   it("the existing typed-browser request shape is completely unaffected (no messages array, has transcript) — routes to the unchanged typed path, not the voice boundary", async () => {
     configure();
     const authenticate = vi.fn().mockResolvedValue("account-a");
