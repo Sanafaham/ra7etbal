@@ -1252,7 +1252,10 @@
         "shared/carson-attention-summary.js:renderAttentionDecision defer_timing branch (2026-08-29 addition — deterministic overdue/not-yet-due/no-due-date classification from each item's own dueAt, never from category membership or model judgment)",
         "api/_carson-attention-reasoning.js:RESPONSE_INTENTS defer_timing (2026-08-29 addition — new recognized intent for deferral-shaped questions; the model only identifies which items are relevant via selectedEvidenceIds, never which are overdue/safe to defer)",
         "api/carson-turn.js:CARSON_OPENAI_AGENT_ATTENTION_V1 flag selection (2026-08-30 addition — OWNER DECISION after repeated real-production canary failures of the Stage 1/2 design above; when set to '1', an admitted attention_summary_read turn is answered by api/_carson-attention-agent.js's createAttentionAgentCoordinator, an @openai/agents-based agent loop, instead of createAttentionReadCoordinator/reasonOverOperationalEvidenceWithClaude; when unset (default), this coordinator's existing Stage 1/2 behavior above is completely unchanged — the flag only changes WHICH coordinator answers an already-admitted turn, never the admission/routing logic itself)",
-        "api/_carson-attention-agent.js:createAttentionAgentCoordinator / get_ra7etbal_attention_state tool / describeEvidenceForAgent (2026-08-30 addition, new file — see attention_summary_read's own entry for the fuller rationale)"
+        "api/_carson-attention-agent.js:createAttentionAgentCoordinator / get_ra7etbal_attention_state tool / describeEvidenceForAgent (2026-08-30 addition, new file — see attention_summary_read's own entry for the fuller rationale)",
+        "api/carson-turn.js:coordinateOwnerTurn (2026-09-01 addition — Second Brain Slice 2 owner decision: the existing admission/routing logic above was extracted into this exported function unchanged, so the new ElevenLabs voice-boundary path below reuses the identical coordination as the typed path, rather than a second implementation that could diverge; the 35 pre-existing typed-path tests were run unchanged after the extraction to confirm zero behavior change)",
+        "api/_carson-second-brain-voice-boundary.js (2026-09-01 addition, new file — provider-secret + short-lived HMAC-signed owner-binding authentication for the ElevenLabs Custom LLM voice boundary; the binding embeds a snapshot of the owner's own Supabase JWT specifically so the existing RLS-scoped fetchAttentionEvidenceThroughServerPath/readCalendarThroughExistingHandler above are reused completely unchanged, never the service-role key. Fresh implementation and fresh env var names CARSON_SECOND_BRAIN_PROVIDER_SECRET/CARSON_SECOND_BRAIN_SESSION_SECRET, not a revival of the parked Stage2A/C-03 branch. Unset env vars fail closed with a 503; the new voice-boundary request shape, an OpenAI-style messages array with no typed transcript field, matches nothing any current caller sends, so this addition is fully inert in production until a non-production ElevenLabs agent is actually configured to call it)",
+        "api/carson-turn.js:handleVoiceBoundaryRequest / looksLikeVoiceBoundaryRequest branch (2026-09-01 addition — routes an ElevenLabs-shaped request to the voice-boundary auth+streaming path ahead of the existing owner-JWT authenticate call; the existing typed-browser branch below it is untouched)"
       ],
       "shared_dependencies": [
         "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
@@ -1277,7 +1280,9 @@
         "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts",
         "api/_carson-attention-reasoning.test.js",
         "src/components/home/ElevenLabsAgentWidget.typed-attention-reasoning.test.ts",
-        "src/lib/carson-daily-brief-shared-parity.test.ts"
+        "src/lib/carson-daily-brief-shared-parity.test.ts",
+        "api/_carson-second-brain-voice-boundary.test.js",
+        "api/carson-turn.voice-boundary.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -1286,7 +1291,7 @@
       ],
       "db_contract_tests": [],
       "production_canary_required": false,
-      "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback",
+      "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback. The 2026-09-01 voice-boundary addition is equally low risk today: unset env vars fail closed, and no caller (production or otherwise) currently sends the new request shape, so reverting has zero behavioral effect on anything running.",
       "verification_status": "Stage 1 code-only proof registered 2026-08-19. Its highest test exercises the composed API boundary through the real Supabase-authentication code, strict Claude intent code, Calendar adapter, and real existing googleCalendarHandler, with only external Supabase/Anthropic/Google HTTP responses mocked. The Calendar adapter supplies the real GET path's status/json/setHeader response contract. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
       "unresolved": [
         "The live ElevenLabs widget was not wired to this route in Stage 1 (calendar_read only). As of 2026-08-28, the TYPED channel is wired for attention_summary_read only (ElevenLabsAgentWidget.tsx sendTypedMessage) — voice and calendar_read both remain on their pre-existing paths, unchanged.",
