@@ -1255,7 +1255,9 @@
         "api/_carson-attention-agent.js:createAttentionAgentCoordinator / get_ra7etbal_attention_state tool / describeEvidenceForAgent (2026-08-30 addition, new file — see attention_summary_read's own entry for the fuller rationale)",
         "api/carson-turn.js:coordinateOwnerTurn (2026-09-01 addition — Second Brain Slice 2 owner decision: the existing admission/routing logic above was extracted into this exported function unchanged, so the new ElevenLabs voice-boundary path below reuses the identical coordination as the typed path, rather than a second implementation that could diverge; the 35 pre-existing typed-path tests were run unchanged after the extraction to confirm zero behavior change)",
         "api/_carson-second-brain-voice-boundary.js (2026-09-01 addition, new file — provider-secret + short-lived HMAC-signed owner-binding authentication for the ElevenLabs Custom LLM voice boundary; the binding embeds a snapshot of the owner's own Supabase JWT specifically so the existing RLS-scoped fetchAttentionEvidenceThroughServerPath/readCalendarThroughExistingHandler above are reused completely unchanged, never the service-role key. Fresh implementation and fresh env var names CARSON_SECOND_BRAIN_PROVIDER_SECRET/CARSON_SECOND_BRAIN_SESSION_SECRET, not a revival of the parked Stage2A/C-03 branch. Unset env vars fail closed with a 503; the new voice-boundary request shape, an OpenAI-style messages array with no typed transcript field, matches nothing any current caller sends, so this addition is fully inert in production until a non-production ElevenLabs agent is actually configured to call it)",
-        "api/carson-turn.js:handleVoiceBoundaryRequest / looksLikeVoiceBoundaryRequest branch (2026-09-01 addition — routes an ElevenLabs-shaped request to the voice-boundary auth+streaming path ahead of the existing owner-JWT authenticate call; the existing typed-browser branch below it is untouched)"
+        "api/carson-turn.js:handleVoiceBoundaryRequest / looksLikeVoiceBoundaryRequest branch (2026-09-01 addition — routes an ElevenLabs-shaped request to the voice-boundary auth+streaming path ahead of the existing owner-JWT authenticate call; the existing typed-browser branch below it is untouched)",
+        "src/lib/carson-second-brain-voice-binding.ts (2026-09-01 addition, new file — client-side counterpart to api/_carson-second-brain-voice-boundary.js: fetches a fresh owner-authenticated binding automatically using the signed-in session already held by the browser, never persisted, never logged)",
+        "src/components/home/ElevenLabsAgentWidget.tsx:secondBrainVoiceEnabled gate (2026-09-01 addition — automatic voice-boundary binding injection at the one existing Conversation.startSession call, gated by VITE_ENABLE_CARSON_SECOND_BRAIN_VOICE, off everywhere by default including Production Carson; fails closed if a binding cannot be issued while the gate is on)"
       ],
       "shared_dependencies": [
         "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
@@ -1282,7 +1284,9 @@
         "src/components/home/ElevenLabsAgentWidget.typed-attention-reasoning.test.ts",
         "src/lib/carson-daily-brief-shared-parity.test.ts",
         "api/_carson-second-brain-voice-boundary.test.js",
-        "api/carson-turn.voice-boundary.test.js"
+        "api/carson-turn.voice-boundary.test.js",
+        "src/lib/carson-second-brain-voice-binding.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.second-brain-voice-binding.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
