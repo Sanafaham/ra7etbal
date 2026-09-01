@@ -90,6 +90,20 @@ describe("provider secret", () => {
     expect(getBearer({ headers: {} })).toBe("");
     expect(getBearer({ headers: { authorization: "Basic abc" } })).toBe("");
   });
+
+  it("getBearer trims incidental leading/trailing whitespace so a stray paste artifact never causes a false rejection", () => {
+    expect(getBearer({ headers: { authorization: "Bearer abc\n" } })).toBe("abc");
+    expect(getBearer({ headers: { authorization: "Bearer abc " } })).toBe("abc");
+    expect(getBearer({ headers: { authorization: "Bearer  abc\r\n" } })).toBe("abc");
+  });
+
+  it("a provider secret with an incidental trailing newline in the dashboard still authenticates correctly", () => {
+    const expected = "provider-secret-for-tests-only-32bytes!!";
+    // Simulates a dashboard secret field that stored the pasted value with a
+    // trailing newline the person pasting never saw.
+    const supplied = getBearer({ headers: { authorization: `Bearer ${expected}\n` } });
+    expect(equalSecret(supplied, expected)).toBe(true);
+  });
 });
 
 describe("extractVoiceBindingToken — deterministic transport precedence", () => {
