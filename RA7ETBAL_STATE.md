@@ -302,6 +302,27 @@ Fix (`ElevenLabsAgentWidget.tsx`, one call site): before reducing, check whether
 
 **Rollback:** revert the single `ElevenLabsAgentWidget.tsx` hunk; `setLastCarsonMessage(finalDisplayMessage)` and the prior overwrite behavior return exactly as before, no other file affected.
 
+**2026-09-01 — Second Brain Slice 2 begun: owner decision to authorize a fresh Custom LLM voice-transport boundary, narrowly superseding the 2026-08-28 "no Stage2A/2B restart" rule for this one purpose.**
+
+Owner rationale (real production evidence, not speculative): ElevenLabs' own documentation, checked directly this session, confirms there is no platform mechanism to force verbatim relay of a tool's return value into speech, and no forced-tool-choice mechanism, when using ElevenLabs' hosted LLM — the docs' own guidance for exactly this need is "consult ElevenLabs support or explore custom LLM integrations." Voice's tool-selection/wording is therefore structurally outside any code control until a Custom LLM boundary exists. The owner explicitly authorized building one — a fresh implementation, not a revival of the parked Stage2A/C-03 branch (that branch remains parked, untouched, per [[carson_c03_stage2a_parked_2026_09_01]]).
+
+**First increment (this entry) — server-side boundary only, inert everywhere by default, not yet reachable by any real conversation:**
+
+- `api/_carson-second-brain-voice-boundary.js` (new): provider-secret auth, a short-lived HMAC-signed owner binding that embeds a snapshot of the owner's own Supabase JWT (not just an account id — this is what lets it reuse the existing RLS-scoped evidence-fetch functions unchanged, since those authorize every read with the caller's own verified JWT, never the service-role key), OpenAI-wire-protocol SSE relay of an already-final ownerResult (never a second generation).
+- `api/carson-turn.js` (extended, not replaced): the existing admission/routing logic (attention-intent fast path → Stage 1 classification → coordinateAttention/coordinateCalendar) was extracted into an exported `coordinateOwnerTurn()` so BOTH the existing typed-browser path and the new voice-boundary path run through the identical coordination — proven by 35 pre-existing typed-path tests passing unchanged after the extraction. Two new branches added ahead of the existing owner-JWT authentication: `action: "issue_second_brain_voice_binding"` (owner-authenticated binding issuance) and voice-boundary request detection (an OpenAI-style `messages` array with no typed `transcript` field — a shape no existing caller produces today, so this is provably inert for all current production traffic).
+- `vercel.json`: `/chat/completions` → `/api/carson-turn`, ahead of the SPA catch-all (this route did not exist before — nothing currently calls it).
+- `CARSON_SECOND_BRAIN_PROVIDER_SECRET` / `CARSON_SECOND_BRAIN_SESSION_SECRET` (fresh env var names, distinct from the parked branch's `CARSON_STAGE2A_*` names) — unset everywhere; the voice-boundary branch fails closed (503) without them, so this ships fully inert.
+
+**Explicitly NOT done yet, tracked as the next steps, not silently claimed complete:**
+1. `ElevenLabsAgentWidget.tsx` does not yet fetch a binding or attach it via `customLlmExtraBody` — no real conversation can reach this boundary yet.
+2. No non-production ElevenLabs agent or isolated Vercel deployment has been configured to call `/chat/completions` — that requires an infra/product decision (which project/agent) before isolated verification can start.
+3. No `carson-protected-registry.json` entry yet for this capability.
+4. Multi-action plan object, non-attention domains, and full exact-output contract generalization (per the bounded Slice 2 plan) are deliberately out of scope for this first increment.
+
+**Tests:** `api/_carson-second-brain-voice-boundary.test.js` (21 tests — binding create/verify/expiry/tamper, provider secret, transport precedence, request-shape detection, SSE shape), `api/carson-turn.voice-boundary.test.js` (10 tests — provider/binding auth fail-closed paths, successful routing reuses the real RLS-scoped evidence fetch with the embedded JWT, never echoes the binding/JWT in the response, the existing typed shape is unaffected, vercel.json rewrite ordering, binding issuance requires the owner's real session). Full `test:carson-protected`: 117 files / 2194 tests passed, 0 regressions (this run also incidentally fixed a pre-existing local dev-environment gap — `@openai/agents` was declared in `package.json` but not installed in this worktree; installing it is what let `api/_carson-attention-agent.test.js`/`api/carson-turn.test.js` run at all, unrelated to this change's own correctness). TypeScript and production build clean.
+
+**Rollback:** revert this commit; the new branches never activate today regardless (no env vars set, no caller uses the new route), so rollback has zero behavioral effect on anything currently running.
+
 **Rollback:** two independent levers — revert the code diff (additive-only; no existing clientTool, query, or shared classifier modified), or remove the ElevenLabs tool registration alone once made (no redeploy required, no code change).
 
 **Not touched, per explicit scope:** WhatsApp, staff messaging, delegation execution, reminder execution, automation execution, calendar execution, `carson-material-items.ts`, Night Sweep internals, Supabase schema/migrations, any existing clientTool, Stage 2A/2B, RAG, pgvector, MCP, external agents, model routing, context-builder consolidation, ElevenLabs system prompt.

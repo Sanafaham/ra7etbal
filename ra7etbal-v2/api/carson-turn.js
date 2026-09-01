@@ -4,6 +4,18 @@ import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js"
 import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
 import { createAttentionAgentCoordinator } from "./_carson-attention-agent.js";
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
+import {
+  providerSecret,
+  equalSecret,
+  getBearer,
+  verifySessionBinding,
+  extractVoiceBindingToken,
+  authenticateOwner,
+  createSessionBinding,
+  looksLikeVoiceBoundaryRequest,
+  extractLatestUserMessage,
+  streamOwnerResultAsChatCompletion,
+} from "./_carson-second-brain-voice-boundary.js";
 
 const MAX_DEDUP_ENTRIES = 200;
 const completedTurns = new Map();
@@ -156,6 +168,118 @@ function remember(store, key, value) {
   if (store === completedTurns && store.size > MAX_DEDUP_ENTRIES) store.delete(store.keys().next().value);
 }
 
+/**
+ * Admission (2026-08-28, structured Second Brain admission correction),
+ * extracted (2026-09-01, Second Brain Slice 2 voice boundary) so BOTH the
+ * existing typed-browser path and the new ElevenLabs voice-boundary path
+ * (createCarsonTurnHandler below) run through the identical
+ * attention/calendar routing decision — one coordination path, not two
+ * that could silently diverge on the same input:
+ *
+ * 1. Deterministic known-phrase fast path + active grounded operational
+ *    continuation — unchanged, zero model cost, handled entirely inside
+ *    coordinateAttention's own admission check.
+ * 2. Otherwise, ONE coarse Stage 1 semantic classification (transcript
+ *    only, no tenant data, no evidence) decides whether this novel
+ *    message is a natural-language operational-state question. This is
+ *    what lets a fresh-session question like "Anything overdue?" reach
+ *    the reasoning layer without ever needing a phrase-specific regex.
+ * 3. Exactly ONE coordinator runs per turn — the attention/operational
+ *    path when Stage 1 (or a fast path) admits it, otherwise the
+ *    existing, entirely unchanged calendar coordinator (which performs
+ *    its own classification exactly as it always has). This single-path
+ *    routing is also what makes the composition ambiguity fixed in
+ *    PR #363 impossible to reintroduce — no two coordinators are ever
+ *    both invoked for the same turn, so there is nothing left to
+ *    silently overwrite.
+ */
+export async function coordinateOwnerTurn(ownerTurn, { coordinateAttention, coordinateCalendar, classifyOperationalIntent }) {
+  const isDirectAttentionIntent = matchesAttentionIntent(ownerTurn.transcript);
+  const hasActiveGroundedAttentionContext =
+    ownerTurn.previousCapability === ATTENTION_CAPABILITY && ownerTurn.previousGroundingStatus === "grounded";
+
+  if (isDirectAttentionIntent || hasActiveGroundedAttentionContext) {
+    const attentionResult = await coordinateAttention(ownerTurn);
+    if (attentionResult.handled) return attentionResult;
+    const calendarResult = await coordinateCalendar(ownerTurn);
+    if (calendarResult.handled) return calendarResult;
+    if (attentionResult.code === "not_attention" && calendarResult.code === "unsupported_intent") {
+      return attentionResult;
+    }
+    return calendarResult;
+  }
+
+  let stage1Classification;
+  try {
+    stage1Classification = await classifyOperationalIntent(ownerTurn.transcript);
+  } catch {
+    stage1Classification = "not_operational";
+  }
+
+  if (stage1Classification === "operational_state_read") {
+    return coordinateAttention({ ...ownerTurn, stage1Admitted: true });
+  }
+
+  return coordinateCalendar(ownerTurn);
+}
+
+/**
+ * Second Brain Slice 2 — the ElevenLabs Custom LLM voice-boundary branch.
+ * Provider secret + owner binding replace the typed path's direct owner
+ * JWT (ElevenLabs calls this endpoint server-to-server, not the browser),
+ * but from coordinateOwnerTurn onward this reuses the EXACT SAME
+ * coordinators (and therefore the exact same evidence, classification, and
+ * grounding guarantees) as typed Carson. The result is streamed back as
+ * one OpenAI-compatible chat-completion turn — never a second, independent
+ * generation — so what ElevenLabs speaks IS the grounded ownerResult, not
+ * ElevenLabs' own hosted model's paraphrase of it.
+ */
+async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coordinateCalendar, classifyOperationalIntent }) {
+  let expectedProviderSecret;
+  try {
+    expectedProviderSecret = providerSecret();
+  } catch {
+    return res.status(503).json({ error: "Provider authentication unavailable" });
+  }
+  if (!equalSecret(getBearer(req), expectedProviderSecret)) {
+    return res.status(401).json({ error: "Unauthorized provider" });
+  }
+
+  const token = extractVoiceBindingToken(req);
+  const binding = verifySessionBinding(token);
+  if (!binding) return res.status(401).json({ error: "Invalid or expired session binding" });
+
+  const transcript = extractLatestUserMessage(req.body?.messages).trim();
+  if (!transcript) return res.status(400).json({ error: "No authoritative owner turn" });
+
+  const ownerTurn = {
+    accountId: binding.sub,
+    authorization: `Bearer ${binding.jwt}`,
+    providerEventId: "",
+    turnId: binding.sid,
+    transcript,
+    legacyClaimed: false,
+    previousCapability: null,
+    previousGroundingStatus: null,
+    previouslySurfacedEvidenceIds: [],
+    priorObjective: null,
+  };
+
+  let result;
+  try {
+    result = await coordinateOwnerTurn(ownerTurn, { coordinateAttention, coordinateCalendar, classifyOperationalIntent });
+  } catch {
+    return res.status(502).json({ error: "Turn coordination failed" });
+  }
+  const completionId = `sb_${binding.sid}_${Date.now()}`;
+  // Never the raw result JSON — only its ownerResult text is spoken. Binding
+  // token, JWT, and account id never appear in the response.
+  return streamOwnerResultAsChatCompletion(res, {
+    completionId,
+    text: result?.ownerResult ?? "I couldn't confirm that. Please try again.",
+  });
+}
+
 export function createCarsonTurnHandler({
   authenticate = requireUser,
   interpretIntent = interpretReadIntentWithClaude,
@@ -191,6 +315,27 @@ export function createCarsonTurnHandler({
         });
   return async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+    // Second Brain Slice 2 — owner-authenticated binding issuance for the
+    // ElevenLabs voice boundary. Reuses the caller's real Supabase session
+    // (same trust model as the rest of this file's typed path); never
+    // issues a binding without it.
+    if (req.body?.action === "issue_second_brain_voice_binding") {
+      const owner = await authenticateOwner(req);
+      if (!owner) return res.status(401).json({ error: "Unauthorized" });
+      const { token, payload } = createSessionBinding(owner);
+      return res.status(200).json({ binding: token, sessionId: payload.sid, expiresAt: payload.exp });
+    }
+
+    // Second Brain Slice 2 — ElevenLabs Custom LLM calls this endpoint
+    // server-to-server (provider secret + owner binding), never with the
+    // owner's own JWT the typed path below expects. Detected by request
+    // shape alone (an OpenAI-style messages array, no typed transcript
+    // field) so the existing typed path is completely untouched.
+    if (looksLikeVoiceBoundaryRequest(req)) {
+      return handleVoiceBoundaryRequest(req, res, { coordinateAttention, coordinateCalendar, classifyOperationalIntent });
+    }
+
     const accountId = await authenticate(req);
     if (!accountId) return res.status(401).json({ handled: true, code: "unauthorized", ownerResult: "Please sign in again before I read your calendar." });
 
@@ -235,63 +380,9 @@ export function createCarsonTurnHandler({
       // api/_carson-attention-agent.js's file-level doc comment.
     };
 
-    // Admission (2026-08-28, structured Second Brain admission correction):
-    //
-    // 1. Deterministic known-phrase fast path + active grounded operational
-    //    continuation — unchanged, zero model cost, handled entirely inside
-    //    coordinateAttention's own admission check.
-    // 2. Otherwise, ONE coarse Stage 1 semantic classification (transcript
-    //    only, no tenant data, no evidence) decides whether this novel
-    //    message is a natural-language operational-state question. This is
-    //    what lets a fresh-session question like "Anything overdue?" reach
-    //    the reasoning layer without ever needing a phrase-specific regex.
-    // 3. Exactly ONE coordinator runs per turn — the attention/operational
-    //    path when Stage 1 (or a fast path) admits it, otherwise the
-    //    existing, entirely unchanged calendar coordinator (which performs
-    //    its own classification exactly as it always has). This single-path
-    //    routing is also what makes the composition ambiguity fixed in
-    //    PR #363 impossible to reintroduce — no two coordinators are ever
-    //    both invoked for the same turn, so there is nothing left to
-    //    silently overwrite.
-    const pendingResult = (async () => {
-      const isDirectAttentionIntent = matchesAttentionIntent(ownerTurn.transcript);
-      const hasActiveGroundedAttentionContext =
-        ownerTurn.previousCapability === ATTENTION_CAPABILITY && ownerTurn.previousGroundingStatus === "grounded";
-
-      if (isDirectAttentionIntent || hasActiveGroundedAttentionContext) {
-        const attentionResult = await coordinateAttention(ownerTurn);
-        if (attentionResult.handled) return attentionResult;
-        // Fast-path admission (a regex match or "prior turn was grounded")
-        // doesn't itself rule out a genuine calendar question — still try
-        // calendar, and preserve not_attention distinctly when calendar
-        // also finds nothing (PR #363 fix, unchanged for this branch).
-        const calendarResult = await coordinateCalendar(ownerTurn);
-        if (calendarResult.handled) return calendarResult;
-        if (attentionResult.code === "not_attention" && calendarResult.code === "unsupported_intent") {
-          return attentionResult;
-        }
-        return calendarResult;
-      }
-
-      let stage1Classification;
-      try {
-        stage1Classification = await classifyOperationalIntent(ownerTurn.transcript);
-      } catch {
-        // Fail closed to "not operational" — falls through to the existing
-        // calendar/unsupported handling below, never a free-form answer.
-        stage1Classification = "not_operational";
-      }
-
-      if (stage1Classification === "operational_state_read") {
-        // Stage 1 already ruled out calendar for this turn (its own coarse
-        // classification is exhaustive: operational vs. not) — no retry
-        // needed; a not_attention result here goes straight to the normal
-        // typed fall-through, since exactly one coordinator ever ran.
-        return coordinateAttention({ ...ownerTurn, stage1Admitted: true });
-      }
-
-      return coordinateCalendar(ownerTurn);
-    })();
+    // Admission logic lives in coordinateOwnerTurn (above) — unchanged
+    // behavior, now shared with the voice boundary branch above.
+    const pendingResult = coordinateOwnerTurn(ownerTurn, { coordinateAttention, coordinateCalendar, classifyOperationalIntent });
 
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);
     const result = await pendingResult;
