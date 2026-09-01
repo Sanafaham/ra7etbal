@@ -162,7 +162,14 @@ export async function authenticateOwner(req) {
 
 export function getBearer(req) {
   const value = req.headers?.authorization ?? req.headers?.Authorization ?? "";
-  return value.startsWith("Bearer ") ? value.slice(7) : "";
+  // Trimmed: some dashboard secret-entry fields (e.g. ElevenLabs') can carry
+  // an incidental trailing newline/space from a paste without it being
+  // visible to the person who pasted it. equalSecret is exact-byte-length,
+  // so a single stray whitespace character would silently reject an
+  // otherwise-correct secret on every request, indistinguishable from a
+  // genuinely wrong value. Trimming costs nothing security-wise — the
+  // attacker still needs the real secret — and removes that failure mode.
+  return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
 }
 
 export function equalSecret(actual, expected) {
