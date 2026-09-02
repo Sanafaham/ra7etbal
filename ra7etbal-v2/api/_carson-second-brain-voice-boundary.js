@@ -209,18 +209,48 @@ export function looksLikeVoiceBoundaryRequest(req) {
   return Array.isArray(req.body?.messages) && typeof req.body?.transcript !== "string";
 }
 
+function userMessageText(message) {
+  return typeof message.content === "string"
+    ? message.content
+    : Array.isArray(message.content)
+      ? message.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join(" ")
+      : "";
+}
+
 /** Extracts the latest user-role message text from an OpenAI-shaped messages array. */
 export function extractLatestUserMessage(messages) {
   if (!Array.isArray(messages)) return "";
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== "user") continue;
-    const content = typeof message.content === "string"
-      ? message.content
-      : Array.isArray(message.content)
-        ? message.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join(" ")
-        : "";
-    return content.trim();
+    return userMessageText(message).trim();
+  }
+  return "";
+}
+
+/**
+ * Extracts the user-role message text immediately BEFORE the current/latest
+ * one — i.e. what the owner said last turn. The voice boundary is
+ * stateless (every /chat/completions call is a fresh HTTP request with no
+ * session store), but ElevenLabs replays the full conversation so far in
+ * `messages` on every call, exactly like any OpenAI-compatible Custom LLM
+ * integration — this is the only channel available to reconstruct
+ * conversational state, and it's used structurally (which prior USER
+ * utterance occurred, checked with the same deterministic classifier
+ * already trusted elsewhere), never by parsing the assistant's own spoken
+ * prose as if it were verified fact.
+ */
+export function extractPreviousUserMessage(messages) {
+  if (!Array.isArray(messages)) return "";
+  let seenLatest = false;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user") continue;
+    if (!seenLatest) {
+      seenLatest = true;
+      continue;
+    }
+    return userMessageText(message).trim();
   }
   return "";
 }
