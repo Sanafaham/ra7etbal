@@ -6757,10 +6757,30 @@ export default function ElevenLabsAgentWidget({
             // fetch now so a grounded result is ready in case the model answers
             // this turn without actually calling the tool. Never blocks or
             // delays the reply — see carson-attention-intent-guard.ts.
+            //
+            // Gated off entirely when secondBrainVoiceEnabled: this guard's
+            // whole purpose is to correct/replace an ElevenLabs-hosted-model
+            // reply that can fabricate or omit attention facts — a failure
+            // mode that structurally cannot occur for a Second Brain turn,
+            // since the server already composed the ONE canonical, grounded
+            // answer with no second generation. Leaving this guard active for
+            // that flow meant it would still fire on the SAME raw utterance,
+            // racing its own separate client-side re-fetch against the
+            // server's already-correct (and already-spoken) answer, and on
+            // the losing side of that race either silently discarding it for
+            // its own fixed "grounding unavailable" fallback, or replacing it
+            // with an independently-fetched, independently-rendered second
+            // opinion — the exact competing-response-owner defect traced live
+            // (2026-09-02): a real "What needs my attention?" / "What about
+            // the things I'm waiting on?" exchange showed the server's
+            // correct, filtered answer either repeated or replaced by this
+            // guard. The Second Brain server is the single owner of the turn
+            // for this flow; this legacy guard is not needed and must not
+            // compete with it.
             const isAttentionFollowUpTurn =
               matchesAttentionFollowUp(message) && lastTurnWasAttentionIntentRef.current;
             attentionIntentForCurrentTranscriptRef.current =
-              matchesAttentionIntent(message) || isAttentionFollowUpTurn;
+              !secondBrainVoiceEnabled && (matchesAttentionIntent(message) || isAttentionFollowUpTurn);
             if (attentionIntentForCurrentTranscriptRef.current) {
               const requestGeneration = sessionGenerationRef.current;
               // Turn-scoped, not just session-scoped: sessionGenerationRef only
