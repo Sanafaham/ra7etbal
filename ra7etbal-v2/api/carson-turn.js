@@ -268,7 +268,19 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
   const ownerTurn = {
     accountId: binding.sub,
     authorization: `Bearer ${binding.jwt}`,
-    providerEventId: "",
+    // Non-empty placeholder, not a real dedup key: the voice boundary never
+    // uses the typed path's dedupStore (see createCarsonTurnHandler below —
+    // dedup only runs in the typed branch), so this value is never read for
+    // dedup purposes. It exists only so it satisfies
+    // createReadOnlyTurnCoordinator's `!ownerTurn?.providerEventId` guard,
+    // which was written for the typed path where a missing dedup key is a
+    // genuine malformed-request signal. An empty string ("") previously sent
+    // here is falsy in that guard exactly like undefined, so EVERY voice
+    // turn that reached coordinateCalendar (i.e. anything not a direct
+    // attention match) was rejected with invalid_owner_turn before intent
+    // classification ever ran — this broke calendar-via-voice, not just
+    // ordinary conversation.
+    providerEventId: `voice_${binding.sid}`,
     turnId: binding.sid,
     transcript,
     legacyClaimed: false,
@@ -285,12 +297,21 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
     return res.status(502).json({ error: "Turn coordination failed" });
   }
   const completionId = `sb_${binding.sid}_${Date.now()}`;
-  // Never the raw result JSON — only its ownerResult text is spoken. Binding
-  // token, JWT, and account id never appear in the response.
-  return streamOwnerResultAsChatCompletion(res, {
-    completionId,
-    text: result?.ownerResult ?? "I couldn't confirm that. Please try again.",
-  });
+  // result.handled is false only when neither coordinator claimed the turn
+  // as operational (coordinateAttention's "not_attention" plus
+  // coordinateCalendar's "unsupported_intent" — see coordinateOwnerTurn
+  // above): genuinely ordinary conversation ("Hello", "Thanks", "How are
+  // you?"), not a grounding failure. Every handled:true path already
+  // carries its own truthful ownerResult (including honest failure text
+  // when a real operational check couldn't complete) — this natural
+  // fallback is reached only for turns no operational coordinator was ever
+  // asked to ground, so it must never be worded as an operational failure.
+  // Never the raw result JSON — only ownerResult/this fallback text is
+  // spoken. Binding token, JWT, and account id never appear in the response.
+  const text = result?.handled
+    ? (result.ownerResult ?? "I couldn't confirm that. Please try again.")
+    : "Hi! What can I help with?";
+  return streamOwnerResultAsChatCompletion(res, { completionId, text });
 }
 
 export function createCarsonTurnHandler({
