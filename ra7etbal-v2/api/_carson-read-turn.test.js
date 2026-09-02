@@ -249,7 +249,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
   };
   const GROUNDED_RESULT = { evidence: SAMPLE_EVIDENCE, text: "Needs your attention: call the dentist; pay the electricity bill." };
   const FALLBACK_RENDER =
-    "Nothing needs your direct decision right now. You do have 1 overdue reminder and 1 upcoming reminder and 1 thing you're waiting on.";
+    "I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.";
   const activeContext = {
     accountId: "account-a",
     authorization: "Bearer session-a",
@@ -768,7 +768,7 @@ describe("Carson rank ordering is deterministic by dueAt, never model-authored (
     // decision (not just that id) — falls back to the deterministic full
     // render, same as the non-rank fallback behavior tested elsewhere.
     expect(result.ownerResult).toBe(
-      "Nothing needs your direct decision right now. You do have 3 overdue reminders and 1 thing you're waiting on.",
+      "I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.",
     );
   });
 
@@ -882,7 +882,7 @@ describe("Carson bounded one-retry structural reliability for a Stage 2 decision
     expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
     expect(result.ownerResult).toContain("call Loulya");
     expect(result.ownerResult).not.toBe(
-      "Nothing needs your direct decision right now. You do have 1 overdue reminder.",
+      "I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.",
     );
   });
 
@@ -894,7 +894,7 @@ describe("Carson bounded one-retry structural reliability for a Stage 2 decision
     const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
 
     expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
-    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+    expect(result.ownerResult).toBe("I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.");
   });
 
   it("[structural-retry 4/6] an invalid first decision followed by the retry itself throwing falls back safely — exactly 2 calls, no unhandled rejection", async () => {
@@ -908,7 +908,7 @@ describe("Carson bounded one-retry structural reliability for a Stage 2 decision
     const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
 
     expect(reasonOverEvidence).toHaveBeenCalledTimes(2);
-    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+    expect(result.ownerResult).toBe("I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.");
   });
 
   it("[structural-retry 5/6] the initial provider throw is unaffected — no structural retry, existing behavior unchanged (see also test [10] above)", async () => {
@@ -919,7 +919,7 @@ describe("Carson bounded one-retry structural reliability for a Stage 2 decision
     const result = await coordinate({ ...retryActiveContext, transcript: "What else?" });
 
     expect(reasonOverEvidence).toHaveBeenCalledTimes(1);
-    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+    expect(result.ownerResult).toBe("I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.");
   });
 
   it("[structural-retry 6/6] no path exceeds 2 total reasoning calls per turn, across every combination", async () => {
@@ -1195,7 +1195,7 @@ describe("CARSON_STAGE2_DIAGNOSTIC_LOGGING — temporary, feature-flagged, allow
 
     const result = await coordinate({ ...diagActiveContext, transcript: "What can wait?" });
 
-    expect(result.ownerResult).toBe("Nothing needs your direct decision right now. You do have 1 overdue reminder.");
+    expect(result.ownerResult).toBe("I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.");
 
     const payloads = readLoggedPayloads(logSpy);
     expect(payloads).toHaveLength(1);

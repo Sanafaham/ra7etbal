@@ -1,5 +1,5 @@
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
-import { renderAttentionSummary, renderAttentionDecision } from "../shared/carson-attention-summary.js";
+import { renderAttentionDecision } from "../shared/carson-attention-summary.js";
 import { validateAttentionDecision, RESPONSE_INTENTS } from "./_carson-attention-reasoning.js";
 
 // Temporary, feature-flagged, allowlisted/redacted production diagnostic
@@ -460,9 +460,21 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         renderedPath: "generic_attention_fallback",
       });
       // Reasoning failed/returned invalid output, but fresh evidence IS
-      // valid — fall back to the existing full deterministic render
-      // (truthful, just not intelligently filtered), never a fabricated
-      // or free-form answer.
+      // valid. This branch is reached ONLY on the follow-up/continuation
+      // path (isDirectAttentionIntent alone always takes the fast full-
+      // summary path above, without ever calling the reasoning model — see
+      // that branch's own guard) — so by construction, every turn that
+      // lands here is a filtered/scoped question the owner asked about
+      // already-established context, never a fresh broad "what needs my
+      // attention" ask. Returning the FULL unfiltered summary here would
+      // silently answer a different, broader question than the one asked —
+      // e.g. "What about the things I'm waiting on?" getting back the
+      // entire needsYou+overdue+waiting dump, indistinguishable from a
+      // genuine (and wrong) "nothing filtered, here's everything" answer.
+      // Fail honestly and narrowly instead: the owner's live data IS
+      // current and available (unlike the separate "grounding unavailable"
+      // case above, where the evidence fetch itself failed) — only the
+      // filtering/interpretation of THIS specific question failed.
       return {
         handled: true,
         status: 200,
@@ -471,9 +483,9 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         capability: ATTENTION_CAPABILITY,
         groundingStatus: "grounded",
         evidence,
-        ownerResult: renderAttentionSummary(evidence),
-        surfacedEvidenceIds: collectAllEvidenceIds(evidence),
-        responseIntent: "list",
+        ownerResult: "I have your current information, but I couldn't confirm what you're asking about specifically. Please ask again.",
+        surfacedEvidenceIds: [],
+        responseIntent: "clarify",
       };
     }
 
