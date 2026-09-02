@@ -209,8 +209,23 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
     it('a grounded follow-up ("what about the things I\'m waiting on?") after active attention context still uses the grounded path, not the conversational fallback', async () => {
       configure();
       const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      // "What am I waiting on?" matches matchesWaitingFollowUp (2026-09-02
+      // deterministic category filter) so this is rendered directly from
+      // evidence.waiting via renderAttentionCategory — never via fetchAttentionEvidence's
+      // own pre-rendered `text`, and never via the reasoning model.
       const fetchAttentionEvidence = vi.fn().mockResolvedValue({
-        evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [{ id: "w1", text: "Waiting on Christopher" }], later: [], unresolvedCaptures: [] },
+        evidence: {
+          ok: true,
+          code: "attention_read_succeeded",
+          completeness: "full",
+          generatedAt: new Date().toISOString(),
+          needsYou: [],
+          overdueReminders: [],
+          upcomingReminders: [],
+          waiting: [{ id: "w1", label: "Christopher: confirm delivery", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Christopher", category: "waiting" }],
+          later: [],
+          unresolvedCaptures: [],
+        },
         text: "You're waiting on Christopher to confirm.",
       });
       const handler = createCarsonTurnHandler({
@@ -227,7 +242,7 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
         response,
       );
       const streamed = response.chunks.join("");
-      expect(streamed).toContain("You're waiting on Christopher to confirm.");
+      expect(streamed).toContain("Christopher: confirm delivery");
       expect(streamed).not.toContain("Hi! What can I help with?");
     });
 
@@ -303,9 +318,10 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
 
       // Fresh evidence fetched again for the follow-up — never reused from turn 1.
       expect(fetchAttentionEvidence).toHaveBeenCalledTimes(2);
-      // The reasoning model actually ran and was given the follow-up's own text.
-      expect(reasonOverEvidence).toHaveBeenCalledOnce();
-      expect(reasonOverEvidence.mock.calls[0][0].userMessage).toBe("What about the things I'm waiting on?");
+      // "What about the things I'm waiting on?" matches matchesWaitingFollowUp
+      // (2026-09-02 deterministic category filter) — answered directly from
+      // evidence.waiting, no reasoning call needed for this unambiguous case.
+      expect(reasonOverEvidence).not.toHaveBeenCalled();
       // Turn 2 must not just repeat turn 1's broad answer.
       expect(turn2Text).not.toContain("buy TEREA cigarettes");
       expect(turn2Text).not.toContain("call the doctor");
@@ -343,7 +359,13 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
           messages: twoTurnMessages(
             "What needs my attention?",
             "Needs your decision: buy TEREA cigarettes. You do have 5 overdue reminders.",
-            "What about the things I'm waiting on?",
+            // Deliberately NOT "what about the things I'm waiting on?" — that
+            // exact phrasing now matches matchesWaitingFollowUp (2026-09-02
+            // deterministic category filter) and never reaches the reasoning
+            // call at all. This test exercises a genuinely ambiguous follow-up
+            // that still requires reasoning (reference resolution/ranking),
+            // to prove the reasoning-failure fallback itself is still safe.
+            "Can you break that down by priority?",
           ),
         }),
         response,

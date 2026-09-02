@@ -530,12 +530,9 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
   });
 
   describe("a same-category follow-up during active attention context is filtered, not repeated verbatim (2026-09-02 live isolated canary regression)", () => {
-    it('"What about the things I\'m waiting on?" — a phrase that ALSO directly matches matchesAttentionIntent — is routed through reasoning (filtered), not the fast unfiltered summary path, when grounded context is active', async () => {
+    it('"What about the things I\'m waiting on?" — a phrase that ALSO directly matches matchesAttentionIntent — is answered deterministically from evidence.waiting (2026-09-02 deterministic category filter), not the fast unfiltered summary path, when grounded context is active', async () => {
       const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
-      const reasonOverEvidence = vi.fn().mockResolvedValue({
-        responseIntent: "list",
-        selectedEvidenceIds: ["task-3"], // the waiting-category item only
-      });
+      const reasonOverEvidence = vi.fn();
       const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
 
       const broad = await coordinate({
@@ -550,10 +547,10 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
         turnId: "turn-2",
       });
 
-      // The reasoning model must actually be consulted for the follow-up —
-      // this is what makes filtering possible at all.
-      expect(reasonOverEvidence).toHaveBeenCalledOnce();
-      expect(reasonOverEvidence.mock.calls[0][0].userMessage).toBe("What about the things I'm waiting on?");
+      // matchesWaitingFollowUp matches this exact phrase — evidence.waiting
+      // is already correctly categorized, so no reasoning call is needed at
+      // all to answer it.
+      expect(reasonOverEvidence).not.toHaveBeenCalled();
       // The follow-up's answer must differ from (and be narrower than) the
       // broad answer — never a verbatim repeat of turn 1.
       expect(followUp.ownerResult).not.toBe(broad.ownerResult);
@@ -562,7 +559,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
       expect(followUp.surfacedEvidenceIds).toEqual(["task-3"]);
     });
 
-    it("still takes the fast unfiltered path for the SAME phrase when there is no active grounded context (a fresh, first-ever ask)", async () => {
+    it("also answers deterministically for the SAME phrase when there is no active grounded context (a fresh, first-ever ask) — the deterministic filter fires regardless of prior conversation state", async () => {
       const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
       const reasonOverEvidence = vi.fn();
       const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
@@ -575,7 +572,8 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
       });
 
       expect(reasonOverEvidence).not.toHaveBeenCalled();
-      expect(result.ownerResult).toBe(GROUNDED_RESULT.text);
+      expect(result.ownerResult).toContain("Grace");
+      expect(result.ownerResult).not.toContain("call the dentist");
     });
 
     it('"What about the overdue ones?" during active context resolves to the overdue category only', async () => {

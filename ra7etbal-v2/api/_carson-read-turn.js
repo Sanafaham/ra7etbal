@@ -1,5 +1,5 @@
-import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
-import { renderAttentionDecision } from "../shared/carson-attention-summary.js";
+import { matchesAttentionIntent, matchesWaitingFollowUp } from "../shared/carson-attention-intent-classifier.js";
+import { renderAttentionDecision, renderAttentionCategory } from "../shared/carson-attention-summary.js";
 import { validateAttentionDecision, RESPONSE_INTENTS } from "./_carson-attention-reasoning.js";
 
 // Temporary, feature-flagged, allowlisted/redacted production diagnostic
@@ -338,6 +338,34 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         evidence,
         ownerResult:
           result?.text ?? "I couldn't check what needs your attention right now — the live check didn't complete.",
+      };
+    }
+
+    // Deterministic category filter (2026-09-02, live isolated canary) —
+    // checked BEFORE both the broad fast path and the reasoning path.
+    // "What am I waiting on?"/"What about the things I'm waiting on?" maps
+    // exactly onto evidence.waiting, which composeAttentionEvidence has
+    // already computed correctly — filtering IS the entire answer, so no
+    // reasoning call (and no risk of it failing/timing out/mis-parsing) is
+    // in the loop for this specific, unambiguous case. This intentionally
+    // fires whether or not there's active grounded context: a fresh
+    // "What am I waiting on?" deserves the same direct Waiting-only answer
+    // as a same-topic follow-up does, never the full unfiltered summary.
+    // Genuinely ambiguous follow-ups (reference resolution, ranking,
+    // contrast, deferral timing, "what else") are NOT matched by
+    // matchesWaitingFollowUp and still go through the reasoning path below.
+    if (matchesWaitingFollowUp(ownerTurn.transcript)) {
+      return {
+        handled: true,
+        status: 200,
+        code: evidence.code,
+        turnId: ownerTurn.turnId,
+        capability: ATTENTION_CAPABILITY,
+        groundingStatus: "grounded",
+        evidence,
+        ownerResult: renderAttentionCategory(evidence, "waiting"),
+        surfacedEvidenceIds: (evidence.waiting ?? []).map((item) => item.id),
+        responseIntent: "list",
       };
     }
 
