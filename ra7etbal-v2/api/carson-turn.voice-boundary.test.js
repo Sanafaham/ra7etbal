@@ -145,6 +145,108 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
     expect(response.chunks.join("")).not.toMatch(/undefined|\[object Object\]/);
   });
 
+  describe("ordinary conversation never gets the operational fail-closed message", () => {
+    // interpretIntent stands in for coordinateCalendar's Claude call; an
+    // "unsupported" capability is exactly what a real non-calendar,
+    // non-attention utterance would classify as — this is what makes
+    // coordinateOwnerTurn return handled:false ("unsupported_intent"), the
+    // only path that should ever reach the natural conversational fallback.
+    function unclaimedTurnHandler(overrides = {}) {
+      return createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        interpretIntent: vi.fn().mockResolvedValue({ capability: "unsupported", range: "today" }),
+        dedupStore: new Map(),
+        ...overrides,
+      });
+    }
+
+    it.each(["Hello", "How are you?", "Thanks"])(
+      '"%s" gets a natural reply, never "I couldn\'t confirm that"',
+      async (utterance) => {
+        configure();
+        const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+        const handler = unclaimedTurnHandler();
+        const response = res();
+        await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: utterance }] }), response);
+        expect(response.statusCode).toBe(200);
+        const streamed = response.chunks.join("");
+        expect(streamed).not.toContain("I couldn't confirm that");
+        expect(streamed).toContain("Hi! What can I help with?");
+      },
+    );
+
+    it("does not 400 before intent classification runs — the providerEventId placeholder satisfies coordinateCalendar's dedup-key guard", async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "today" });
+      const handler = unclaimedTurnHandler({ interpretIntent });
+      await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "Hello" }] }), res());
+      // Proves coordinateCalendar's early invalid_owner_turn guard did not
+      // reject the turn before ever calling interpretIntent (the historical
+      // bug: providerEventId: "" was falsy there for every voice turn).
+      expect(interpretIntent).toHaveBeenCalled();
+    });
+
+    it('"What needs my attention?" still uses the grounded attention path, not the conversational fallback', async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "real-owner-jwt" });
+      const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+        evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
+        text: "Nothing needs your attention right now.",
+      });
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+        fetchAttentionEvidence,
+        dedupStore: new Map(),
+      });
+      const response = res();
+      await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "What needs my attention?" }] }), response);
+      const streamed = response.chunks.join("");
+      expect(streamed).toContain("Nothing needs your attention right now.");
+      expect(streamed).not.toContain("Hi! What can I help with?");
+    });
+
+    it('a grounded follow-up ("what about the things I\'m waiting on?") after active attention context still uses the grounded path, not the conversational fallback', async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+        evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [{ id: "w1", text: "Waiting on Christopher" }], later: [], unresolvedCaptures: [] },
+        text: "You're waiting on Christopher to confirm.",
+      });
+      const handler = createCarsonTurnHandler({
+        // Direct attention intent admits without needing Stage 1 at all —
+        // exercises the same admission path a real "what about..."
+        // follow-up spoken right after an attention answer would take.
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        fetchAttentionEvidence,
+        dedupStore: new Map(),
+      });
+      const response = res();
+      await handler(
+        voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "What am I waiting on?" }] }),
+        response,
+      );
+      const streamed = response.chunks.join("");
+      expect(streamed).toContain("You're waiting on Christopher to confirm.");
+      expect(streamed).not.toContain("Hi! What can I help with?");
+    });
+
+    it("a real operational grounding failure still fails closed with its own truthful text, not the conversational fallback", async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+        fetchAttentionEvidence: vi.fn().mockResolvedValue({ evidence: { ok: false, code: "attention_read_failed" }, text: null }),
+        dedupStore: new Map(),
+      });
+      const response = res();
+      await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "What needs my attention?" }] }), response);
+      const streamed = response.chunks.join("");
+      expect(streamed).toContain("the live check didn't complete");
+      expect(streamed).not.toContain("Hi! What can I help with?");
+    });
+  });
+
   it("logs a safe, secret-free diagnostic when the provider secret is wrong (C-03 live-gate 401 tracing)", async () => {
     configure();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
