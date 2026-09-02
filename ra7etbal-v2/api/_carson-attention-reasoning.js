@@ -279,6 +279,15 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
     decision.responseIntent !== "nothing_new" &&
     decision.responseIntent !== "clarify" &&
     decision.responseIntent !== "not_attention" &&
+    // "list" with zero selected ids is a legitimate, truthful answer to a
+    // category-scoped follow-up when that category genuinely has nothing in
+    // it right now (e.g. "What about the things I'm waiting on?" when
+    // waiting is empty) — renderAttentionDecision already has the correct
+    // "Nothing matches that right now." fallback for exactly this shape
+    // (see carson-attention-summary.js); this validator was rejecting it
+    // before that renderer ever got the chance (2026-09-02 live isolated
+    // canary regression).
+    decision.responseIntent !== "list" &&
     !(decision.responseIntent === "contrast" && contrastedEvidenceIds?.length > 0)
   ) {
     return { ok: false, reason: "empty_selection_for_intent" };

@@ -15,6 +15,7 @@ import {
   createSessionBinding,
   looksLikeVoiceBoundaryRequest,
   extractLatestUserMessage,
+  extractPreviousUserMessage,
   streamOwnerResultAsChatCompletion,
 } from "./_carson-second-brain-voice-boundary.js";
 
@@ -265,6 +266,24 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
   const transcript = extractLatestUserMessage(req.body?.messages).trim();
   if (!transcript) return res.status(400).json({ error: "No authoritative owner turn" });
 
+  // The voice boundary is stateless (a fresh HTTP request per turn, no
+  // session store) — but ElevenLabs replays the full conversation so far in
+  // `messages` on every call, same as any OpenAI-compatible Custom LLM
+  // integration. That's the only channel available to know whether this
+  // turn is a follow-up to an attention question, so it's used structurally:
+  // re-run the SAME deterministic classifier already trusted for admission
+  // (matchesAttentionIntent) against the PRIOR owner utterance, never by
+  // reading the assistant's own prior spoken text as if it were verified
+  // state. If the prior turn was itself attention-admitted, treat this turn
+  // as continuing that domain — coordinateAttention still always performs a
+  // fresh, authorized retrieval regardless (see createAttentionReadCoordinator's
+  // own doc comment); this only affects whether a direct-match follow-up
+  // ("What about the things I'm waiting on?" right after "What needs my
+  // attention?") gets scoped to that category or repeats the same broad
+  // answer — see _carson-read-turn.js's admission-priority fix.
+  const previousUserMessage = extractPreviousUserMessage(req.body?.messages);
+  const previousTurnWasAttention = previousUserMessage ? matchesAttentionIntent(previousUserMessage) : false;
+
   const ownerTurn = {
     accountId: binding.sub,
     authorization: `Bearer ${binding.jwt}`,
@@ -284,8 +303,8 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
     turnId: binding.sid,
     transcript,
     legacyClaimed: false,
-    previousCapability: null,
-    previousGroundingStatus: null,
+    previousCapability: previousTurnWasAttention ? ATTENTION_CAPABILITY : null,
+    previousGroundingStatus: previousTurnWasAttention ? "grounded" : null,
     previouslySurfacedEvidenceIds: [],
     priorObjective: null,
   };

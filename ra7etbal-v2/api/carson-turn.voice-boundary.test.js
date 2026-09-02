@@ -247,6 +247,149 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
     });
   });
 
+  describe("multi-turn follow-up state, derived from ElevenLabs' own replayed message history (2026-09-02 live isolated canary regression)", () => {
+    // The voice boundary is stateless (fresh HTTP request per turn) — state
+    // for a follow-up must come from req.body.messages, which ElevenLabs
+    // replays in full on every call. These tests build that two-turn
+    // messages array explicitly, the same shape a real conversation sends.
+    function twoTurnMessages(firstUser, firstAssistant, secondUser) {
+      return [
+        { role: "user", content: firstUser },
+        { role: "assistant", content: firstAssistant },
+        { role: "user", content: secondUser },
+      ];
+    }
+
+    it('"What about the things I\'m waiting on?" after "What needs my attention?" fetches fresh evidence and returns ONLY the waiting subset, never repeating the broad answer', async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const evidence = {
+        ok: true,
+        code: "attention_read_succeeded",
+        completeness: "full",
+        generatedAt: new Date().toISOString(),
+        needsYou: [{ id: "n1", label: "buy TEREA cigarettes", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+        overdueReminders: [{ id: "o1", label: "call the doctor", type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "overdueReminders" }],
+        upcomingReminders: [],
+        waiting: [{ id: "w1", label: "Christopher: confirm delivery", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Christopher", category: "waiting" }],
+        later: [],
+        unresolvedCaptures: [],
+      };
+      const fetchAttentionEvidence = vi.fn().mockResolvedValue({
+        evidence,
+        text: "Needs your decision: buy TEREA cigarettes. You do have 1 overdue reminder and 1 thing you're waiting on.",
+      });
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["w1"] });
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        fetchAttentionEvidence,
+        reasonOverEvidence,
+        dedupStore: new Map(),
+      });
+
+      const turn1 = res();
+      await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "What needs my attention?" }] }), turn1);
+      const turn1Text = turn1.chunks.join("");
+
+      const turn2 = res();
+      await handler(
+        voiceReq({
+          bindingHeader: token,
+          messages: twoTurnMessages("What needs my attention?", "Needs your decision: buy TEREA cigarettes...", "What about the things I'm waiting on?"),
+        }),
+        turn2,
+      );
+      const turn2Text = turn2.chunks.join("");
+
+      // Fresh evidence fetched again for the follow-up — never reused from turn 1.
+      expect(fetchAttentionEvidence).toHaveBeenCalledTimes(2);
+      // The reasoning model actually ran and was given the follow-up's own text.
+      expect(reasonOverEvidence).toHaveBeenCalledOnce();
+      expect(reasonOverEvidence.mock.calls[0][0].userMessage).toBe("What about the things I'm waiting on?");
+      // Turn 2 must not just repeat turn 1's broad answer.
+      expect(turn2Text).not.toContain("buy TEREA cigarettes");
+      expect(turn2Text).not.toContain("call the doctor");
+      expect(turn2Text).toContain("Christopher");
+      expect(turn1Text).toContain("buy TEREA cigarettes"); // sanity: turn 1 itself was the broad answer
+    });
+
+    it("an empty waiting subset says so plainly, never falling back to Needs You items", async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const evidence = {
+        ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(),
+        needsYou: [{ id: "n1", label: "buy TEREA cigarettes", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+        overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [],
+      };
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        fetchAttentionEvidence: vi.fn().mockResolvedValue({ evidence, text: "broad text" }),
+        reasonOverEvidence: vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: [] }),
+        dedupStore: new Map(),
+      });
+      const response = res();
+      await handler(
+        voiceReq({
+          bindingHeader: token,
+          messages: twoTurnMessages("What needs my attention?", "broad text", "What about the things I'm waiting on?"),
+        }),
+        response,
+      );
+      const streamed = response.chunks.join("");
+      expect(streamed).not.toContain("buy TEREA cigarettes");
+      expect(streamed).toContain("Nothing matches that right now");
+    });
+
+    it('"Hello" after an attention turn does not stay in the attention domain — the reasoning model classifies it not_attention and the turn falls through to the conversational fallback', async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "not_attention", selectedEvidenceIds: [] });
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        interpretIntent: vi.fn().mockResolvedValue({ capability: "unsupported", range: "today" }),
+        fetchAttentionEvidence: vi.fn().mockResolvedValue({
+          evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(), needsYou: [], overdueReminders: [], upcomingReminders: [], waiting: [], later: [], unresolvedCaptures: [] },
+          text: "Nothing needs your attention right now.",
+        }),
+        reasonOverEvidence,
+        dedupStore: new Map(),
+      });
+      const response = res();
+      await handler(
+        voiceReq({
+          bindingHeader: token,
+          messages: twoTurnMessages("What needs my attention?", "Nothing needs your attention right now.", "Hello"),
+        }),
+        response,
+      );
+      expect(reasonOverEvidence).toHaveBeenCalledOnce();
+      const streamed = response.chunks.join("");
+      expect(streamed).toContain("Hi! What can I help with?");
+      expect(streamed).not.toContain("I couldn't confirm that");
+    });
+
+    it("a fresh conversation with no prior user turn never carries over attention state from a different, unrelated call", async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const reasonOverEvidence = vi.fn();
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        interpretIntent: vi.fn().mockResolvedValue({ capability: "unsupported", range: "today" }),
+        reasonOverEvidence,
+        dedupStore: new Map(),
+      });
+      const response = res();
+      // Single-message history — no predecessor turn exists in THIS call at
+      // all, unlike a real second turn in the same conversation.
+      await handler(voiceReq({ bindingHeader: token, messages: [{ role: "user", content: "Hello" }] }), response);
+      // Never even reaches the reasoning model — admitted as ordinary
+      // conversation from the very first turn, exactly as if no other
+      // conversation had ever happened.
+      expect(reasonOverEvidence).not.toHaveBeenCalled();
+      expect(response.chunks.join("")).toContain("Hi! What can I help with?");
+    });
+  });
+
   it("logs a safe, secret-free diagnostic when the provider secret is wrong (C-03 live-gate 401 tracing)", async () => {
     configure();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

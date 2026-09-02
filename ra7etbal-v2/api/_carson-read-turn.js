@@ -341,7 +341,20 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       };
     }
 
-    if (isDirectAttentionIntent) {
+    // Fast, model-free path: ONLY for a fresh broad ask with no active
+    // follow-up conversation to resolve against. A direct-match phrase that
+    // ALSO occurs while grounded context is active (e.g. "What about the
+    // things I'm waiting on?" right after "What needs my attention?") must
+    // NOT take this shortcut — matchesAttentionIntent's regex intentionally
+    // recognizes both broad questions and specific-category follow-ups (see
+    // that file's own comment), but only the reasoning path below can
+    // distinguish "give me everything" from "filter to just Waiting" and
+    // scope selectedEvidenceIds accordingly. Regression (2026-09-02, live
+    // isolated canary): before this fix, isDirectAttentionIntent always won
+    // regardless of hasActiveGroundedAttentionContext, so a same-category
+    // follow-up silently re-rendered the SAME unfiltered summary as the
+    // question before it, never actually filtering to Waiting/Overdue/etc.
+    if (isDirectAttentionIntent && !hasActiveGroundedAttentionContext) {
       return {
         handled: true,
         status: 200,
@@ -356,8 +369,10 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       };
     }
 
-    // Context-only candidate (no direct regex match): the reasoning model
-    // decides relevance/selection/intent over the fresh evidence just
+    // Reasoning path: reached both for context-only candidates (no direct
+    // regex match) and for a direct-match follow-up during active grounded
+    // context (see the comment above) — either way, the model decides
+    // relevance/selection/intent over the fresh evidence just
     // retrieved. It never sees accountId/authorization and cannot
     // influence retrieval or tenant scoping — it only classifies and
     // selects among ids already authorized above.

@@ -242,8 +242,16 @@ describe("validateAttentionDecision", () => {
     expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: "task-1" }, EVIDENCE).ok).toBe(false);
   });
 
-  it("requires a non-empty selection unless the intent is nothing_new/clarify/not_attention/a contrast with a contrasted set", () => {
-    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(false);
+  it("requires a non-empty selection unless the intent is list/nothing_new/clarify/not_attention/a contrast with a contrasted set", () => {
+    // "list" with zero selected ids is a legitimate, truthful answer to a
+    // category-scoped follow-up whose category genuinely has nothing in it
+    // (e.g. "What about the things I'm waiting on?" when waiting is empty)
+    // — renderAttentionDecision already renders this correctly ("Nothing
+    // matches that right now."); this validator used to reject the shape
+    // before the renderer ever got the chance (2026-09-02 live isolated
+    // canary regression, fixed alongside the follow-up admission-priority
+    // fix in _carson-read-turn.js).
+    expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "nothing_new", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "clarify", selectedEvidenceIds: [], needsClarification: "Which ones?" }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "not_attention", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
@@ -328,7 +336,10 @@ describe("validateAttentionDecision", () => {
         [{ responseIntent: "list", selectedEvidenceIds: ["invented-id"] }, "selected_id_unauthorized_or_invalid_type"],
         [{ responseIntent: "list", selectedEvidenceIds: ["task-1"], rankedEvidenceIds: "not-an-array" }, "ranked_ids_not_array"],
         [{ responseIntent: "list", selectedEvidenceIds: ["task-1"], contrastedEvidenceIds: "not-an-array" }, "contrasted_ids_not_array"],
-        [{ responseIntent: "list", selectedEvidenceIds: [] }, "empty_selection_for_intent"],
+        // "list" is now a permitted empty-selection intent (see the
+        // dedicated test above) — "rank" still requires a real selection,
+        // since ranking zero items is meaningless.
+        [{ responseIntent: "rank", selectedEvidenceIds: [] }, "empty_selection_for_intent"],
       ];
       for (const [decision, expectedReason] of cases) {
         const result = validateAttentionDecision(decision, EVIDENCE);

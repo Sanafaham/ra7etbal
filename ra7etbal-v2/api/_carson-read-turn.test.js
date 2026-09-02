@@ -529,6 +529,88 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(call).not.toHaveProperty("authorization");
   });
 
+  describe("a same-category follow-up during active attention context is filtered, not repeated verbatim (2026-09-02 live isolated canary regression)", () => {
+    it('"What about the things I\'m waiting on?" — a phrase that ALSO directly matches matchesAttentionIntent — is routed through reasoning (filtered), not the fast unfiltered summary path, when grounded context is active', async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn().mockResolvedValue({
+        responseIntent: "list",
+        selectedEvidenceIds: ["task-3"], // the waiting-category item only
+      });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      const broad = await coordinate({
+        accountId: "account-a",
+        authorization: "Bearer session-a",
+        turnId: "turn-1",
+        transcript: "What needs my attention?",
+      });
+      const followUp = await coordinate({
+        ...activeContext,
+        transcript: "What about the things I'm waiting on?",
+        turnId: "turn-2",
+      });
+
+      // The reasoning model must actually be consulted for the follow-up —
+      // this is what makes filtering possible at all.
+      expect(reasonOverEvidence).toHaveBeenCalledOnce();
+      expect(reasonOverEvidence.mock.calls[0][0].userMessage).toBe("What about the things I'm waiting on?");
+      // The follow-up's answer must differ from (and be narrower than) the
+      // broad answer — never a verbatim repeat of turn 1.
+      expect(followUp.ownerResult).not.toBe(broad.ownerResult);
+      expect(followUp.ownerResult).toContain("Grace"); // the waiting item's label
+      expect(followUp.ownerResult).not.toContain("call the dentist"); // an overdue item — must NOT leak in
+      expect(followUp.surfacedEvidenceIds).toEqual(["task-3"]);
+    });
+
+    it("still takes the fast unfiltered path for the SAME phrase when there is no active grounded context (a fresh, first-ever ask)", async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn();
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      const result = await coordinate({
+        accountId: "account-a",
+        authorization: "Bearer session-a",
+        turnId: "turn-1",
+        transcript: "What about the things I'm waiting on?",
+      });
+
+      expect(reasonOverEvidence).not.toHaveBeenCalled();
+      expect(result.ownerResult).toBe(GROUNDED_RESULT.text);
+    });
+
+    it('"What about the overdue ones?" during active context resolves to the overdue category only', async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["task-1"] });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      const result = await coordinate({ ...activeContext, transcript: "What about the overdue ones?" });
+
+      expect(result.ownerResult).toContain("call the dentist");
+      expect(result.ownerResult).not.toContain("Grace");
+    });
+
+    it('"What about the ones that need me?" during active context resolves to needsYou only', async () => {
+      const fetchEvidence = vi.fn().mockResolvedValue({
+        evidence: SAMPLE_EVIDENCE,
+        text: "Needs your attention: renew passport.",
+      });
+      const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["task-4"] });
+      const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+      const evidenceWithNeedsYou = {
+        ...SAMPLE_EVIDENCE,
+        needsYou: [{ id: "task-4", label: "renew passport", type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+      };
+      fetchEvidence.mockResolvedValue({ evidence: evidenceWithNeedsYou, text: "irrelevant broad text" });
+
+      const result = await coordinate({ ...activeContext, transcript: "What about the ones that need me?" });
+
+      expect(result.ownerResult).toContain("renew passport");
+      expect(result.ownerResult).not.toContain("Grace");
+      expect(result.ownerResult).not.toContain("dentist");
+    });
+  });
+
   it("a follow-up whose predecessor was NOT grounded (or capability mismatched) is not admitted — same as a plain unrelated turn", async () => {
     const fetchEvidence = vi.fn();
     const reasonOverEvidence = vi.fn();
