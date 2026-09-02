@@ -42,6 +42,25 @@ export function matchesAttentionIntent(utterance) {
   return ATTENTION_INTENT_PATTERN.test(utterance);
 }
 
+// Extracted (2026-09-02, live isolated canary) from the SAME sub-pattern
+// already inside ATTENTION_INTENT_PATTERN above — not a new/duplicated
+// phrase list. Lets a caller distinguish "this utterance specifically asks
+// about the Waiting category" from the broader "this is attention-class at
+// all" check, so a follow-up this unambiguous can be answered
+// deterministically (evidence.waiting, already structured and already
+// authorized) instead of via an LLM reasoning call whose only job for this
+// exact case would be to notice the word "waiting" and select the same
+// items a plain category filter already identifies exactly. Genuinely
+// ambiguous follow-ups (reference resolution, ranking, contrast, deferral
+// timing) are NOT covered by this and still go through reasoning — see
+// api/_carson-read-turn.js's coordinateAttentionTurn.
+const ATTENTION_WAITING_FOLLOWUP_PATTERN =
+  /\b(?:what am i waiting on|what(?:'s| is)?(?: about)?(?: the things?)? (?:i'?m |i am )?waiting on|anything (?:i'?m |i am )?waiting on)\b/i;
+
+export function matchesWaitingFollowUp(utterance) {
+  return ATTENTION_WAITING_FOLLOWUP_PATTERN.test(utterance);
+}
+
 export function matchesAttentionFollowUp(utterance) {
   return ATTENTION_FOLLOWUP_PATTERN.test(utterance);
 }

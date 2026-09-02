@@ -296,6 +296,24 @@ function renderByCategory(items) {
 }
 
 /**
+ * Deterministic, model-free category filter (2026-09-02, live isolated
+ * canary) — for the narrow set of follow-ups that map exactly to one
+ * already-structured evidence category (currently: Waiting), no reasoning
+ * call is needed at all: the evidence is already correctly categorized by
+ * composeAttentionEvidence, so filtering IS the answer. Reuses the exact
+ * same label/formatting logic as renderAttentionDecision's category
+ * grouping (CATEGORY_LABELS, describeItem) so a deterministic answer and a
+ * model-selected one are visually identical — never a second, differently-
+ * worded rendering path for the same data shape.
+ */
+export function renderAttentionCategory(evidence, category) {
+  const items = allItems(evidence).filter((item) => item.category === category);
+  if (items.length === 0) return "Nothing matches that right now.";
+  const label = CATEGORY_LABELS[category] ?? category;
+  return `${label}: ${items.map(describeItem).join("; ")}.`;
+}
+
+/**
  * Deterministic renderer for a VALIDATED reasoning decision (see
  * api/_carson-attention-reasoning.js's validateAttentionDecision). The
  * model never supplies final text or category labels — it only
