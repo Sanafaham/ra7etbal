@@ -313,6 +313,52 @@ describe("carson-turn.js — Second Brain voice-boundary branch", () => {
       expect(turn1Text).toContain("buy TEREA cigarettes"); // sanity: turn 1 itself was the broad answer
     });
 
+    it("a reasoning-call failure during the SAME follow-up never masquerades as the broad turn-1 answer (2026-09-02 live isolated canary regression — the exact failure mode observed live)", async () => {
+      configure();
+      const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
+      const evidence = {
+        ok: true, code: "attention_read_succeeded", completeness: "full", generatedAt: new Date().toISOString(),
+        needsYou: [{ id: "n1", label: "buy TEREA cigarettes", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+        overdueReminders: [1, 2, 3, 4, 5].map((i) => ({ id: `o${i}`, label: `overdue ${i}`, type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "overdueReminders" })),
+        upcomingReminders: [], waiting: [{ id: "w1", label: "Christopher: confirm delivery", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Christopher", category: "waiting" }],
+        later: [], unresolvedCaptures: [],
+      };
+      const handler = createCarsonTurnHandler({
+        classifyOperationalIntent: vi.fn().mockResolvedValue("not_operational"),
+        fetchAttentionEvidence: vi.fn().mockResolvedValue({
+          evidence,
+          text: "Needs your decision: buy TEREA cigarettes. You do have 5 overdue reminders.",
+        }),
+        // Simulates the real observed failure: the reasoning call throws
+        // (network/timeout/provider error — whatever the exact live cause,
+        // this proves the OUTCOME is safe regardless).
+        reasonOverEvidence: vi.fn().mockRejectedValue(new Error("Reasoning model request failed.")),
+        dedupStore: new Map(),
+      });
+
+      const response = res();
+      await handler(
+        voiceReq({
+          bindingHeader: token,
+          messages: twoTurnMessages(
+            "What needs my attention?",
+            "Needs your decision: buy TEREA cigarettes. You do have 5 overdue reminders.",
+            "What about the things I'm waiting on?",
+          ),
+        }),
+        response,
+      );
+      const streamed = response.chunks.join("");
+      // Must NOT silently re-answer with the broad turn-1 content — this is
+      // exactly the defect a real conversation showed: reasoning failed and
+      // the fallback returned the full unfiltered summary, indistinguishable
+      // from a genuine (and wrong) answer to the filtered question.
+      expect(streamed).not.toContain("buy TEREA cigarettes");
+      expect(streamed).not.toContain("5 overdue reminders");
+      // Must fail honestly and narrowly instead.
+      expect(streamed).toContain("I couldn't confirm what you're asking about specifically");
+    });
+
     it("an empty waiting subset says so plainly, never falling back to Needs You items", async () => {
       configure();
       const { token } = createSessionBinding({ accountId: "owner-1", jwt: "j" });
