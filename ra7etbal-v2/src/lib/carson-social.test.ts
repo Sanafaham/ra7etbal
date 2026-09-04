@@ -273,6 +273,35 @@ describe("containsUnclosedParenthetical / CARSON_RETRY_FALLBACK_REPLY — C-03 m
     expect(containsUnclosedParenthetical("Added to your to-do list.")).toBe(false);
     expect(containsUnclosedParenthetical("Grace has it.")).toBe(false);
   });
+
+  // 2026-09-04 — second confirmed Production instance, same session: the
+  // unclosed "(" appeared mid-message with unrelated text continuing
+  // normally afterward, and the whole reply still ended in ordinary
+  // punctuation. An end-of-string-only check missed this shape entirely —
+  // widened to a full open/close count so this class is caught regardless
+  // of where in the message the unclosed parenthetical sits.
+  it("detects an unclosed parenthetical that sits mid-message, with normal text and punctuation continuing after it (paraphrased, not hard-coded)", () => {
+    const malformed =
+      "Christopher's TEREA cigarettes (the pack in needs your review. Your calendar is clear today. You have 3 reminders scheduled in the next 24 hours.";
+    expect(containsUnclosedParenthetical(malformed)).toBe(true);
+    expect(sanitizeCarsonReplyText(malformed)).toBe(CARSON_RETRY_FALLBACK_REPLY);
+  });
+
+  it("does not flag a reply with a balanced parenthetical followed by more normal sentences", () => {
+    const wellFormed =
+      "Christopher's TEREA cigarettes (the pack in the fridge) need your review. Your calendar is clear today.";
+    expect(containsUnclosedParenthetical(wellFormed)).toBe(false);
+    expect(sanitizeCarsonReplyText(wellFormed)).toBe(wellFormed);
+  });
+
+  it("does not flag multiple, separately balanced parentheticals in the same reply", () => {
+    const wellFormed = "The dentist (2pm) and the bill (due Friday) both need a decision.";
+    expect(containsUnclosedParenthetical(wellFormed)).toBe(false);
+  });
+
+  it("flags a stray closing parenthesis with no matching open, wherever it occurs", () => {
+    expect(containsUnclosedParenthetical("the pack in) needs your review.")).toBe(true);
+  });
 });
 
 describe("sanitizeCarsonErrorDetail — internal error language is sanitized", () => {
