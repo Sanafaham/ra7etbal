@@ -224,15 +224,20 @@ function getOrCreateTypedSessionId(): string {
   }
 }
 
-// ── Type to Carson — advisory-only (product decision 2026-07-25) ──────────────
-// Talk to Carson (voice) remains the only execution channel. Type to Carson may
-// think, plan, draft, research, and review, but must never perform or claim a
-// state-changing action. This is enforced in code (guardCurrentToolInvocation
-// below, plus the deterministic typed hosting/delegation/direct-message fast
-// paths in sendTypedMessage) — never by prompt wording alone. Flip this single
-// constant back to false to fully restore typed execution if the product
-// decision changes; every call site below is additive and reversible.
-const TYPED_MODE_IS_ADVISORY_ONLY = true;
+// ── Type to Carson — advisory-only (RETIRED, C-01 2026-09-04) ─────────────────
+// HISTORICAL: from 2026-07-25 until this change, Talk to Carson (voice) was
+// the only execution channel and Type to Carson was blocked from every
+// state-changing tool by this flag (guardCurrentToolInvocation below, plus
+// the deterministic typed hosting/delegation/direct-message fast paths in
+// sendTypedMessage). Retired per the owner-approved C-01 product decision
+// (Carson Skills Review, C-01–C-10): voice and text are input modalities
+// only, not separate authority classes — equivalent typed and spoken
+// instructions must reach the same authenticated owner identity, reasoning,
+// skills, tool-selection rules, approvals, and execution outcome. Every call
+// site below was already built additive and reversible; flip this single
+// constant back to true to fully restore the retired advisory-only
+// restriction if ever needed.
+const TYPED_MODE_IS_ADVISORY_ONLY = false;
 const TYPED_ADVISORY_REMINDER = "I can help you prepare that. Use Talk to Carson to create the reminder.";
 const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to Carson to set up the recurring reminder.";
 const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
@@ -6895,16 +6900,22 @@ export default function ElevenLabsAgentWidget({
               canonicalConsequentialResultRef.current,
               currentOwnerTurnOperationIdRef.current,
             );
-            // Typed-only truthfulness guard: no state-changing tool call can
-            // ever succeed for typed (every one is blocked before it runs —
-            // see TYPED_BLOCKED_TOOL_MESSAGES), but the free-form typed model
-            // still composes this reply independently and can fabricate a
-            // false execution promise no tool was ever invoked for. Voice is
-            // untouched — the identical wording is truthful there.
+            // Typed-only truthfulness guard — gated on TYPED_MODE_IS_ADVISORY_ONLY
+            // (2026-09-04, C-01 convergence): this sanitizer's whole premise is
+            // "no state-changing tool call can ever succeed for typed," so it
+            // rewrites a fabricated execution promise into an advisory fallback.
+            // That premise is only true while typed stays advisory-only. Once
+            // C-01 makes typed a genuine execution channel, the identical claim
+            // can be truthful for typed exactly as it already is for voice — an
+            // unconditional sanitize call would then silently rewrite a real,
+            // truthful success reply into a false "I can't complete it from
+            // typed chat" advisory message, which is itself a truthfulness and
+            // C-03 semantic-parity violation. Reusing the same gate every other
+            // typed-only interception in this file already uses.
             const finalDisplayMessage = canonicalConsequentialResultRef.current
               ? consequentialDisplayMessage
               : (
-              requestedChannel === "text"
+              requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY
                 ? sanitizeTypedAdvisoryReply(displayMessage)
                 : displayMessage
               );

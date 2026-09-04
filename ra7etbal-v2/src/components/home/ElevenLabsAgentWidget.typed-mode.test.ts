@@ -470,13 +470,70 @@ describe("typed Carson migration — privacy and idempotency", () => {
   });
 });
 
-// ── Type to Carson — advisory-only (product decision 2026-07-25) ──────────────
-// Talk to Carson remains the only execution channel. These tests protect the
-// code-level boundary (never prompt wording alone) that stops a typed request
-// from reaching any state-changing tool or deterministic send path, while
-// leaving Talk to Carson's own tool registration, routing, and execution
-// completely untouched.
-describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
+// ── C-01 convergence (2026-09-04, Structured Skills Step 1) ────────────────────
+// Voice and text are input modalities only, not separate authority classes —
+// equivalent typed and spoken instructions must reach the same authenticated
+// owner identity, reasoning, skills, tool-selection rules, approvals, and
+// execution outcome. The advisory-only restriction below is retired; the
+// mechanism itself stays in the code as a dormant, reversible kill-switch
+// (flip TYPED_MODE_IS_ADVISORY_ONLY back to true) rather than deleted.
+describe("Type to Carson — C-01 authority convergence (advisory-only retired)", () => {
+  it("TYPED_MODE_IS_ADVISORY_ONLY is false — typed execution is no longer advisory-only", () => {
+    expect(SOURCE).toContain("const TYPED_MODE_IS_ADVISORY_ONLY = false;");
+  });
+
+  it("a matched blocked-tool name no longer blocks typed execution, because the gate is false", () => {
+    const guardBlock = blockBetween(
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "    try {",
+    );
+    // The gate condition itself is preserved (reversible), but with the
+    // constant now false this branch can never intercept a call — every
+    // typed tool call falls through to the same "no active owner turn"
+    // check voice already uses (pendingTypedClientMessageIdRef), i.e. the
+    // same authority boundary for both channels.
+    expect(guardBlock).toContain("if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {");
+    expect(guardBlock).toContain("if (pendingTypedClientMessageIdRef.current) return null;");
+  });
+
+  it("the typed-only advisory prompt policy is no longer appended to the system prompt", () => {
+    const idx = SOURCE.indexOf("...(TYPED_MODE_IS_ADVISORY_ONLY ? [CARSON_TYPED_ADVISORY_POLICY] : [])");
+    expect(idx).toBeGreaterThan(-1);
+    // Present in source (reversible), but with the constant false this
+    // spread contributes nothing — CARSON_TYPED_ADVISORY_POLICY is never
+    // injected into either channel's system prompt now.
+  });
+
+  it("sanitizeTypedAdvisoryReply is now gated on TYPED_MODE_IS_ADVISORY_ONLY, so a genuinely successful typed reply is never rewritten into a false advisory fallback", () => {
+    // This sanitizer's premise ("no state-changing tool call can ever
+    // succeed for typed") stopped being true the moment C-01 made typed a
+    // real execution channel. An unconditional call here would silently
+    // rewrite a truthful typed success reply into
+    // TYPED_ADVISORY_FALLBACK_REPLY — a real C-03 semantic-parity
+    // violation between typed and voice for the identical verified result.
+    const idx = SOURCE.indexOf("requestedChannel === \"text\" && TYPED_MODE_IS_ADVISORY_ONLY");
+    expect(idx).toBeGreaterThan(-1);
+    const nearby = SOURCE.slice(idx, idx + 120);
+    expect(nearby).toContain("sanitizeTypedAdvisoryReply(displayMessage)");
+    // The old unconditional form must not remain anywhere in the file.
+    expect(SOURCE).not.toContain('requestedChannel === "text"\n                ? sanitizeTypedAdvisoryReply(displayMessage)');
+  });
+
+  it("typed and voice share the exact same finalDisplayMessage source for setLastCarsonMessage, voiceConversation, and persisted typed message content — one verified result, one final semantic response, no independent per-surface regeneration", () => {
+    const idx = SOURCE.indexOf("setLastCarsonMessage(mergedDisplayMessage);");
+    expect(idx).toBeGreaterThan(-1);
+    const nearby = SOURCE.slice(idx, idx + 3000);
+    expect(nearby).toContain("setVoiceConversation([...sessionTranscriptRef.current]);");
+    expect(nearby).toContain("content: finalDisplayMessage,");
+  });
+});
+
+// ── Type to Carson — advisory-only (RETIRED product decision, was 2026-07-25) ──
+// The mechanism below is retired per C-01 (2026-09-04) but kept in the code as
+// a dormant, reversible kill-switch — see the block above for the active
+// (now-converged) authority behavior. These tests protect the mechanism's own
+// shape so it stays reversible, not the (no-longer-active) advisory default.
+describe("Type to Carson — advisory-only gating mechanism (RETIRED per C-01, kept dormant/reversible)", () => {
   const TOOL_GUARD_BLOCK_MARKER =
     "if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {";
 
@@ -783,7 +840,7 @@ function TYPED_ADVISORY_STRINGS_ARE_TRUTHFUL(text: string): boolean {
 // Grace handle it." with no delegation ever created. These tests lock the
 // fix: a deterministic redirect before any clarification/proposal/dispatch,
 // and a truthfulness guard on the free-form model's own reply text.
-describe("Type to Carson — immediate execution-request redirect, Talk to Carson unchanged", () => {
+describe("Type to Carson — immediate execution-request redirect mechanism (RETIRED per C-01, kept dormant/reversible)", () => {
   function sendBlock(): string {
     return blockBetween(
       "const sendTypedMessage = useCallback(async () => {",

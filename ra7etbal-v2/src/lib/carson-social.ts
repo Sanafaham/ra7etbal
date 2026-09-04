@@ -50,6 +50,22 @@ export function containsTechnicalSupportDeflection(text: string): boolean {
   return CARSON_TECHNICAL_SUPPORT_DEFLECTION_PATTERN.test(text);
 }
 
+// C-03 (2026-09-04, Structured Skills Step 1): a confirmed Production
+// malformed-response case — "Needs your decision: buy TEREA cigarettes (the
+// pack in. You do have 5 overdue reminders." — reached the owner as a
+// grammatically broken, mid-parenthetical fragment. This is the general
+// signal for that entire class, not a hard-coded match on that sentence: an
+// unbalanced, unclosed parenthetical is a reliable indicator that upstream
+// composition (a due-description clause, a category label, or similar)
+// stopped mid-fragment before the final response was assembled. A single
+// well-formed emphatic aside ("(and that's the last one)") always closes its
+// own parenthesis, so this never fires on ordinary Carson phrasing.
+const CARSON_UNBALANCED_PARENTHESIS_PATTERN = /\([^)]*$/;
+
+export function containsUnclosedParenthetical(text: string): boolean {
+  return CARSON_UNBALANCED_PARENTHESIS_PATTERN.test(text);
+}
+
 const NETWORK_ERROR_PATTERN = /fetch|network|connection/i;
 
 /**
@@ -114,6 +130,10 @@ export function sanitizeCarsonReplyText(text: string): string {
     .trim();
 
   if (containsTechnicalSupportDeflection(sanitized)) {
+    return CARSON_RETRY_FALLBACK_REPLY;
+  }
+
+  if (containsUnclosedParenthetical(sanitized)) {
     return CARSON_RETRY_FALLBACK_REPLY;
   }
 
