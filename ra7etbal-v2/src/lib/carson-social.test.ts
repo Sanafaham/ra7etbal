@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CARSON_RETRY_FALLBACK_REPLY,
   containsTechnicalSupportDeflection,
+  containsUnclosedParenthetical,
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
@@ -232,6 +233,45 @@ describe("containsTechnicalSupportDeflection / CARSON_RETRY_FALLBACK_REPLY — P
   it("does not flag normal successful confirmations", () => {
     expect(containsTechnicalSupportDeflection("Added to your to-do list.")).toBe(false);
     expect(containsTechnicalSupportDeflection("Grace has it.")).toBe(false);
+  });
+});
+
+// C-03 (2026-09-04, Structured Skills Step 1) — a confirmed Production
+// malformed-response case reached the owner as a grammatically broken,
+// mid-parenthetical fragment. General boundary fix: any reply whose final
+// sanitized text still has an open, never-closed parenthesis is treated as
+// malformed and replaced with the same honest retry fallback already used
+// for technical-support deflection, rather than reaching voice/UI/history
+// broken. This is a general grammatical-completeness check, not a match on
+// one sentence.
+describe("containsUnclosedParenthetical / CARSON_RETRY_FALLBACK_REPLY — C-03 malformed-fragment fix", () => {
+  it("detects the reproduced Production malformed-response shape (paraphrased, not hard-coded)", () => {
+    const malformed =
+      "Needs your decision: buy TEREA cigarettes (the pack in. You do have 5 overdue reminders.";
+    expect(containsUnclosedParenthetical(malformed)).toBe(true);
+    expect(sanitizeCarsonReplyText(malformed)).toBe(CARSON_RETRY_FALLBACK_REPLY);
+  });
+
+  it.each([
+    "Your reminder is set for tomorrow (in the morning",
+    "Christopher has it (waiting on a reply",
+    "Three things need attention (the dentist, the bill, and one more",
+  ])("replaces any reply left open mid-parenthetical with the clean retry line: '%s'", (input) => {
+    expect(containsUnclosedParenthetical(input)).toBe(true);
+    expect(sanitizeCarsonReplyText(input)).toBe(CARSON_RETRY_FALLBACK_REPLY);
+  });
+
+  it("does not flag a reply whose parenthetical closes normally", () => {
+    expect(containsUnclosedParenthetical("Your reminder is set for tomorrow (in the morning).")).toBe(false);
+    expect(containsUnclosedParenthetical("Three things need attention (the dentist and the bill).")).toBe(false);
+    expect(sanitizeCarsonReplyText("Your reminder is set for tomorrow (in the morning).")).toBe(
+      "Your reminder is set for tomorrow (in the morning).",
+    );
+  });
+
+  it("does not flag ordinary replies with no parentheses at all", () => {
+    expect(containsUnclosedParenthetical("Added to your to-do list.")).toBe(false);
+    expect(containsUnclosedParenthetical("Grace has it.")).toBe(false);
   });
 });
 
