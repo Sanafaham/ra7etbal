@@ -460,11 +460,10 @@ describe("C-02 — tracked operational work is never downgraded once the determi
     // proof the tracked lifecycle is reached instead of the direct-message
     // reroute, independent of whatever the model-backed classifier would
     // have said about this exact task text.
-    expect(sendDelegationFn).toHaveBeenCalledWith({
-      name: "Christopher",
-      task: "bring the car around at 6.",
-      viaDeterministicFastPath: true,
-    });
+    expect(sendDelegationFn).toHaveBeenCalledWith(
+      { name: "Christopher", task: "bring the car around at 6." },
+      { viaDeterministicFastPath: true },
+    );
   });
 
   it("TEST 2 — equivalent tracked staff work: 'Ask Christopher to prepare dinner at 7.' also bypasses the classifier via the deterministic match", async () => {
@@ -478,6 +477,7 @@ describe("C-02 — tracked operational work is never downgraded once the determi
 
     expect(result).toMatchObject({ handled: true, status: "sent", personName: "Christopher" });
     expect(sendDelegationFn).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({ viaDeterministicFastPath: true }),
     );
   });
@@ -493,6 +493,7 @@ describe("C-02 — tracked operational work is never downgraded once the determi
 
     expect(result).toMatchObject({ handled: true, status: "sent", personName: "Ghulam" });
     expect(sendDelegationFn).toHaveBeenCalledWith(
+      expect.any(Object),
       expect.objectContaining({ viaDeterministicFastPath: true }),
     );
   });
@@ -535,7 +536,7 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
 
   it("the communication-guard block never calls createAndSendDelegation — no task is created for a reroute", () => {
     const block = blockBetween(
-      "if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
+      "if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).not.toContain("createAndSendDelegation(");
@@ -546,13 +547,45 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "const person = matches[0];",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)");
+    expect(block).toContain("!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)");
   });
 
   it("imports the shared classifier from the shared module exactly once", () => {
     const importOccurrences =
       WIDGET_SOURCE.match(/from "\.\.\/\.\.\/lib\/communication-vs-delegation"/g) ?? [];
     expect(importOccurrences).toHaveLength(1);
+  });
+
+  // CodeRabbit finding, PR #398: viaDeterministicFastPath previously lived on
+  // sendDelegation's first `params` argument — the same object type the
+  // legacy send_delegation clientTool exposes to the model
+  // (`Parameters<typeof sendDelegation>[0]`). A model-composed tool call
+  // could in principle have included that field in its own JSON arguments
+  // and bypassed the classifier for a non-deterministic call. Fixed by
+  // moving it to a genuinely separate second function argument that no
+  // client-tool JSON payload can ever populate.
+  it("C-02 hardening: viaDeterministicFastPath cannot be supplied by a model tool call — it is a second function argument, not a params field", () => {
+    const paramsBlock = blockBetween(
+      "const sendDelegation = useCallback(\n    async (params: {",
+      "    },\n    /**",
+    );
+    expect(paramsBlock).not.toContain("viaDeterministicFastPath");
+
+    const signatureBlock = blockBetween(
+      "const sendDelegation = useCallback(",
+      "): Promise<string> => {",
+    );
+    expect(signatureBlock).toContain("internal?: { viaDeterministicFastPath?: boolean }");
+
+    // The legacy clientTool passes exactly one argument — sendDelegation(params) —
+    // so `internal` is always undefined there, regardless of what the model's
+    // own tool-call JSON contains as `params`.
+    const legacyToolBlock = blockBetween(
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
+      "const existing = canonicalConsequentialResultRef.current;",
+    );
+    expect(legacyToolBlock).toContain("sendDelegation(params)");
+    expect(legacyToolBlock).not.toMatch(/sendDelegation\(params,/);
   });
 });
 
@@ -605,7 +638,7 @@ describe("Direct-message send path never generates a confirmation link", () => {
 describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
   it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
     const block = blockBetween(
-      "if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
+      "if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).toContain("const successText = `I sent ${person.name} the message.`;");

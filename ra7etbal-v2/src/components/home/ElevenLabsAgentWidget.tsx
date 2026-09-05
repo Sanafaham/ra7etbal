@@ -2035,13 +2035,26 @@ export default function ElevenLabsAgentWidget({
        *  "tell her I miss her", "and say thank you", "I'm on my way", etc.
        *  When absent, note is extracted from `message` as best-effort. */
       note?: string;
-      /** See DelegationFastPathDeps in delegation-fast-path.ts. Set only by
-       *  executeDelegationFastPath's injected call — never by the legacy
-       *  send_delegation clientTool, which calls this directly with the
-       *  model's own composed name/task and must keep going through the
-       *  communication/delegation classifier below. */
-      viaDeterministicFastPath?: boolean;
-    }): Promise<string> => {
+    },
+    /**
+     * Deliberately a SECOND function argument, never a property on the
+     * first `params` object above. The legacy send_delegation clientTool
+     * (registered below as `Parameters<typeof sendDelegation>[0]`) only
+     * ever calls `sendDelegation(params)` with the model's own single JSON
+     * tool-call argument — there is no mechanism for that call to supply a
+     * second argument, so a model-composed call can never set this flag,
+     * however it phrases its params. Only executeDelegationFastPath's
+     * injected sendDelegationFn (see DelegationFastPathDeps in
+     * delegation-fast-path.ts) passes it, and only as a literal `true`
+     * baked into that wiring, not sourced from any parseable input.
+     * (CodeRabbit, PR #398: the flag previously lived on `params` itself,
+     * which — since `send_delegation` is typed as
+     * `Parameters<typeof sendDelegation>[0]` — meant a legacy model tool
+     * call could in principle include it in its own JSON arguments and
+     * bypass the classifier below for a non-deterministic call.)
+     */
+    internal?: { viaDeterministicFastPath?: boolean },
+  ): Promise<string> => {
       const normalizedName = extractPersonNameParam(params, "name").trim();
       const message = params?.message ?? extractMessageParam(params);
       const note = params?.note;
@@ -2295,7 +2308,7 @@ export default function ElevenLabsAgentWidget({
       // clientTool, called directly by the model with its own composed
       // name/task (see src/lib/communication-vs-delegation.ts and the
       // carson-protected-behaviors test suite, mandatory CI gate).
-      if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {
+      if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }
