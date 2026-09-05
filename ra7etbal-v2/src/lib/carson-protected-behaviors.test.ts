@@ -25,6 +25,21 @@
  * workflow. Every confirmed production regression against Carson's
  * communication/delegation routing becomes a permanent test here. See
  * "CARSON PROTECTED BEHAVIORS" in AGENTS.md for the full contract.
+ *
+ * C-02 CORRECTION (2026-09-05 product decision, partial reversal of the
+ * paragraph above): a confirmed Production regression showed "Ask
+ * Christopher to bring the car around at 6." — a person being asked to
+ * perform an action and owing a result — was misrouted to a fire-and-forget
+ * WhatsApp message via this same classifier, with no tracked task and no
+ * accountability. On reconciliation, "Ask Grace to call me now.", "Ask
+ * Suresh to call me.", and "Tell Ghulam to wait for me." are the same shape
+ * (a person is asked to do something and owes an action/result) and are
+ * now, by explicit product decision, tracked operational work too — see the
+ * "Shared handler wiring" describe block below (viaDeterministicFastPath).
+ * The classifier itself (communication-vs-delegation.ts) is untouched and
+ * remains the sole authority for send_delegation calls that do NOT arrive
+ * through the deterministic parser (the legacy clientTool, called directly
+ * by the model with its own composed name/task).
  */
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -50,7 +65,7 @@ vi.mock("./anthropic-client", () => ({ callAnthropicProxy: vi.fn() }));
 
 import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
 import type { StaffInstructionClassification } from "./communication-vs-delegation";
-import { parseDelegationFastPath } from "./delegation-fast-path";
+import { parseDelegationFastPath, executeDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
 import type { Person } from "../types/person";
@@ -370,9 +385,14 @@ describe("Type to Carson — fast-path routing", () => {
     expect(parsed?.recipientName).toBe("Ghulam");
   });
 
-  it("'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex, but its task text is communication-style — interception happens in the shared sendDelegation handler, not by narrowing this regex, so both channels are protected by one guard", async () => {
+  it("C-02 (2026-09-05): 'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex; its raw task text still classifies as communication-style, but the deterministic match itself is now the final word — Grace owes an action (the call), so this is tracked operational work and must not be downgraded", async () => {
     const parsed = parseDelegationFastPath("Ask Grace to call me now.", people);
     expect(parsed).toEqual({ personName: "Grace", taskText: "call me now." });
+    // The classifier's own raw judgment on this text fragment is unchanged
+    // (still "communication" — communication-vs-delegation.ts is untouched
+    // by C-02). What changed is that sendDelegation no longer consults it
+    // for a call that arrived via this deterministic match — see the
+    // "Shared handler wiring" describe block below.
     expect(await classify(parsed!.taskText)).toBe(true);
   });
 
@@ -409,6 +429,90 @@ describe("Type to Carson — fast-path routing", () => {
   it.todo("'Tell Christopher to make the pizza.' should remain tracked delegated work — currently misroutes to a direct message (separate pre-existing gap, see direct-message-fast-path.test.ts)");
 });
 
+// ── 3b. C-02 (2026-09-05): deterministic-fast-path-matched work always
+//        reaches the tracked-delegation lifecycle — the shared classifier
+//        never gets a second, overriding vote once the grammar has already
+//        recognized a person owing an action/result. Confirmed Production
+//        regression: "Ask Christopher to bring the car around at 6." was
+//        rerouted to a fire-and-forget WhatsApp message (task_id: null,
+//        send_mode: "direct_message") instead of creating a tracked task.
+
+describe("C-02 — tracked operational work is never downgraded once the deterministic fast path recognizes it", () => {
+  const people = roster();
+
+  it("TEST 1 — the exact Production canary: 'Ask Christopher to bring the car around at 6.' reaches sendDelegation marked as tracked work, bypassing the communication classifier", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to bring the car around at 6.");
+
+    const result = await executeDelegationFastPath(
+      "Ask Christopher to bring the car around at 6.",
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      personName: "Christopher",
+      taskText: "bring the car around at 6.",
+    });
+    // The flag that makes sendDelegation skip isCommunicationStyleTaskText
+    // entirely for this call (see ElevenLabsAgentWidget.tsx) — this is the
+    // proof the tracked lifecycle is reached instead of the direct-message
+    // reroute, independent of whatever the model-backed classifier would
+    // have said about this exact task text.
+    expect(sendDelegationFn).toHaveBeenCalledWith({
+      name: "Christopher",
+      task: "bring the car around at 6.",
+      viaDeterministicFastPath: true,
+    });
+  });
+
+  it("TEST 2 — equivalent tracked staff work: 'Ask Christopher to prepare dinner at 7.' also bypasses the classifier via the deterministic match", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to prepare dinner at 7.");
+
+    const result = await executeDelegationFastPath(
+      "Ask Christopher to prepare dinner at 7.",
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({ handled: true, status: "sent", personName: "Christopher" });
+    expect(sendDelegationFn).toHaveBeenCalledWith(
+      expect.objectContaining({ viaDeterministicFastPath: true }),
+    );
+  });
+
+  it("TEST 3 — 'Ask Ghulam to bring the car out.' (pre-existing protected example) is unaffected — still reaches the tracked lifecycle the same way", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Ghulam to bring the car out.");
+
+    const result = await executeDelegationFastPath(
+      "Ask Ghulam to bring the car out.",
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({ handled: true, status: "sent", personName: "Ghulam" });
+    expect(sendDelegationFn).toHaveBeenCalledWith(
+      expect.objectContaining({ viaDeterministicFastPath: true }),
+    );
+  });
+
+  it("TEST 4 — genuine direct communication is untouched: 'Tell Christopher I'll be home at 7.' never matches the deterministic delegation grammar, so it never reaches sendDelegation or the viaDeterministicFastPath flag at all", () => {
+    expect(parseDelegationFastPath("Tell Christopher I'll be home at 7.", people)).toBeNull();
+    // Falls to the direct-message fast path instead (parseSimpleDirectMessage),
+    // which is unrelated to and unchanged by C-02.
+    expect(parseSimpleDirectMessage("Tell Christopher I'll be home at 7.", people)).toEqual({
+      recipientName: "Christopher",
+      messageText: "I'll be home at 7.",
+    });
+  });
+
+  it("TEST 5 — voice/text convergence: both executeInstruction's (Talk) and sendTypedMessage's (Type) delegation fast-path call sites inject the exact same sendDelegation, so this fix applies identically to both channels", () => {
+    const occurrences = WIDGET_SOURCE.match(/\{\s*sendDelegationFn:\s*sendDelegation\s*\}/g) ?? [];
+    expect(occurrences.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // ── 4. Shared handler wiring — sendDelegation() is the one place both channels
 //       converge, and it must reroute communication-style text before ever
 //       creating a task. Structural checks on the real source, matching this
@@ -431,10 +535,18 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
 
   it("the communication-guard block never calls createAndSendDelegation — no task is created for a reroute", () => {
     const block = blockBetween(
-      "if (await isCommunicationStyleTaskText(taskText)) {",
+      "if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).not.toContain("createAndSendDelegation(");
+  });
+
+  it("C-02 (2026-09-05): a deterministic-fast-path-recognized delegation skips the communication classifier entirely — the guard is not merely bypassed at runtime, it is not even evaluated", () => {
+    const block = blockBetween(
+      "const person = matches[0];",
+      "// 3. Cooldown.",
+    );
+    expect(block).toContain("!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)");
   });
 
   it("imports the shared classifier from the shared module exactly once", () => {
@@ -493,7 +605,7 @@ describe("Direct-message send path never generates a confirmation link", () => {
 describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
   it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
     const block = blockBetween(
-      "if (await isCommunicationStyleTaskText(taskText)) {",
+      "if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).toContain("const successText = `I sent ${person.name} the message.`;");

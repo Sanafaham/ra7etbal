@@ -2035,6 +2035,12 @@ export default function ElevenLabsAgentWidget({
        *  "tell her I miss her", "and say thank you", "I'm on my way", etc.
        *  When absent, note is extracted from `message` as best-effort. */
       note?: string;
+      /** See DelegationFastPathDeps in delegation-fast-path.ts. Set only by
+       *  executeDelegationFastPath's injected call — never by the legacy
+       *  send_delegation clientTool, which calls this directly with the
+       *  model's own composed name/task and must keep going through the
+       *  communication/delegation classifier below. */
+      viaDeterministicFastPath?: boolean;
     }): Promise<string> => {
       const normalizedName = extractPersonNameParam(params, "name").trim();
       const message = params?.message ?? extractMessageParam(params);
@@ -2261,18 +2267,35 @@ export default function ElevenLabsAgentWidget({
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
 
-      // CARSON PROTECTED BEHAVIORS: simple staff communication must never
-      // become a tracked task merely because this tool was called. Whichever
-      // channel got here — Talk to Carson's voice model choosing the
-      // send_delegation tool, or Type to Carson's delegation fast path — this
-      // is the one shared guard both rely on, since this function is the
-      // single place their delegation-creation paths converge. The
-      // distinction is whether Carson needs to track an outcome after
-      // delivery, not whether the sentence is imperative, contains "to" plus
-      // a verb, names the owner, or matches any fixed verb/phrase list — see
-      // src/lib/communication-vs-delegation.ts (model-backed classifier) and
-      // the carson-protected-behaviors test suite (mandatory CI gate).
-      if (await isCommunicationStyleTaskText(taskText)) {
+      // CARSON PROTECTED BEHAVIORS — C-02 (2026-09-05 product decision,
+      // reconciled after a confirmed Production regression: "Ask Christopher
+      // to bring the car around at 6." was misclassified by the model-backed
+      // classifier below and rerouted to a fire-and-forget WhatsApp message,
+      // no tracked task, no accountability).
+      //
+      // A person being asked to do something and owing an action/result is
+      // tracked operational work, full stop — it does not matter whether the
+      // request also happens to name the owner as a beneficiary ("call me",
+      // "bring the car around at 6" are both someone being asked to perform
+      // an action). The ONLY instructions that should ever skip task
+      // creation are pure information delivery, where nobody owes a result
+      // after the message arrives (see direct-message-fast-path.ts) — those
+      // never reach this function at all, deterministically, at the parser
+      // level (parseSimpleDirectMessage/executeDirectMessageFastPath run and
+      // claim the instruction first; see the fast-path dispatch order in
+      // sendTypedMessage and executeInstruction).
+      //
+      // So: once executeDelegationFastPath's deterministic grammar has
+      // already recognized "ask/tell/get X to Y" or "have X Y" as tracked
+      // work (viaDeterministicFastPath === true), that recognition is final
+      // — the model-backed classifier below must not get a second,
+      // overriding vote and downgrade it to a plain message. The classifier
+      // remains the authority ONLY for send_delegation calls that did not
+      // come through that deterministic recognition — i.e. the legacy
+      // clientTool, called directly by the model with its own composed
+      // name/task (see src/lib/communication-vs-delegation.ts and the
+      // carson-protected-behaviors test suite, mandatory CI gate).
+      if (!params?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }
