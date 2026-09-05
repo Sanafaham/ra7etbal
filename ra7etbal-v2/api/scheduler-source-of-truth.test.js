@@ -24,6 +24,9 @@ export function findRepoRoot(startDir) {
   }
 }
 
+/** Scans a `.github/workflows`-shaped directory for any YAML workflow that
+ * both declares a `schedule:` trigger and references `send-due-reminder-pushes` —
+ * i.e. a forbidden second scheduler for the reminder safety-net endpoint. */
 export function findScheduledReminderWorkflows(workflowsDir) {
   const workflowFiles = existsSync(workflowsDir)
     ? readdirSync(workflowsDir).filter((file) => /\.ya?ml$/i.test(file))
