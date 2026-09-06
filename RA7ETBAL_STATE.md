@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-27 (substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Task-neutral substitute-review language Repair #4 — PR #351 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Separately recorded, not yet fixed: `approved_alternative_media_routing` — approved-alternative media delivered to the owner instead of the worker.)
+Last updated: 2026-09-06 (Supabase reminder safety-net scheduler consolidation and Disk IO/bloat cleanup — PR #399 merged, production pg_cron/history maintenance verified live — CLOSED, see "Stable and protected". Substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Task-neutral substitute-review language Repair #4 — PR #351 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Separately recorded, not yet fixed: `approved_alternative_media_routing` — approved-alternative media delivered to the owner instead of the worker.)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -1081,6 +1081,54 @@ self-referential documentation commit.
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.
+
+### Supabase reminder safety-net scheduler consolidation and Disk IO/bloat cleanup (2026-09-06) — CLOSED, PRODUCTION VERIFIED
+
+Status: implemented, merged, deployed, production-verified. Not a Carson behavior change — pure scheduling/database-maintenance work.
+
+**Root cause investigated and confirmed (not guessed):** the Supabase pg_cron safety-net job `send-due-reminder-pushes` (`jobid=5`) had run every minute since 2026-05-31 — correct when created (pre-QStash, this cron *was* the entire reminder-delivery mechanism), but never revisited after the 2026-06-04 QStash migration made it a secondary safety net for reminders QStash missed. Separately, a duplicate GitHub Actions 10-minute scheduler for the same endpoint had already been targeted for removal on 2026-07-07 (commit `cc9e82c0`, which added `api/scheduler-source-of-truth.test.js` asserting "does not schedule reminder safety-net pushes from GitHub Actions"), but that fix only deleted a *nested* copy of the workflow (`ra7etbal-v2/.github/workflows/...`) — a separate copy at the true repository root (`.github/workflows/send-due-reminder-pushes.yml`, re-added 2026-06-04) was never detected, because the guard test resolved its target directory from `process.cwd()` (this package's own directory during test runs), not the actual repo root one level up. That root-level duplicate scheduler had been running undetected for two months. Confirmed unrelated to C-01/C-02/C-03: every commit touching those tags was checked and none reference cron, QStash, pg_net, or any scheduler file.
+
+**Fix (PR #399, merge commit `3abcb2493fd5a9f29d08f4e85dbc8492fed2161c`):** removed the forbidden root-level `.github/workflows/send-due-reminder-pushes.yml`; rewrote `api/scheduler-source-of-truth.test.js` to walk up from `process.cwd()` to the real repository root (looks for a `.git` entry, works for both a normal clone and a git worktree) instead of assuming cwd is the root; added counterfactual regression tests proving the detector actually flags a forbidden workflow when one exists and reports clean when it doesn't. Manually proven both directions before committing: temporarily restored the deleted workflow, confirmed the corrected test fails; removed it again, confirmed it passes. Full `test:carson-protected` (122 files, 2,376 tests) and `tsc -b --noEmit` both clean; `scripts/impact-map.mjs` correctly reported 0 affected protected capabilities (test-only + workflow-deletion change touches no registered capability). CodeRabbit real review (after an initial auto-skip on the repo's star-count gate, manually re-triggered): Merge Risk Low, one trivial already-satisfied nitpick, one docstring-coverage warning closed with a follow-up commit. Production deployment for the merge SHA confirmed `success` via GitHub's own Vercel commit-status integration (this session's Vercel MCP connector is scoped to a different account and cannot query the real `ra7etbal-v2` project directly — noted as a standing tool-access gap, not a verification gap).
+
+**Production infrastructure changes (Supabase-side, no corresponding repo file — no established repo mechanism defines pg_cron jobs; see note below):**
+- `jobid=5` (`send-due-reminder-pushes`) cadence changed from `* * * * *` to `*/5 * * * *` via `cron.alter_job`. Command, auth mechanism, and target endpoint unchanged. Verified live: two consecutive successful executions observed immediately after the change, no gap, no reversion.
+- `net._http_response` (pg_net's internal response log, TTL=6h, already self-managing logically) had accumulated ~154 MB of physical MVCC bloat from ~186k insert/delete cycles at the old 1-minute cadence, for only ~70–360 live rows at any time — confirmed via `pg_relation_size`/`pg_stat_all_tables`/Supabase's own performance advisor (`table_bloat` on `net._http_response`). Reclaimed via a single `VACUUM FULL net._http_response;`, with `jobid=5` paused (`active=false`, definition preserved) immediately before and restored immediately after (pause window ~90s, well under one 5-minute cycle — zero reminder-safety-net cycles skipped, confirmed by direct execution-log inspection). Result: 154.29 MB → 0.16 MB (~99.9% reduction), 72 live rows before and after (zero data loss).
+- `cron.job_run_details` (pg_cron's own execution log, no built-in retention in the installed version 1.6.4, confirmed via `pg_settings`) had accumulated 186,608 rows / ~100 MB since 2026-05-31 with zero prior pruning. Trimmed to a 30-day retention window (locked product decision): `DELETE FROM cron.job_run_details WHERE start_time < <frozen cutoff>;` deleted exactly 144,015 rows (matched the pre-computed expected count exactly), followed by `VACUUM FULL cron.job_run_details;` (same pause/restore pattern around `jobid=5`, same zero-skipped-cycle result, confirmed by three consecutive successful post-restore executions with no gap). Result: 99.98 MB → 19.43 MB (~80.6% reduction), 42,594 rows retained, oldest retained row sitting exactly at the 30-day boundary, zero rows older than the boundary remain.
+- New pg_cron job `jobid=6`, name `cron-job-run-details-retention`, schedule `0 3 * * 0` (weekly, Sunday 03:00 UTC — deliberately low-frequency to avoid recreating the original problem), command narrowly scoped to `DELETE FROM cron.job_run_details WHERE start_time < now() - interval '30 days';` — no `VACUUM FULL` in the recurring job (that was a one-time reclaim). Does not touch `jobid=5` in any way.
+
+**No established repo-owned mechanism (migration, bootstrap SQL, or deployment config) has ever defined `jobid=5` or any other pg_cron job** — confirmed by an exhaustive search of `supabase/migrations/*.sql` (no `cron.schedule`/`cron.alter_job` call anywhere), `supabase/config.toml` (does not exist in this repo), and all docs. `jobid=5` has only ever been created/altered directly against production via SQL (originally by hand, then during this task's own maintenance). Per instruction, no new infrastructure-as-code mechanism was invented for this task. **Recovery reference if `jobid=5` or `jobid=6` are ever lost** (e.g. project restore, accidental unschedule):
+```sql
+-- jobid=5 (reminder safety-net; do not run this if the job already exists — check cron.job first)
+select cron.schedule(
+  'send-due-reminder-pushes',
+  '*/5 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://ra7etbal-v2.vercel.app/api/send-due-reminder-pushes',
+    headers := jsonb_build_object(
+      'Authorization',
+      'Bearer ' || (
+        select decrypted_secret
+        from vault.decrypted_secrets
+        where name = 'ra7etbal_reminder_push_cron_secret'
+      )
+    )
+  );
+  $$
+);
+
+-- jobid=6 (weekly retention)
+select cron.schedule(
+  'cron-job-run-details-retention',
+  '0 3 * * 0',
+  $$DELETE FROM cron.job_run_details WHERE start_time < now() - interval '30 days';$$
+);
+```
+The `ra7etbal_reminder_push_cron_secret` value must already exist in Supabase Vault (`vault.decrypted_secrets`) — it is not reproduced above and was not touched by this task.
+
+**Verified unchanged throughout:** QStash remains the sole primary exact-time reminder delivery path (`api/qstash-reminder.js` → `api/send-push-for-task.js`); `api/send-due-reminder-pushes.js`'s behavior and 30-second overdue-matching threshold; reminder data/schema; `pg_net.ttl` (still 6 hours); no reminder delivery behavior, no duplicate notifications, no skipped safety-net cycle at any point during either maintenance window (confirmed by direct, gap-free execution-log inspection before/during/after each operation).
+
+Protect: `jobid=5`'s schedule (`*/5 * * * *`) and command; `jobid=6`'s narrow weekly-only scope (never add `VACUUM FULL` or a tighter schedule to it); `scheduler-source-of-truth.test.js`'s repo-root resolution (do not revert to a `process.cwd()`-relative path). Reopen only on a reproduced regression (a missed reminder safety-net cycle, a reappeared duplicate scheduler, or renewed unbounded growth of either table).
 
 ### Reminder correction replaces (not duplicates) the reminder — Talk to Carson only
 
