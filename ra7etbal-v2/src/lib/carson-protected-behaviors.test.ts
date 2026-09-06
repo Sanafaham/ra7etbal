@@ -26,20 +26,28 @@
  * communication/delegation routing becomes a permanent test here. See
  * "CARSON PROTECTED BEHAVIORS" in AGENTS.md for the full contract.
  *
- * C-02 CORRECTION (2026-09-05 product decision, partial reversal of the
+ * C-02 CORRECTION (2026-09-05/07, two rounds, partial reversal of the
  * paragraph above): a confirmed Production regression showed "Ask
- * Christopher to bring the car around at 6." — a person being asked to
- * perform an action and owing a result — was misrouted to a fire-and-forget
- * WhatsApp message via this same classifier, with no tracked task and no
- * accountability. On reconciliation, "Ask Grace to call me now.", "Ask
- * Suresh to call me.", and "Tell Ghulam to wait for me." are the same shape
- * (a person is asked to do something and owes an action/result) and are
- * now, by explicit product decision, tracked operational work too — see the
- * "Shared handler wiring" describe block below (viaDeterministicFastPath).
- * The classifier itself (communication-vs-delegation.ts) is untouched and
- * remains the sole authority for send_delegation calls that do NOT arrive
- * through the deterministic parser (the legacy clientTool, called directly
- * by the model with its own composed name/task).
+ * Christopher to bring the car around at 6." was misrouted to a
+ * fire-and-forget WhatsApp message via this same classifier — real-model
+ * evidence (Gate 1, RA7ETBAL_STATE.md) proved this was a CONSISTENT
+ * misclassification of the isolated task fragment, not a rare flake.
+ * "Ask Grace to call me now.", "Ask Suresh to call me.", and "Tell Ghulam
+ * to wait for me." are, by explicit product decision, no longer a single
+ * uniform family: "call me"-shaped instructions are tracked operational
+ * work (the recipient owes an action Carson tracks), but "wait for
+ * me"/"meet me outside"-shaped instructions remain direct communication
+ * (nothing to track once the two people are together) — the SAME
+ * deterministic grammar matches both shapes, so only the classifier, given
+ * the full utterance, can tell them apart (see the "C-02 — authoritative
+ * routing contract" describe block below). A first attempt at fixing the
+ * original regression (PR #398, `viaDeterministicFastPath`, an
+ * unconditional bypass treating every grammar match as tracked work) was
+ * itself a confirmed regression against exactly this distinction and has
+ * been removed. The classifier itself (communication-vs-delegation.ts) is
+ * always consulted now, with its input changed from the isolated task
+ * fragment to the full raw owner utterance (`rawInstruction`) — see
+ * sendDelegation in ElevenLabsAgentWidget.tsx.
  */
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -385,14 +393,9 @@ describe("Type to Carson — fast-path routing", () => {
     expect(parsed?.recipientName).toBe("Ghulam");
   });
 
-  it("C-02 (2026-09-05): 'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex; its raw task text still classifies as communication-style, but the deterministic match itself is now the final word — Grace owes an action (the call), so this is tracked operational work and must not be downgraded", async () => {
+  it("C-02 (2026-09-07): 'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex; the classifier's opinion on the isolated fragment alone is still communication-style (proving the fragment is genuinely ambiguous) — sendDelegation now resolves this correctly by giving the classifier the full utterance instead, not by skipping it (see the 'C-02 — authoritative routing contract' describe block below for the actual end-to-end proof)", async () => {
     const parsed = parseDelegationFastPath("Ask Grace to call me now.", people);
     expect(parsed).toEqual({ personName: "Grace", taskText: "call me now." });
-    // The classifier's own raw judgment on this text fragment is unchanged
-    // (still "communication" — communication-vs-delegation.ts is untouched
-    // by C-02). What changed is that sendDelegation no longer consults it
-    // for a call that arrived via this deterministic match — see the
-    // "Shared handler wiring" describe block below.
     expect(await classify(parsed!.taskText)).toBe(true);
   });
 
@@ -429,19 +432,69 @@ describe("Type to Carson — fast-path routing", () => {
   it.todo("'Tell Christopher to make the pizza.' should remain tracked delegated work — currently misroutes to a direct message (separate pre-existing gap, see direct-message-fast-path.test.ts)");
 });
 
-// ── 3b. C-02 (2026-09-05): deterministic-fast-path-matched work always
-//        reaches the tracked-delegation lifecycle — the shared classifier
-//        never gets a second, overriding vote once the grammar has already
-//        recognized a person owing an action/result. Confirmed Production
-//        regression: "Ask Christopher to bring the car around at 6." was
-//        rerouted to a fire-and-forget WhatsApp message (task_id: null,
-//        send_mode: "direct_message") instead of creating a tracked task.
+// ── 3b. C-02 (2026-09-05/07): the authoritative routing contract, proven at
+//        the actual routing-outcome level, not just parser/classifier
+//        output in isolation. Two confirmed Production regressions:
+//
+//        1. "Ask Christopher to bring the car around at 6." was rerouted to
+//           a fire-and-forget WhatsApp message (task_id: null, send_mode:
+//           "direct_message") instead of creating a tracked task — the
+//           classifier, given only the isolated task fragment, misjudged it.
+//           Real-model evidence (Gate 1, RA7ETBAL_STATE.md): this was a
+//           CONSISTENT failure (3/3 real claude-haiku-4-5 calls), not a
+//           rare flake.
+//        2. The first fix (PR #398, viaDeterministicFastPath) treated every
+//           deterministic grammar match as tracked work unconditionally,
+//           which wrongly promoted "Tell Christopher to wait for me in the
+//           kitchen." and "Ask Christopher to meet me outside." into tasks —
+//           both match the identical "ask/tell NAME to TASK" grammar as
+//           genuine tracked work, with no syntactic signal to tell them
+//           apart. Removed.
+//
+//        Design 2 (approved architecture): the classifier is ALWAYS
+//        consulted (no bypass), but is now given the full original owner
+//        utterance instead of the isolated fragment (see
+//        communication-vs-delegation.ts's updated prompt). Gate 1 evidence:
+//        every deterministically-matched authoritative example resolved
+//        correctly and stably across 42 real model calls once given full
+//        context — the fragment-only input was the actual defect.
+//
+//        A fresh, dedicated fakeClassify below maps FULL UTTERANCES (not
+//        bare fragments) to their Gate-1-verified correct answer, so these
+//        tests prove the actual routing outcome the real model produced,
+//        not a hypothetical.
 
-describe("C-02 — tracked operational work is never downgraded once the deterministic fast path recognizes it", () => {
+const AUTHORITATIVE_ROUTING_TRUTH: Record<string, "communication" | "delegation"> = {
+  "tell christopher to wait for me in the kitchen.": "communication",
+  "ask christopher to meet me outside.": "communication",
+  "ask christopher to bring the car around at 6.": "delegation",
+  "ask christopher to prepare dinner.": "delegation",
+  "ask christopher to prepare dinner at 7.": "delegation",
+  "ask grace to call me.": "delegation",
+  "ask grace to call me now.": "delegation",
+  "tell grace to arrange the guest room.": "delegation",
+  "have christopher buy milk.": "delegation",
+  "ask ghulam to bring the car out.": "delegation",
+};
+
+async function classifyFullUtterance(utterance: string): Promise<StaffInstructionClassification> {
+  const truth = AUTHORITATIVE_ROUTING_TRUTH[utterance.trim().toLowerCase()];
+  if (!truth) throw new Error(`No Gate 1 truth entry for: ${utterance}`);
+  return truth;
+}
+
+describe("C-02 — authoritative routing contract, proven at the actual routing-outcome level", () => {
   const people = roster();
 
-  it("TEST 1 — the exact Production canary: 'Ask Christopher to bring the car around at 6.' reaches sendDelegation marked as tracked work, bypassing the communication classifier", async () => {
-    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to bring the car around at 6.");
+  it("TEST 1 — the exact Production canary: 'Ask Christopher to bring the car around at 6.' reaches sendDelegation with the full utterance, and the classifier (given that full context) correctly says DELEGATION", async () => {
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
 
     const result = await executeDelegationFastPath(
       "Ask Christopher to bring the car around at 6.",
@@ -454,20 +507,25 @@ describe("C-02 — tracked operational work is never downgraded once the determi
       status: "sent",
       personName: "Christopher",
       taskText: "bring the car around at 6.",
+      response: "Done. I asked Christopher to bring the car around at 6.",
     });
-    // The flag that makes sendDelegation skip isCommunicationStyleTaskText
-    // entirely for this call (see ElevenLabsAgentWidget.tsx) — this is the
-    // proof the tracked lifecycle is reached instead of the direct-message
-    // reroute, independent of whatever the model-backed classifier would
-    // have said about this exact task text.
+    // The full utterance — not the stripped fragment — is what reaches the
+    // classifier boundary.
     expect(sendDelegationFn).toHaveBeenCalledWith(
       { name: "Christopher", task: "bring the car around at 6." },
-      { viaDeterministicFastPath: true },
+      { rawInstruction: "Ask Christopher to bring the car around at 6." },
     );
   });
 
-  it("TEST 2 — equivalent tracked staff work: 'Ask Christopher to prepare dinner at 7.' also bypasses the classifier via the deterministic match", async () => {
-    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to prepare dinner at 7.");
+  it("TEST 2 — equivalent tracked staff work: 'Ask Christopher to prepare dinner at 7.' also resolves to the tracked lifecycle via the classifier, not a bypass", async () => {
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
 
     const result = await executeDelegationFastPath(
       "Ask Christopher to prepare dinner at 7.",
@@ -475,15 +533,23 @@ describe("C-02 — tracked operational work is never downgraded once the determi
       { sendDelegationFn },
     );
 
-    expect(result).toMatchObject({ handled: true, status: "sent", personName: "Christopher" });
-    expect(sendDelegationFn).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ viaDeterministicFastPath: true }),
-    );
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      personName: "Christopher",
+      response: "Done. I asked Christopher to prepare dinner at 7.",
+    });
   });
 
-  it("TEST 3 — 'Ask Ghulam to bring the car out.' (pre-existing protected example) is unaffected — still reaches the tracked lifecycle the same way", async () => {
-    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Ghulam to bring the car out.");
+  it("TEST 3 — 'Ask Ghulam to bring the car out.' (pre-existing protected example) still resolves to the tracked lifecycle", async () => {
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
 
     const result = await executeDelegationFastPath(
       "Ask Ghulam to bring the car out.",
@@ -491,14 +557,70 @@ describe("C-02 — tracked operational work is never downgraded once the determi
       { sendDelegationFn },
     );
 
-    expect(result).toMatchObject({ handled: true, status: "sent", personName: "Ghulam" });
-    expect(sendDelegationFn).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ viaDeterministicFastPath: true }),
-    );
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      personName: "Ghulam",
+      response: "Done. I asked Ghulam to bring the car out.",
+    });
   });
 
-  it("TEST 4 — genuine direct communication is untouched: 'Tell Christopher I'll be home at 7.' never matches the deterministic delegation grammar, so it never reaches sendDelegation or the viaDeterministicFastPath flag at all", () => {
+  it("TEST 4 (regression, confirmed by PR #398) — 'Tell Christopher to wait for me in the kitchen.' matches the same deterministic grammar as tracked work, but the classifier (given the full utterance) correctly resolves it to a plain message, not a task", async () => {
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
+
+    // Proves the grammar DOES match (this is the exact case PR #398 got
+    // wrong by treating any match as automatically tracked).
+    expect(parseDelegationFastPath("Tell Christopher to wait for me in the kitchen.", people)).toEqual({
+      personName: "Christopher",
+      taskText: "wait for me in the kitchen.",
+    });
+
+    const result = await executeDelegationFastPath(
+      "Tell Christopher to wait for me in the kitchen.",
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      personName: "Christopher",
+      response: "I sent Christopher the message.",
+    });
+  });
+
+  it("TEST 5 — 'Ask Christopher to meet me outside.' (same regression family as TEST 4) also correctly resolves to a plain message", async () => {
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
+
+    const result = await executeDelegationFastPath(
+      "Ask Christopher to meet me outside.",
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      personName: "Christopher",
+      response: "I sent Christopher the message.",
+    });
+  });
+
+  it("TEST 6 — genuine direct communication is untouched: 'Tell Christopher I'll be home at 7.' never matches the deterministic delegation grammar, so it never reaches sendDelegation or the classifier at all", () => {
     expect(parseDelegationFastPath("Tell Christopher I'll be home at 7.", people)).toBeNull();
     // Falls to the direct-message fast path instead (parseSimpleDirectMessage),
     // which is unrelated to and unchanged by C-02.
@@ -508,9 +630,43 @@ describe("C-02 — tracked operational work is never downgraded once the determi
     });
   });
 
-  it("TEST 5 — voice/text convergence: both executeInstruction's (Talk) and sendTypedMessage's (Type) delegation fast-path call sites inject the exact same sendDelegation, so this fix applies identically to both channels", () => {
+  it("TEST 7 — the reported-desire pattern ('Tell Loulya I would like her to call me.') never matches the deterministic delegation grammar either, so it is structurally excluded from ever reaching the classifier via this path — proves E-axis correctness is structural, not a classifier judgment call", () => {
+    const loulya = [...people, person({ id: "p-loulya", name: "Loulya", phone: "+971500000009" })];
+    expect(parseDelegationFastPath("Tell Loulya I would like her to call me.", loulya)).toBeNull();
+    expect(parseSimpleDirectMessage("Tell Loulya I would like her to call me.", loulya)).toEqual({
+      recipientName: "Loulya",
+      messageText: "I would like her to call me.",
+    });
+  });
+
+  it("TEST 8 — voice/text convergence: both executeInstruction's (Talk) and sendTypedMessage's (Type) delegation fast-path call sites inject the exact same sendDelegation, so this fix applies identically to both channels", () => {
     const occurrences = WIDGET_SOURCE.match(/\{\s*sendDelegationFn:\s*sendDelegation\s*\}/g) ?? [];
     expect(occurrences.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // CodeRabbit finding, PR #401: executeInstruction's (voice) fast-path call
+  // site used to independently push "Delegated to X: Y" to sessionActionsRef
+  // (persisted into session memory) and re-record the canonical
+  // consequential result as kind: "delegation" whenever
+  // delegationFastPath.status === "sent" — without checking whether
+  // sendDelegation actually created a task or rerouted to a plain WhatsApp
+  // message. Since C-02 means a deterministic grammar match can now
+  // legitimately resolve to either outcome, that caller-side bookkeeping
+  // could persist a false "Delegated to..." memory entry and overwrite
+  // sendDelegation's own correct canonical result (kind: "direct_message")
+  // with the wrong one. Fixed by removing it — sendDelegation already owns
+  // this bookkeeping, correctly gated per-branch, internally — mirroring
+  // the typed fast path, which already never duplicated it (see the "Success
+  // bookkeeping... is owned by sendDelegation" comment in sendTypedMessage).
+  it("TEST 9 (CodeRabbit, PR #401) — executeInstruction's voice fast-path call site no longer re-records delegation bookkeeping based on delegationFastPath.status alone; that decision belongs to sendDelegation, which already knows which branch it took", () => {
+    const block = blockBetween(
+      "// ── Single-person delegation fast-path",
+      "console.log(\"[routine:TRACE] executeDelegationFromText called",
+    );
+    expect(block).not.toContain('delegationFastPath.status === "sent"');
+    expect(block).not.toContain("Delegated to ${delegationFastPath.personName}");
+    expect(block).not.toContain('kind: "delegation"');
+    expect(block).toContain("if (delegationFastPath.handled) {\n          return delegationFastPath.response;\n        }");
   });
 });
 
@@ -530,24 +686,26 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "const person = matches[0];",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("isCommunicationStyleTaskText(taskText)");
+    expect(block).toContain("isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)");
     expect(block).toContain("createAndSendDirectMessage(");
   });
 
   it("the communication-guard block never calls createAndSendDelegation — no task is created for a reroute", () => {
     const block = blockBetween(
-      "if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
+      "if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).not.toContain("createAndSendDelegation(");
   });
 
-  it("C-02 (2026-09-05): a deterministic-fast-path-recognized delegation skips the communication classifier entirely — the guard is not merely bypassed at runtime, it is not even evaluated", () => {
+  it("C-02 (2026-09-07): the classifier is always consulted (no bypass) and is given the full raw instruction when available, falling back to message then the bare task fragment only for the legacy model-composed call", () => {
     const block = blockBetween(
       "const person = matches[0];",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)");
+    expect(block).toContain("await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)");
+    // No unconditional-bypass flag survives from PR #398.
+    expect(block).not.toContain("viaDeterministicFastPath");
   });
 
   it("imports the shared classifier from the shared module exactly once", () => {
@@ -556,26 +714,26 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
     expect(importOccurrences).toHaveLength(1);
   });
 
-  // CodeRabbit finding, PR #398: viaDeterministicFastPath previously lived on
-  // sendDelegation's first `params` argument — the same object type the
-  // legacy send_delegation clientTool exposes to the model
+  // CodeRabbit finding, PR #398 (still applicable to C-02's rawInstruction,
+  // carried forward deliberately): a bypass/context field on sendDelegation
+  // must never live on the first `params` argument — the same object type
+  // the legacy send_delegation clientTool exposes to the model
   // (`Parameters<typeof sendDelegation>[0]`). A model-composed tool call
-  // could in principle have included that field in its own JSON arguments
-  // and bypassed the classifier for a non-deterministic call. Fixed by
-  // moving it to a genuinely separate second function argument that no
-  // client-tool JSON payload can ever populate.
-  it("C-02 hardening: viaDeterministicFastPath cannot be supplied by a model tool call — it is a second function argument, not a params field", () => {
+  // could in principle have included that field in its own JSON arguments.
+  // rawInstruction is kept as a genuinely separate second function argument
+  // that no client-tool JSON payload can ever populate.
+  it("C-02 hardening (carried forward from PR #398): rawInstruction cannot be supplied by a model tool call — it is a second function argument, not a params field", () => {
     const paramsBlock = blockBetween(
       "const sendDelegation = useCallback(\n    async (params: {",
       "    },\n    /**",
     );
-    expect(paramsBlock).not.toContain("viaDeterministicFastPath");
+    expect(paramsBlock).not.toContain("rawInstruction");
 
     const signatureBlock = blockBetween(
       "const sendDelegation = useCallback(",
       "): Promise<string> => {",
     );
-    expect(signatureBlock).toContain("internal?: { viaDeterministicFastPath?: boolean }");
+    expect(signatureBlock).toContain("internal?: { rawInstruction?: string }");
 
     // The legacy clientTool passes exactly one argument — sendDelegation(params) —
     // so `internal` is always undefined there, regardless of what the model's
@@ -638,7 +796,7 @@ describe("Direct-message send path never generates a confirmation link", () => {
 describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
   it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
     const block = blockBetween(
-      "if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {",
+      "if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).toContain("const successText = `I sent ${person.name} the message.`;");

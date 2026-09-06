@@ -58,6 +58,23 @@
  * (task never created, never followed up) is the worse failure mode than
  * over-tracking a plain message (visible in Waiting, correctable) — the
  * same fail-closed reasoning used throughout this project's security work.
+ *
+ * C-02 (2026-09-05/07 reconciliation) — INPUT CHANGE, not an axis change.
+ * Confirmed Production regression: "Ask Christopher to bring the car around
+ * at 6." fed to this classifier as the isolated task fragment ("bring the
+ * car around at 6.") was misclassified COMMUNICATION. Live-model evidence
+ * (real claude-haiku-4-5, not simulated, recorded in RA7ETBAL_STATE.md)
+ * showed this was a CONSISTENT failure (3/3), not a rare flake — and that
+ * merely feeding the full utterance with the same question changed nothing
+ * (also 3/3 wrong). What fixed it, verified across 42 real model calls with
+ * zero failures: keeping the exact same axis above, but (a) always passing
+ * the full original owner utterance instead of the isolated fragment, and
+ * (b) naming the one dimension the model was actually missing — that a
+ * direct instruction to the recipient counts as delegation even when the
+ * action is simple (e.g. placing a phone call), while a request relayed
+ * through the recipient on a third party's behalf does not. Callers now
+ * pass the full utterance (see sendDelegation's `internal.rawInstruction`
+ * in ElevenLabsAgentWidget.tsx) instead of the bare task fragment.
  */
 import { callAnthropicProxy } from "./anthropic-client";
 
@@ -66,16 +83,16 @@ export type StaffInstructionClassification = "communication" | "delegation";
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 10;
 
-function buildClassificationPrompt(taskText: string): string {
-  return `A household owner gave this instruction to be relayed to a staff member:
+function buildClassificationPrompt(utterance: string): string {
+  return `A household owner said this:
 
-"${taskText}"
+"${utterance}"
 
-Decide whether, once this message is delivered to the staff member, the owner needs an assistant (Carson) to keep tracking the matter and follow up if the staff member doesn't respond or confirm — or whether Carson's job is done the moment the message is delivered.
+Decide whether, once this is delivered to whoever it's about, the owner needs an assistant (Carson) to keep tracking the matter and follow up if that person doesn't respond or confirm — or whether Carson's job is done the moment it's delivered.
 
-COMMUNICATION: the staff member only needs to receive this — come somewhere, wait somewhere, meet someone, receive information, or respond personally. There is nothing for the staff member to complete or produce that needs verifying afterward.
+COMMUNICATION: the person only needs to receive this — come somewhere, wait somewhere, meet someone, receive information, or respond personally. There is nothing for them to complete or produce that needs verifying afterward. This includes a personal request being relayed or reported on someone else's behalf (e.g. "tell X I would like her to call me" is informing X of a wish, not issuing X a work order).
 
-DELEGATION: the staff member is being asked to complete, produce, or verify something. The owner needs to know whether it actually got done, and Carson should follow up if it doesn't.
+DELEGATION: the person is being directly instructed to complete, produce, or verify something as a piece of work. The owner needs to know whether it actually got done, and Carson should follow up if it doesn't. A direct instruction to a staff member to perform an action for the owner (e.g. "ask Grace to call me") counts as this, even if the action itself is simple.
 
 Respond with exactly one word: COMMUNICATION or DELEGATION.`;
 }

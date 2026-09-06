@@ -171,7 +171,7 @@ describe("executeDelegationFastPath", () => {
     });
     expect(sendDelegationFn).toHaveBeenCalledWith(
       { name: "Nasira", task: "clean the bedrooms and prepare for turndown" },
-      { viaDeterministicFastPath: true },
+      { rawInstruction: "ask Nasira to clean the bedrooms and prepare for turndown" },
     );
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/api/anthropic")),
@@ -199,7 +199,7 @@ describe("executeDelegationFastPath", () => {
     });
     expect(sendDelegationFn).toHaveBeenCalledWith(
       { name: "Ghulam", task: "bring the car" },
-      { viaDeterministicFastPath: true },
+      { rawInstruction: "tell Ghulam to bring the car" },
     );
   });
 
@@ -357,7 +357,7 @@ describe("executeDelegationFastPath", () => {
     expect((result as { personName?: string }).personName).toBe("Christopher");
     expect(sendDelegationFn).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Christopher" }),
-      expect.objectContaining({ viaDeterministicFastPath: true }),
+      expect.objectContaining({ rawInstruction: "ask Christopher to make these for lunch" }),
     );
   });
 
