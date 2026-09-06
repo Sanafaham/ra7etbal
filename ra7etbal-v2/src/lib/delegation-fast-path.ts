@@ -22,24 +22,23 @@ interface DelegationFastPathDeps {
     params: { name: string; task: string },
     /**
      * A genuinely internal second argument — NOT a property on `params`.
-     * The deterministic grammar below ("ask/tell/get X to Y", "have X Y")
-     * has already established, by construction, that a person is being
-     * asked to do something and owes an action/result — that is a
-     * tracked-work decision, not a delivery-only one. See the C-02 product
-     * decision (2026-09-05) in RA7ETBAL_STATE.md: once this deterministic
-     * path has recognized tracked operational work, sendDelegation's
-     * model-backed communication/delegation classifier
-     * (isCommunicationStyleTaskText) must not be allowed to downgrade it
-     * to a fire-and-forget message. The classifier remains the sole
-     * authority only for calls that did NOT come through this
-     * deterministic recognition (the legacy send_delegation clientTool,
-     * called directly by the model with its own composed name/task, never
-     * runs through parseDelegationFastPath). Kept as a second argument
-     * rather than a `params` field specifically so the model's own
-     * tool-call JSON — which becomes `params` verbatim for the legacy
-     * clientTool — can never supply it (CodeRabbit finding, PR #398).
+     * Kept as a second argument rather than a `params` field specifically
+     * so the model's own tool-call JSON — which becomes `params` verbatim
+     * for the legacy clientTool — can never supply it (CodeRabbit finding,
+     * PR #398).
+     *
+     * C-02 (2026-09-05/07): this used to carry `viaDeterministicFastPath`,
+     * an unconditional classifier bypass — itself a confirmed regression
+     * (it wrongly promoted "wait for me"/"meet me outside"-shaped grammar
+     * matches into tracked work, since they match the identical
+     * "ask/tell NAME to TASK" grammar as genuine tracked work with no
+     * syntactic way to tell them apart). Replaced with `rawInstruction`:
+     * the full original owner utterance (this function's own `instruction`
+     * parameter, unmodified) — sendDelegation's classifier now always
+     * runs, but sees the full utterance instead of the isolated task
+     * fragment. See RA7ETBAL_STATE.md for the Gate 1 evidence.
      */
-    internal: { viaDeterministicFastPath: true },
+    internal: { rawInstruction: string },
   ) => Promise<string>;
 }
 
@@ -157,7 +156,7 @@ export async function executeDelegationFastPath(
   try {
     const response = await deps.sendDelegationFn(
       { name: person.name, task: taskText },
-      { viaDeterministicFastPath: true },
+      { rawInstruction: instruction },
     );
     console.log("[fast_path_delegation_sent]", {
       name: person.name,

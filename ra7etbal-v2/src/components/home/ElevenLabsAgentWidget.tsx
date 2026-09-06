@@ -2038,22 +2038,37 @@ export default function ElevenLabsAgentWidget({
     },
     /**
      * Deliberately a SECOND function argument, never a property on the
-     * first `params` object above. The legacy send_delegation clientTool
-     * (registered below as `Parameters<typeof sendDelegation>[0]`) only
-     * ever calls `sendDelegation(params)` with the model's own single JSON
-     * tool-call argument — there is no mechanism for that call to supply a
-     * second argument, so a model-composed call can never set this flag,
-     * however it phrases its params. Only executeDelegationFastPath's
-     * injected sendDelegationFn (see DelegationFastPathDeps in
-     * delegation-fast-path.ts) passes it, and only as a literal `true`
-     * baked into that wiring, not sourced from any parseable input.
-     * (CodeRabbit, PR #398: the flag previously lived on `params` itself,
-     * which — since `send_delegation` is typed as
-     * `Parameters<typeof sendDelegation>[0]` — meant a legacy model tool
-     * call could in principle include it in its own JSON arguments and
-     * bypass the classifier below for a non-deterministic call.)
+     * first `params` object above — same reasoning as the CodeRabbit fix on
+     * PR #398 (the legacy send_delegation clientTool, registered below as
+     * `Parameters<typeof sendDelegation>[0]`, only ever calls
+     * `sendDelegation(params)` with the model's own single JSON tool-call
+     * argument, so it can never populate a second argument no matter how it
+     * phrases `params`).
+     *
+     * C-02 (2026-09-05/07 reconciliation): PR #398's `viaDeterministicFastPath`
+     * unconditional classifier bypass was itself a confirmed regression — it
+     * treated every deterministic grammar match as tracked work with no
+     * further check, which wrongly promoted "Tell Christopher to wait for me
+     * in the kitchen." and "Ask Christopher to meet me outside." (both match
+     * the same "ask/tell NAME to TASK" grammar as genuine tracked work) into
+     * tasks. Removed. Replaced with `rawInstruction`: the full original
+     * owner utterance, threaded through unmodified from
+     * executeDelegationFastPath's own `instruction` parameter (itself a
+     * plain synchronous argument at both real call sites — never derived
+     * from sessionTranscriptRef, which is proven unsafe here: in
+     * sendTypedMessage, the current turn is pushed to sessionTranscriptRef
+     * only AFTER executeDelegationFastPath/sendDelegation has already
+     * returned, so reading "the last user transcript entry" at call time
+     * would resolve to the PREVIOUS turn, not this one). The classifier
+     * below is always consulted now, but with the full utterance instead of
+     * the isolated task fragment — see communication-vs-delegation.ts's
+     * updated prompt and RA7ETBAL_STATE.md for the evidence (Gate 1: the
+     * isolated-fragment prompt got "bring the car around at 6." wrong 3/3,
+     * consistently, not a rare flake; the full-utterance prompt got it and
+     * every other deterministically-matched case right 100% across 42 real
+     * model calls).
      */
-    internal?: { viaDeterministicFastPath?: boolean },
+    internal?: { rawInstruction?: string },
   ): Promise<string> => {
       const normalizedName = extractPersonNameParam(params, "name").trim();
       const message = params?.message ?? extractMessageParam(params);
@@ -2280,35 +2295,51 @@ export default function ElevenLabsAgentWidget({
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
 
-      // CARSON PROTECTED BEHAVIORS — C-02 (2026-09-05 product decision,
-      // reconciled after a confirmed Production regression: "Ask Christopher
-      // to bring the car around at 6." was misclassified by the model-backed
-      // classifier below and rerouted to a fire-and-forget WhatsApp message,
-      // no tracked task, no accountability).
+      // CARSON PROTECTED BEHAVIORS — C-02 (2026-09-05/07 reconciliation,
+      // confirmed Production regression + confirmed follow-up regression).
       //
-      // A person being asked to do something and owing an action/result is
-      // tracked operational work, full stop — it does not matter whether the
-      // request also happens to name the owner as a beneficiary ("call me",
-      // "bring the car around at 6" are both someone being asked to perform
-      // an action). The ONLY instructions that should ever skip task
-      // creation are pure information delivery, where nobody owes a result
-      // after the message arrives (see direct-message-fast-path.ts) — those
-      // never reach this function at all, deterministically, at the parser
-      // level (parseSimpleDirectMessage/executeDirectMessageFastPath run and
-      // claim the instruction first; see the fast-path dispatch order in
-      // sendTypedMessage and executeInstruction).
+      // Two confirmed failures, same boundary:
+      // 1. "Ask Christopher to bring the car around at 6." was misclassified
+      //    by the model-backed classifier below, fed only the isolated task
+      //    fragment ("bring the car around at 6."), and rerouted to a
+      //    fire-and-forget WhatsApp message — no tracked task, no
+      //    accountability. Gate 1 evidence (real claude-haiku-4-5, not
+      //    simulated): given that isolated fragment, this is a CONSISTENT
+      //    misclassification (3/3), not a rare flake.
+      // 2. The first fix (PR #398) treated every deterministic
+      //    ask/tell/get-NAME-to-TASK grammar match as tracked work
+      //    unconditionally, skipping the classifier entirely on a match.
+      //    That wrongly promoted "Tell Christopher to wait for me in the
+      //    kitchen." and "Ask Christopher to meet me outside." into tracked
+      //    tasks — both match the identical grammar as genuine tracked work
+      //    ("Ask Christopher to prepare dinner."), and there is no syntactic
+      //    signal that tells them apart. Only a semantic judgment can:
+      //    does the recipient owe a producible/verifiable outcome (tracked),
+      //    or does Carson's job end the instant the two people are in the
+      //    same place / the recipient has been told something (direct)?
       //
-      // So: once executeDelegationFastPath's deterministic grammar has
-      // already recognized "ask/tell/get X to Y" or "have X Y" as tracked
-      // work (viaDeterministicFastPath === true), that recognition is final
-      // — the model-backed classifier below must not get a second,
-      // overriding vote and downgrade it to a plain message. The classifier
-      // remains the authority ONLY for send_delegation calls that did not
-      // come through that deterministic recognition — i.e. the legacy
-      // clientTool, called directly by the model with its own composed
-      // name/task (see src/lib/communication-vs-delegation.ts and the
-      // carson-protected-behaviors test suite, mandatory CI gate).
-      if (!internal?.viaDeterministicFastPath && await isCommunicationStyleTaskText(taskText)) {
+      // Fix: the classifier is ALWAYS consulted again (no bypass) — but it
+      // is now given the full original owner utterance (internal.rawInstruction,
+      // threaded from executeDelegationFastPath's own instruction argument —
+      // see the parameter doc above for why this is safe and
+      // sessionTranscriptRef is not) instead of the isolated task fragment.
+      // Gate 1 evidence: with full-utterance input and the updated prompt
+      // (communication-vs-delegation.ts), every deterministically-matched
+      // authoritative example resolved correctly and stably across 42 real
+      // model calls — the fragment-only prompt was the actual defect, not
+      // classifier unreliability in general.
+      //
+      // A separate, narrower, structural distinction handles the case the
+      // classifier is NOT asked to resolve at all: "Tell Loulya I would
+      // like her to call me." is never even a candidate here, because
+      // parseDelegationFastPath's own grammar (NAME immediately followed by
+      // "to VERB") already returns null for it — Loulya is not the
+      // grammatical actor of "call," so it never reaches sendDelegation via
+      // the deterministic path; it's claimed earlier by
+      // parseSimpleDirectMessage/executeDirectMessageFastPath instead. See
+      // carson-protected-behaviors.test.ts for the full authoritative
+      // routing-outcome test matrix (mandatory CI gate).
+      if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }
