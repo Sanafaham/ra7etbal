@@ -5261,24 +5261,26 @@ export default function ElevenLabsAgentWidget({
         // attaches an image when present (see createAndSendDelegation).
         // Falls through to executeDelegationFromText for multi-person, personal
         // notes, recurring, compound, or ambiguous instructions.
+        // CodeRabbit finding, PR #401: this caller-side block used to
+        // independently record "sent" as proof of a real delegation and
+        // duplicate sendDelegation's own bookkeeping (session-action memory
+        // entry, canonical-result recording) — but a deterministic grammar
+        // match can legitimately resolve to a plain-message reroute under
+        // C-02 (e.g. "wait for me in the kitchen"), and the fast-path result
+        // shape doesn't reveal which branch sendDelegation took. That made
+        // the caller-side copy wrong for a reroute (see
+        // carson-protected-behaviors.test.ts, TEST 9, for the exact
+        // reasoning). sendDelegation already owns this bookkeeping
+        // correctly, gated per-branch, internally — exactly the same
+        // reasoning the typed fast path already documents for not
+        // duplicating it (see "Success bookkeeping... is owned by
+        // sendDelegation" in sendTypedMessage below).
         const delegationFastPath = await executeDelegationFastPath(
           rawInstruction,
           { people, userId: authUserId, displayName },
           { sendDelegationFn: sendDelegation },
         );
         if (delegationFastPath.handled) {
-          if (delegationFastPath.status === "sent") {
-            sessionActionsRef.current.push(
-              `Delegated to ${delegationFastPath.personName}: ${delegationFastPath.taskText}`,
-            );
-            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-          }
-          recordCanonicalConsequentialResult({
-            toolName: "execute_instruction",
-            kind: "delegation",
-            resultText: delegationFastPath.response,
-            outcome: delegationFastPath.status === "sent" ? "success" : "failure",
-          });
           return delegationFastPath.response;
         }
 

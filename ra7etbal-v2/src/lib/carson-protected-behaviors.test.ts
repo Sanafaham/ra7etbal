@@ -643,6 +643,31 @@ describe("C-02 — authoritative routing contract, proven at the actual routing-
     const occurrences = WIDGET_SOURCE.match(/\{\s*sendDelegationFn:\s*sendDelegation\s*\}/g) ?? [];
     expect(occurrences.length).toBeGreaterThanOrEqual(2);
   });
+
+  // CodeRabbit finding, PR #401: executeInstruction's (voice) fast-path call
+  // site used to independently push "Delegated to X: Y" to sessionActionsRef
+  // (persisted into session memory) and re-record the canonical
+  // consequential result as kind: "delegation" whenever
+  // delegationFastPath.status === "sent" — without checking whether
+  // sendDelegation actually created a task or rerouted to a plain WhatsApp
+  // message. Since C-02 means a deterministic grammar match can now
+  // legitimately resolve to either outcome, that caller-side bookkeeping
+  // could persist a false "Delegated to..." memory entry and overwrite
+  // sendDelegation's own correct canonical result (kind: "direct_message")
+  // with the wrong one. Fixed by removing it — sendDelegation already owns
+  // this bookkeeping, correctly gated per-branch, internally — mirroring
+  // the typed fast path, which already never duplicated it (see the "Success
+  // bookkeeping... is owned by sendDelegation" comment in sendTypedMessage).
+  it("TEST 9 (CodeRabbit, PR #401) — executeInstruction's voice fast-path call site no longer re-records delegation bookkeeping based on delegationFastPath.status alone; that decision belongs to sendDelegation, which already knows which branch it took", () => {
+    const block = blockBetween(
+      "// ── Single-person delegation fast-path",
+      "console.log(\"[routine:TRACE] executeDelegationFromText called",
+    );
+    expect(block).not.toContain('delegationFastPath.status === "sent"');
+    expect(block).not.toContain("Delegated to ${delegationFastPath.personName}");
+    expect(block).not.toContain('kind: "delegation"');
+    expect(block).toContain("if (delegationFastPath.handled) {\n          return delegationFastPath.response;\n        }");
+  });
 });
 
 // ── 4. Shared handler wiring — sendDelegation() is the one place both channels
