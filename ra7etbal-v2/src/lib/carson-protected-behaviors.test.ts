@@ -71,7 +71,7 @@ vi.mock("./delivery", () => ({ deliverTaskMessage: vi.fn() }));
 // from loading at module init.
 vi.mock("./anthropic-client", () => ({ callAnthropicProxy: vi.fn() }));
 
-import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
+import { isCommunicationStyleTaskText, isReportedThirdPartyDesire } from "./communication-vs-delegation";
 import type { StaffInstructionClassification } from "./communication-vs-delegation";
 import { parseDelegationFastPath, executeDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
@@ -667,6 +667,94 @@ describe("C-02 — authoritative routing contract, proven at the actual routing-
     expect(block).not.toContain("Delegated to ${delegationFastPath.personName}");
     expect(block).not.toContain('kind: "delegation"');
     expect(block).toContain("if (delegationFastPath.handled) {\n          return delegationFastPath.response;\n        }");
+  });
+});
+
+// ── 3c. C-02 gap closure (2026-09-07): the E-axis structural exclusion
+//        previously lived ONLY inside parseDelegationFastPath, upstream of
+//        sendDelegation — meaning the legacy send_delegation clientTool
+//        (which the model calls directly with its own already-extracted
+//        name/task, never touching parseDelegationFastPath) had no
+//        structural protection at all and depended solely on the
+//        model-backed classifier, which Gate 1 measured at only ~77%
+//        reliable on exactly this construction ("Tell Loulya I would like
+//        her to call me."). Fixed by moving a verb-agnostic structural
+//        check (isReportedThirdPartyDesire) into isCommunicationStyleTaskText
+//        itself — the true shared entry point every caller of the
+//        classifier converges on, fast-path or legacy — so it now applies
+//        deterministically regardless of which channel or tool reached it.
+
+describe("C-02 gap closure — the legacy send_delegation clientTool is now structurally protected, not just classifier-dependent", () => {
+  it("isReportedThirdPartyDesire recognizes the exact Gate-1-unreliable construction, verb-agnostically", () => {
+    expect(isReportedThirdPartyDesire("I would like her to call me")).toBe(true);
+    expect(isReportedThirdPartyDesire("I would like him to bring the car")).toBe(true);
+    expect(isReportedThirdPartyDesire("I want them to arrange the guest room")).toBe(true);
+    expect(isReportedThirdPartyDesire("I wish her to visit")).toBe(true);
+  });
+
+  // CodeRabbit finding, PR #402: "I'd like" (both apostrophe styles — ASCII
+  // ' and curly ’, both real in typed/transcribed text) is at least as
+  // common as the fully spelled "I would like" and must resolve identically.
+  it("isReportedThirdPartyDesire recognizes the 'I'd like' contraction, both apostrophe styles", () => {
+    expect(isReportedThirdPartyDesire("I'd like her to call me")).toBe(true);
+    expect(isReportedThirdPartyDesire("I’d like her to call me")).toBe(true);
+    expect(isReportedThirdPartyDesire("I'd like him to bring the car")).toBe(true);
+  });
+
+  it("isReportedThirdPartyDesire does not false-positive on any authoritative tracked example", () => {
+    for (const text of [
+      "Ask Grace to call me.",
+      "Ask Christopher to bring the car around at 6.",
+      "Ask Christopher to prepare dinner.",
+      "Tell Grace to arrange the guest room.",
+      "Have Christopher buy milk.",
+    ]) {
+      expect(isReportedThirdPartyDesire(text)).toBe(false);
+    }
+  });
+
+  it("isCommunicationStyleTaskText short-circuits to communication on a reported third-party desire without ever calling the injected classifier — proving this is deterministic, not classifier-dependent", async () => {
+    const classifyFn = vi.fn<(text: string) => Promise<StaffInstructionClassification>>()
+      .mockResolvedValue("delegation"); // deliberately the WRONG answer, to prove it's never consulted
+    const result = await isCommunicationStyleTaskText(
+      "Tell Loulya I would like her to call me.",
+      classifyFn,
+    );
+    expect(result).toBe(true);
+    expect(classifyFn).not.toHaveBeenCalled();
+  });
+
+  it("simulates the legacy send_delegation clientTool call shape directly — no rawInstruction, no parseDelegationFastPath involved, message carries the relayed-desire phrasing — and proves it now resolves to communication deterministically", async () => {
+    // Mirrors exactly what the legacy tool passes: sendDelegation(params)
+    // with a single argument, `internal` undefined, so the classifier call
+    // inside sendDelegation would evaluate `internal?.rawInstruction ??
+    // message ?? taskText` down to `message`.
+    const params = {
+      name: "Loulya",
+      task: "call me",
+      message: "I would like her to call me",
+    };
+    const internal = undefined;
+    const classificationInput = (internal as { rawInstruction?: string } | undefined)?.rawInstruction
+      ?? params.message
+      ?? params.task;
+
+    const classifyFn = vi.fn<(text: string) => Promise<StaffInstructionClassification>>()
+      .mockResolvedValue("delegation");
+    const isCommunication = await isCommunicationStyleTaskText(classificationInput, classifyFn);
+
+    expect(isCommunication).toBe(true);
+    expect(classifyFn).not.toHaveBeenCalled();
+  });
+
+  it("the deterministic check runs inside isCommunicationStyleTaskText itself — the one shared entry point — not inside a fast-path-only helper, so no caller can bypass it", () => {
+    const source = readFileSync(join(__dirname, "communication-vs-delegation.ts"), "utf-8");
+    const start = source.indexOf("export async function isCommunicationStyleTaskText(");
+    const end = source.indexOf("\n}", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = source.slice(start, end);
+    expect(block).toContain("isReportedThirdPartyDesire(taskText)");
   });
 });
 
