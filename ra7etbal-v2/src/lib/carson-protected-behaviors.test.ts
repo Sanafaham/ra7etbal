@@ -692,6 +692,15 @@ describe("C-02 gap closure — the legacy send_delegation clientTool is now stru
     expect(isReportedThirdPartyDesire("I wish her to visit")).toBe(true);
   });
 
+  // CodeRabbit finding, PR #402: "I'd like" (both apostrophe styles — ASCII
+  // ' and curly ’, both real in typed/transcribed text) is at least as
+  // common as the fully spelled "I would like" and must resolve identically.
+  it("isReportedThirdPartyDesire recognizes the 'I'd like' contraction, both apostrophe styles", () => {
+    expect(isReportedThirdPartyDesire("I'd like her to call me")).toBe(true);
+    expect(isReportedThirdPartyDesire("I’d like her to call me")).toBe(true);
+    expect(isReportedThirdPartyDesire("I'd like him to bring the car")).toBe(true);
+  });
+
   it("isReportedThirdPartyDesire does not false-positive on any authoritative tracked example", () => {
     for (const text of [
       "Ask Grace to call me.",

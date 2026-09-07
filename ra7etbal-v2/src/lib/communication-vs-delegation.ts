@@ -97,8 +97,11 @@ import { callAnthropicProxy } from "./anthropic-client";
  * one, without a new architecture and without touching the classifier
  * prompt.
  */
+// CodeRabbit finding, PR #402: "I'd like" (either apostrophe style — ASCII
+// ' or curly ’, both real in typed/transcribed text) is at least as common
+// as the fully spelled "I would like" and must resolve identically.
 const REPORTED_THIRD_PARTY_DESIRE =
-  /\bi\s+(?:would\s+like|want|wish|need)\s+(?:him|her|them)\s+to\s+\S/i;
+  /\bi\s*(?:would\s+like|['’]d\s+like|want|wish|need)\s+(?:him|her|them)\s+to\s+\S/i;
 
 /**
  * True when the text reports a third party's desire/preference through the
