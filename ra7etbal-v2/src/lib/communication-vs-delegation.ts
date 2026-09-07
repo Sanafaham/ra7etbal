@@ -78,6 +78,39 @@
  */
 import { callAnthropicProxy } from "./anthropic-client";
 
+/**
+ * C-02 gap closure (2026-09-07): the deterministic E-axis exclusion — is the
+ * named recipient actually the direct grammatical actor, or is this a
+ * reported/relayed third-party desire ("Tell Loulya I would like her to
+ * call me.") — previously existed ONLY inside parseDelegationFastPath, on
+ * the raw instruction text, upstream of sendDelegation. That structural
+ * check never ran at all for the legacy send_delegation clientTool, since
+ * the model calls sendDelegation(params) directly with its own already-
+ * extracted name/task, bypassing parseDelegationFastPath entirely. Gate 1
+ * evidence: for that exact construction, the semantic classifier ALONE was
+ * only ~77% reliable (23% failure, always toward wrongly saying
+ * DELEGATION) — not safe to rely on as the sole authority. This pattern is
+ * verb-agnostic (it doesn't care what the reported action is, only that it
+ * is reported rather than instructed) and requires no reference to fast
+ * path grammar — it can be tested directly on whatever text is available
+ * to sendDelegation, closing the gap for every caller including the legacy
+ * one, without a new architecture and without touching the classifier
+ * prompt.
+ */
+const REPORTED_THIRD_PARTY_DESIRE =
+  /\bi\s+(?:would\s+like|want|wish|need)\s+(?:him|her|them)\s+to\s+\S/i;
+
+/**
+ * True when the text reports a third party's desire/preference through the
+ * recipient ("I would like her to call me") rather than instructing the
+ * recipient themselves to do something. Deterministic, no network call —
+ * checked before the model-backed classifier below, and short-circuits it
+ * when true (see isCommunicationStyleTaskText).
+ */
+export function isReportedThirdPartyDesire(text: string): boolean {
+  return REPORTED_THIRD_PARTY_DESIRE.test(text.trim());
+}
+
 export type StaffInstructionClassification = "communication" | "delegation";
 
 const MODEL = "claude-haiku-4-5";
@@ -142,6 +175,14 @@ export async function isCommunicationStyleTaskText(
   taskText: string,
   classifyFn: (text: string) => Promise<StaffInstructionClassification> = classifyStaffInstructionViaModel,
 ): Promise<boolean> {
+  // Deterministic E-axis check first (see isReportedThirdPartyDesire above)
+  // — short-circuits the model-backed classifier entirely when it matches,
+  // both for reliability (Gate 1: the classifier alone was only ~77%
+  // reliable on this exact construction) and to avoid the network call.
+  // Runs for every caller of this shared entry point, including the legacy
+  // send_delegation clientTool, which never goes through
+  // parseDelegationFastPath's own structural exclusion.
+  if (isReportedThirdPartyDesire(taskText)) return true;
   const classification = await classifyFn(taskText);
   return classification === "communication";
 }
