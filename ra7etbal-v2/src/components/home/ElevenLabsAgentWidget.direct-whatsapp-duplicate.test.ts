@@ -84,9 +84,17 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
   // direct-WhatsApp duplicate guard as send_direct_whatsapp_message — this
   // is by design, not a leak between the two guards.
   it("the genuine delegation send path (task creation) still never uses the direct WhatsApp duplicate guard", () => {
+    // Ends at sendDelegationCompat's own declaration, not "// Client tool:
+    // create_reminder" — sendDelegationCompat (C-02 legacy containment,
+    // 2026-09-07) sits between sendDelegation and the client tools
+    // registration, and it legitimately uses the direct WhatsApp duplicate
+    // guard for its own executeDirectMessageFastPath call (see
+    // carson-protected-behaviors.test.ts); a wider end anchor here would
+    // swallow that unrelated, correct usage into this "delegation send path
+    // never uses it" assertion.
     const delegationSendBlock = blockBetween(
       "// 3. Cooldown.",
-      "// Client tool: create_reminder",
+      "const sendDelegationCompat = useCallback(",
     );
 
     expect(delegationSendBlock).toContain("findRecentDuplicateDelegation");

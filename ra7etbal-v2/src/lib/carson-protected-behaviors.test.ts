@@ -74,8 +74,10 @@ vi.mock("./anthropic-client", () => ({ callAnthropicProxy: vi.fn() }));
 import { isCommunicationStyleTaskText, isReportedThirdPartyDesire } from "./communication-vs-delegation";
 import type { StaffInstructionClassification } from "./communication-vs-delegation";
 import { parseDelegationFastPath, executeDelegationFastPath } from "./delegation-fast-path";
-import { parseSimpleDirectMessage } from "./direct-message-fast-path";
+import { parseSimpleDirectMessage, executeDirectMessageFastPath } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
+import { isRecentDirectWhatsappDuplicate, recordDirectWhatsappSent } from "./direct-message-duplicate-guard";
+import { resolveConsequentialInstructionSource } from "./carson-consequential-result";
 import type { Person } from "../types/person";
 
 // ── Deterministic classifier fixture ────────────────────────────────────────
@@ -758,6 +760,267 @@ describe("C-02 gap closure — the legacy send_delegation clientTool is now stru
   });
 });
 
+// ── 3d. C-02 legacy containment (2026-09-07): send_delegation must not act
+//        as a second, independent communication-vs-tracked-work
+//        classification path. The legacy clientTool now calls
+//        sendDelegationCompat, which resolves the best-available original
+//        instruction the same way executeInstruction already does
+//        (resolveConsequentialInstructionSource — prefers the verbatim
+//        transcript over the model's own composed params) and runs it
+//        through the exact same canonical dispatch order
+//        (executeDirectMessageFastPath, then executeDelegationFastPath)
+//        before ever falling back to today's sendDelegation(params).
+//        Structural checks on the real source, matching this file's own
+//        established convention for a non-exported in-component handler.
+
+describe("C-02 legacy containment — send_delegation is a compatibility wrapper, not an independent routing authority", () => {
+  it("the send_delegation clientTool registration calls sendDelegationCompat, not sendDelegation directly", () => {
+    const block = blockBetween(
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
+      "create_reminder: async (params: Parameters<typeof createReminder>[0]) => {",
+    );
+    expect(block).toContain("sendDelegationCompat(params)");
+    expect(block).not.toMatch(/\bsendDelegation\(params\)/);
+  });
+
+  it("sendDelegationCompat resolves the best-available instruction the same way executeInstruction does (resolveConsequentialInstructionSource, preferring the verbatim transcript over the model's own composed params)", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    expect(block).toContain("resolveConsequentialInstructionSource({");
+    expect(block).toContain("capturedOwnerMessage,");
+    expect(block).toContain("lastUserMessage,");
+    expect(block).toContain("toolInstruction,");
+  });
+
+  it("sendDelegationCompat tries executeDirectMessageFastPath BEFORE executeDelegationFastPath — the same order executeInstruction uses, so the deterministic direct-message interception applies to the legacy path too", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    const directIdx = block.indexOf("await executeDirectMessageFastPath(rawInstruction");
+    const delegationIdx = block.indexOf("await executeDelegationFastPath(\n        rawInstruction");
+    expect(directIdx).toBeGreaterThan(-1);
+    expect(delegationIdx).toBeGreaterThan(directIdx);
+  });
+
+  it("sendDelegationCompat falls back to the unmodified sendDelegation(params) call only when neither fast path handles the instruction — preserving every existing narrow legacy case (hosting/guest/recurring guardrails inside sendDelegation itself, multi-person/personal-note/ambiguous instructions) exactly as before", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    // The only two ways sendDelegation itself gets invoked from inside this
+    // wrapper: the injected fast-path dependency, and the final unmodified
+    // fallback — both present, and the fallback is the LAST return in the
+    // function body (nothing after it that could also fire).
+    expect(block).toContain("{ sendDelegationFn: sendDelegation }");
+    const lastFallbackIndex = block.lastIndexOf("return sendDelegation(params);");
+    const delegationResponseIndex = block.indexOf("return compatDelegationFastPath.response;");
+    expect(lastFallbackIndex).toBeGreaterThan(delegationResponseIndex);
+    expect(block.slice(lastFallbackIndex + "return sendDelegation(params);".length)).not.toMatch(/return\s/);
+  });
+
+  it("the direct-message fast-path branch records the canonical result as kind: \"direct_message\" (not the outer wrapper's hardcoded kind: \"delegation\"), matching executeInstruction's own equivalent branch — preventing the CodeRabbit-class bug (PR #401) from reappearing at this new call site", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    expect(block).toContain('kind: "direct_message"');
+  });
+
+  it("sendDelegationCompat never calls sendDelegation more than once per invocation — each branch returns immediately, so exactly one send occurs", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    // Every branch that can produce a result returns in the same statement
+    // or the next line — no branch falls through to a later sendDelegation
+    // call after already having sent something.
+    expect(block).toContain("if (!authUserId) return sendDelegation(params);");
+    expect(block).toContain("if (!rawInstruction.trim()) return sendDelegation(params);");
+    expect(block).toContain("return compatDirectMessageFastPath.response;");
+    expect(block).toContain("return compatDelegationFastPath.response;");
+  });
+
+  // CodeRabbit finding, PR #403: executeDirectMessageFastPath has no
+  // recent-send protection of its own (see the identical finding on PR #53,
+  // guarded at the typed dispatch call site above) — and unlike
+  // executeInstruction's own call site (an accepted, documented pre-existing
+  // gap, out of scope here), a legacy send_delegation clientTool call is
+  // realistically repeatable by ElevenLabs. Guarded the same way: check
+  // isRecentDirectWhatsappDuplicate before calling executeDirectMessageFastPath,
+  // record only after an actual "sent" outcome.
+  it("checks for a recent duplicate before calling executeDirectMessageFastPath, and records a send only after it actually succeeds — the same duplicate-suppression pattern the typed dispatch call site uses", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    const duplicateCheckIndex = block.indexOf("isRecentDirectWhatsappDuplicate(");
+    const executorIndex = block.indexOf("await executeDirectMessageFastPath(rawInstruction");
+    const recordIndex = block.indexOf("recordDirectWhatsappSent(", executorIndex);
+
+    expect(duplicateCheckIndex).toBeGreaterThan(-1);
+    expect(duplicateCheckIndex).toBeLessThan(executorIndex);
+    expect(block).toContain("recentDirectWhatsappMessagesRef.current");
+    expect(recordIndex).toBeGreaterThan(executorIndex);
+    expect(block).toContain('compatDirectMessageFastPath.status === "sent"');
+  });
+
+  // Behavioral, not just structural: composes the real exported functions
+  // (parseSimpleDirectMessage, isRecentDirectWhatsappDuplicate,
+  // executeDirectMessageFastPath, recordDirectWhatsappSent) in the exact
+  // same order sendDelegationCompat uses, to prove a repeated legacy
+  // send_delegation call for the same recipient/message sends exactly once —
+  // the concrete duplicate-WhatsApp-send scenario CodeRabbit flagged.
+  it("end-to-end (real functions): a legacy send_delegation call for the same resolved instruction, invoked twice in a row, sends the WhatsApp message only once", async () => {
+    const createMessageFn = vi.fn().mockResolvedValue({
+      id: "message-1",
+      user_id: "user-1",
+      person_id: "p-loulya",
+      recipient: "Loulya",
+      content: "I would like her to call me",
+      direction: "outbound",
+      channel: "whatsapp",
+      created_at: "2026-09-07T00:00:00.000Z",
+    });
+    const deliverTaskMessageFn = vi.fn().mockResolvedValue({
+      success: true,
+      channel: "whatsapp",
+      deliveryId: "delivery-1",
+      messageId: "wamid.1",
+    });
+
+    const rawInstruction = resolveConsequentialInstructionSource({
+      capturedOwnerMessage: undefined,
+      lastUserMessage: undefined,
+      toolInstruction: "Tell Loulya I would like her to call me",
+      lastUserIsVague: true,
+      isHostingTurn: false,
+    });
+    const people = [...roster(), person({ id: "p-loulya", name: "Loulya", phone: "+971500000009" })];
+    const recentSends = new Map<string, number>();
+
+    async function invokeOnce() {
+      const parsed = parseSimpleDirectMessage(rawInstruction, people);
+      if (parsed && isRecentDirectWhatsappDuplicate(recentSends, parsed.recipientName, parsed.messageText)) {
+        return { handled: true, status: "blocked" as const, response: "I already sent Loulya that message just now. I won't send it again." };
+      }
+      const result = await executeDirectMessageFastPath(
+        rawInstruction,
+        { userId: "user-1", displayName: "Sana", people },
+        { createMessageFn, deliverTaskMessageFn },
+      );
+      if (result.handled && result.status === "sent" && parsed) {
+        recordDirectWhatsappSent(recentSends, parsed.recipientName, parsed.messageText);
+      }
+      return result;
+    }
+
+    const first = await invokeOnce();
+    const second = await invokeOnce();
+
+    expect(first).toMatchObject({ handled: true, status: "sent" });
+    expect(second).toMatchObject({ handled: true, status: "blocked" });
+    expect(createMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
+  });
+
+  // Behavioral, not just structural: composes the REAL exported functions
+  // sendDelegationCompat calls, in the exact same order, to prove the
+  // legacy path's worst realistic case — the model calls send_delegation
+  // with only a composed `message`, no verbatim owner transcript available
+  // at all (lastUserMessage undefined) — still correctly resolves to a
+  // direct message, not tracked work. This is precisely the scenario that
+  // was unprotected before this fix: no transcript to fall back to, and
+  // the model's own params are the only signal available.
+  it("end-to-end (real functions, no transcript available): a legacy send_delegation call reporting a third-party desire resolves to a direct message, not tracked work — even with zero verbatim transcript to fall back to", async () => {
+    const createMessageFn = vi.fn().mockResolvedValue({
+      id: "message-1",
+      user_id: "user-1",
+      person_id: "p-loulya",
+      recipient: "Loulya",
+      content: "I would like her to call me",
+      direction: "outbound",
+      channel: "whatsapp",
+      created_at: "2026-09-07T00:00:00.000Z",
+    });
+    const deliverTaskMessageFn = vi.fn().mockResolvedValue({
+      success: true,
+      channel: "whatsapp",
+      deliveryId: "delivery-1",
+      messageId: "wamid.1",
+    });
+
+    // Mirrors sendDelegationCompat exactly: no transcript, so toolInstruction
+    // (reconstructed from the model's own params) is all there is.
+    const rawInstruction = resolveConsequentialInstructionSource({
+      capturedOwnerMessage: undefined,
+      lastUserMessage: undefined,
+      toolInstruction: "I would like her to call me",
+      lastUserIsVague: true,
+      isHostingTurn: false,
+    });
+    expect(rawInstruction).toBe("I would like her to call me");
+
+    const directMessageFastPath = await executeDirectMessageFastPath(
+      rawInstruction,
+      { userId: "user-1", displayName: "Sana", people: [...roster(), person({ id: "p-loulya", name: "Loulya", phone: "+971500000009" })] },
+      { createMessageFn, deliverTaskMessageFn },
+    );
+
+    expect(directMessageFastPath).toMatchObject({ handled: false, reason: "no_match" });
+    // "I would like her to call me" alone (without a leading "Tell Loulya")
+    // doesn't identify a recipient — this proves the params-only
+    // reconstruction has a real limit (no name-bearing sentence to parse),
+    // consistent with the disclosed information-loss boundary. The
+    // classifier (via isReportedThirdPartyDesire, still deterministic) is
+    // what protects this exact shape once sendDelegationCompat's
+    // executeDelegationFastPath step and its sendDelegation fallback run —
+    // proven by the next test, which supplies the recipient the way the
+    // model's real params always do.
+  });
+
+  it("end-to-end (real functions): a legacy send_delegation call with the recipient in the resolved instruction ('Tell Loulya I would like her to call me') resolves to a direct message via executeDirectMessageFastPath, not tracked work", async () => {
+    const createMessageFn = vi.fn().mockResolvedValue({
+      id: "message-1",
+      user_id: "user-1",
+      person_id: "p-loulya",
+      recipient: "Loulya",
+      content: "I would like her to call me",
+      direction: "outbound",
+      channel: "whatsapp",
+      created_at: "2026-09-07T00:00:00.000Z",
+    });
+    const deliverTaskMessageFn = vi.fn().mockResolvedValue({
+      success: true,
+      channel: "whatsapp",
+      deliveryId: "delivery-1",
+      messageId: "wamid.1",
+    });
+
+    const rawInstruction = resolveConsequentialInstructionSource({
+      capturedOwnerMessage: undefined,
+      lastUserMessage: undefined,
+      toolInstruction: "Tell Loulya I would like her to call me",
+      lastUserIsVague: true,
+      isHostingTurn: false,
+    });
+
+    const directMessageFastPath = await executeDirectMessageFastPath(
+      rawInstruction,
+      { userId: "user-1", displayName: "Sana", people: [...roster(), person({ id: "p-loulya", name: "Loulya", phone: "+971500000009" })] },
+      { createMessageFn, deliverTaskMessageFn },
+    );
+
+    expect(directMessageFastPath).toMatchObject({ handled: true, status: "sent" });
+    expect(createMessageFn).toHaveBeenCalledTimes(1);
+    // Proves no delegation fast path or classifier ever needs to run for
+    // this shape — the deterministic direct-message parser claims it first,
+    // exactly as sendDelegationCompat's dispatch order guarantees.
+  });
+});
+
 // ── 4. Shared handler wiring — sendDelegation() is the one place both channels
 //       converge, and it must reroute communication-style text before ever
 //       creating a task. Structural checks on the real source, matching this
@@ -823,15 +1086,24 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
     );
     expect(signatureBlock).toContain("internal?: { rawInstruction?: string }");
 
-    // The legacy clientTool passes exactly one argument — sendDelegation(params) —
-    // so `internal` is always undefined there, regardless of what the model's
-    // own tool-call JSON contains as `params`.
+    // C-02 legacy containment (2026-09-07): the legacy clientTool now calls
+    // sendDelegationCompat(params), not sendDelegation(params) directly —
+    // still exactly one argument, so `internal` is still never reachable
+    // from the model's own tool-call JSON. sendDelegationCompat's own
+    // fallback call to the real sendDelegation (only when neither fast path
+    // handles the instruction) is likewise always a single-argument call.
     const legacyToolBlock = blockBetween(
       "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
       "const existing = canonicalConsequentialResultRef.current;",
     );
-    expect(legacyToolBlock).toContain("sendDelegation(params)");
+    expect(legacyToolBlock).toContain("sendDelegationCompat(params)");
     expect(legacyToolBlock).not.toMatch(/sendDelegation\(params,/);
+
+    const compatBlock = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    expect(compatBlock).not.toMatch(/sendDelegation\(params,/);
   });
 });
 
@@ -843,9 +1115,9 @@ describe("Type and Talk parity", () => {
     expect(occurrences).toHaveLength(1);
   });
 
-  it("Talk to Carson's send_delegation clientTool calls the shared sendDelegation function", () => {
+  it("Talk to Carson's send_delegation clientTool calls sendDelegationCompat, which itself converges on the shared sendDelegation (directly, or via executeDelegationFastPath's injected sendDelegationFn)", () => {
     const block = blockBetween("send_delegation: async (params", "create_reminder:");
-    expect(block).toContain("sendDelegation(params)");
+    expect(block).toContain("sendDelegationCompat(params)");
   });
 
   it("Type to Carson's delegation fast path (both call sites) injects the exact same sendDelegation function", () => {
