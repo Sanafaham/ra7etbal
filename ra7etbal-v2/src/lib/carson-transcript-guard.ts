@@ -71,7 +71,7 @@ const CLOSING_LEAD_RE =
   /^(no,?\s*that('s| is) all|that('s| is) all|got it|okay|ok|alright|all right|sounds good)[.!]?\s*/i;
 
 const ACTIONABLE_REMAINDER_RE =
-  /\?|\b(please|can you|could you|would you|remind|reminder|call|phone|text|message|whatsapp|send|tell|ask|schedule|book|appointment|calendar|meeting|buy|order|cancel|delete|remove|add|create|note|remember|todo|task|delegate|email)\b/i;
+  /\?|\b(please|can you|could you|would you|remind|reminder|call|phone|text|message|whatsapp|send|tell|ask|schedule|book|appointment|calendar|meeting|buy|order|cancel|delete|remove|add|create|note|remember|todo|task|delegate|email|turn|switch|dim|lock|unlock|open|close|set|play|stop|start|pause|mute|unmute)\b/i;
 
 const SOCIAL_ACKNOWLEDGMENT_LEADS: Array<[RegExp, string]> = [
   [THANKS_LEAD_RE, "You're welcome!"],

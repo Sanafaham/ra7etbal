@@ -16,10 +16,18 @@ const SENTENCE_ABBREVIATIONS = new Set([
   'mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr', 'prof', 'vs', 'etc', 'no',
 ]);
 
+// Each returned clause carries whether its FIRST character sits inside an
+// still-open double quote (an odd number of `"` seen in every prior clause),
+// so normalizeFirstPersonForOwner can leave quoted reported speech alone even
+// when the quote spans more than one clause — e.g. `She said, "I am leaving.
+// I'll return later."` previously rewrote the second sentence's leading
+// "I'll" (a real, reproduced bug) because clause-splitting has no concept of
+// which clause is still inside the quote the first clause opened.
 function splitIntoSentenceClauses(text) {
   const boundary = /[.!?]+(\s+)/g;
   const clauses = [];
   let start = 0;
+  let quoteCountBeforeStart = 0;
   let match;
   while ((match = boundary.exec(text))) {
     const punctuationEnd = match.index + match[0].length - match[1].length;
@@ -30,10 +38,12 @@ function splitIntoSentenceClauses(text) {
     const isDecimal = /\d$/.test(before) && /^\d/.test(after);
     if (isAbbreviation || isDecimal) continue;
     const clauseEnd = match.index + match[0].length;
-    clauses.push(text.slice(start, clauseEnd));
+    const clauseText = text.slice(start, clauseEnd);
+    clauses.push({ text: clauseText, insideQuote: quoteCountBeforeStart % 2 === 1 });
+    quoteCountBeforeStart += (clauseText.match(/"/g) || []).length;
     start = clauseEnd;
   }
-  clauses.push(text.slice(start));
+  clauses.push({ text: text.slice(start), insideQuote: quoteCountBeforeStart % 2 === 1 });
   return clauses;
 }
 
@@ -88,7 +98,8 @@ export function normalizeFirstPersonForOwner(messageText, ownerName) {
   if (clauses.length <= 1) return normalizeClause(trimmed, owner);
 
   let changed = false;
-  const normalized = clauses.map((clause) => {
+  const normalized = clauses.map(({ text: clause, insideQuote }) => {
+    if (insideQuote) return clause;
     const result = normalizeClause(clause, owner);
     if (result !== clause) changed = true;
     return result;

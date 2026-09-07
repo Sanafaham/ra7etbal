@@ -123,6 +123,12 @@ describe("matchCarsonSocialAcknowledgment", () => {
       ).toBeNull();
     });
 
+    it("acknowledgment followed by a bare imperative (no request-shaped cue word) is still recognized as actionable", () => {
+      expect(
+        matchCarsonSocialAcknowledgment("Thanks. Turn the lights on"),
+      ).toBeNull();
+    });
+
     it("acknowledgment followed by a long, genuinely-unclear-length remainder is NOT treated as a pure ack (falls through to normal capture handling instead of guessing)", () => {
       expect(
         matchCarsonSocialAcknowledgment(

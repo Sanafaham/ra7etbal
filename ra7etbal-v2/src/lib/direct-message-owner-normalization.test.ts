@@ -47,6 +47,11 @@ describe("normalizeFirstPersonForOwner", () => {
     expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
   });
 
+  it("does not rewrite a second sentence that remains inside a quote spanning multiple clauses", () => {
+    const text = 'She said, "I am leaving. I\'ll return later."';
+    expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+  });
+
   it("returns the input unchanged when no owner name is available", () => {
     expect(normalizeFirstPersonForOwner("I have no Wi-Fi.", null)).toBe(
       "I have no Wi-Fi.",

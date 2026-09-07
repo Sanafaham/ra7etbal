@@ -612,6 +612,8 @@ export default async function handler(req, res) {
               `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
               { headers: { Authorization: `Bearer ${access_token}` } },
             );
+          } else if (retry.status === 400 || retry.status === 401) {
+            return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
           }
         }
         if (!eventsRes.ok) return res.status(502).json({ ok: false, error: "Failed to search calendar history" });
@@ -797,6 +799,30 @@ export default async function handler(req, res) {
             `https://www.googleapis.com/calendar/v3/calendars/primary/events?${eventsParams}`,
             { headers: { Authorization: `Bearer ${access_token}` } },
           );
+        } else if (retry.status === 400 || retry.status === 401) {
+          if (shouldClearRevokedCalendarCredentials(req.query)) {
+            await fetch(
+              `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`,
+              {
+                method: "PATCH",
+                headers: {
+                  apikey: serviceKey,
+                  Authorization: `Bearer ${serviceKey}`,
+                  "Content-Type": "application/json",
+                  Prefer: "return=minimal",
+                },
+                body: JSON.stringify({
+                  google_refresh_token: null,
+                  google_calendar_connected_at: null,
+                }),
+              },
+            );
+          }
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+          res.setHeader("Surrogate-Control", "no-store");
+          return res.status(200).json({ connected: false, revoked: true, events: [] });
         }
       }
 
@@ -993,6 +1019,12 @@ export default async function handler(req, res) {
               body: JSON.stringify(eventBody),
             },
           );
+        } else if (retryToken.status === 400 || retryToken.status === 401) {
+          return res.status(200).json({
+            ok: false,
+            code: "reconnect_required",
+            error: "Google Calendar needs to be reconnected in Settings to allow event creation.",
+          });
         }
       }
 
@@ -1083,6 +1115,8 @@ export default async function handler(req, res) {
               `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
               { headers: { Authorization: `Bearer ${access_token}` } },
             );
+          } else if (retry.status === 400 || retry.status === 401) {
+            return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
           }
         }
         if (!getRes.ok) {
@@ -1174,6 +1208,8 @@ export default async function handler(req, res) {
               body: JSON.stringify(patchBody),
             },
           );
+        } else if (retry.status === 400 || retry.status === 401) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar needs to be reconnected in Settings." });
         }
       }
 
