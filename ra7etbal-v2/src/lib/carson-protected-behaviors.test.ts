@@ -76,6 +76,7 @@ import type { StaffInstructionClassification } from "./communication-vs-delegati
 import { parseDelegationFastPath, executeDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage, executeDirectMessageFastPath } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
+import { isRecentDirectWhatsappDuplicate, recordDirectWhatsappSent } from "./direct-message-duplicate-guard";
 import { resolveConsequentialInstructionSource } from "./carson-consequential-result";
 import type { Person } from "../types/person";
 
@@ -840,6 +841,89 @@ describe("C-02 legacy containment — send_delegation is a compatibility wrapper
     expect(block).toContain("if (!rawInstruction.trim()) return sendDelegation(params);");
     expect(block).toContain("return compatDirectMessageFastPath.response;");
     expect(block).toContain("return compatDelegationFastPath.response;");
+  });
+
+  // CodeRabbit finding, PR #403: executeDirectMessageFastPath has no
+  // recent-send protection of its own (see the identical finding on PR #53,
+  // guarded at the typed dispatch call site above) — and unlike
+  // executeInstruction's own call site (an accepted, documented pre-existing
+  // gap, out of scope here), a legacy send_delegation clientTool call is
+  // realistically repeatable by ElevenLabs. Guarded the same way: check
+  // isRecentDirectWhatsappDuplicate before calling executeDirectMessageFastPath,
+  // record only after an actual "sent" outcome.
+  it("checks for a recent duplicate before calling executeDirectMessageFastPath, and records a send only after it actually succeeds — the same duplicate-suppression pattern the typed dispatch call site uses", () => {
+    const block = blockBetween(
+      "const sendDelegationCompat = useCallback(",
+      "[displayName, sendDelegation, recordCanonicalConsequentialResult],",
+    );
+    const duplicateCheckIndex = block.indexOf("isRecentDirectWhatsappDuplicate(");
+    const executorIndex = block.indexOf("await executeDirectMessageFastPath(rawInstruction");
+    const recordIndex = block.indexOf("recordDirectWhatsappSent(", executorIndex);
+
+    expect(duplicateCheckIndex).toBeGreaterThan(-1);
+    expect(duplicateCheckIndex).toBeLessThan(executorIndex);
+    expect(block).toContain("recentDirectWhatsappMessagesRef.current");
+    expect(recordIndex).toBeGreaterThan(executorIndex);
+    expect(block).toContain('compatDirectMessageFastPath.status === "sent"');
+  });
+
+  // Behavioral, not just structural: composes the real exported functions
+  // (parseSimpleDirectMessage, isRecentDirectWhatsappDuplicate,
+  // executeDirectMessageFastPath, recordDirectWhatsappSent) in the exact
+  // same order sendDelegationCompat uses, to prove a repeated legacy
+  // send_delegation call for the same recipient/message sends exactly once —
+  // the concrete duplicate-WhatsApp-send scenario CodeRabbit flagged.
+  it("end-to-end (real functions): a legacy send_delegation call for the same resolved instruction, invoked twice in a row, sends the WhatsApp message only once", async () => {
+    const createMessageFn = vi.fn().mockResolvedValue({
+      id: "message-1",
+      user_id: "user-1",
+      person_id: "p-loulya",
+      recipient: "Loulya",
+      content: "I would like her to call me",
+      direction: "outbound",
+      channel: "whatsapp",
+      created_at: "2026-09-07T00:00:00.000Z",
+    });
+    const deliverTaskMessageFn = vi.fn().mockResolvedValue({
+      success: true,
+      channel: "whatsapp",
+      deliveryId: "delivery-1",
+      messageId: "wamid.1",
+    });
+
+    const rawInstruction = resolveConsequentialInstructionSource({
+      capturedOwnerMessage: undefined,
+      lastUserMessage: undefined,
+      toolInstruction: "Tell Loulya I would like her to call me",
+      lastUserIsVague: true,
+      isHostingTurn: false,
+    });
+    const people = [...roster(), person({ id: "p-loulya", name: "Loulya", phone: "+971500000009" })];
+    const recentSends = new Map<string, number>();
+
+    async function invokeOnce() {
+      const parsed = parseSimpleDirectMessage(rawInstruction, people);
+      if (parsed && isRecentDirectWhatsappDuplicate(recentSends, parsed.recipientName, parsed.messageText)) {
+        return { handled: true, status: "blocked" as const, response: "I already sent Loulya that message just now. I won't send it again." };
+      }
+      const result = await executeDirectMessageFastPath(
+        rawInstruction,
+        { userId: "user-1", displayName: "Sana", people },
+        { createMessageFn, deliverTaskMessageFn },
+      );
+      if (result.handled && result.status === "sent" && parsed) {
+        recordDirectWhatsappSent(recentSends, parsed.recipientName, parsed.messageText);
+      }
+      return result;
+    }
+
+    const first = await invokeOnce();
+    const second = await invokeOnce();
+
+    expect(first).toMatchObject({ handled: true, status: "sent" });
+    expect(second).toMatchObject({ handled: true, status: "blocked" });
+    expect(createMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
   });
 
   // Behavioral, not just structural: composes the REAL exported functions

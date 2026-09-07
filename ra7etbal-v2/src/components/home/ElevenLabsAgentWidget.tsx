@@ -2591,6 +2591,29 @@ export default function ElevenLabsAgentWidget({
       // structural checks to each function via bare, unqualified
       // indexOf-based anchors; a shared variable name would make those
       // anchors ambiguous and silently scope to the wrong function).
+      //
+      // Duplicate guard (CodeRabbit finding, PR #403): executeDirectMessageFastPath
+      // itself has no recent-send protection — the same pre-existing gap
+      // documented at executeInstruction's own call site above — but unlike
+      // that site, a legacy send_delegation clientTool call is realistically
+      // repeatable by ElevenLabs (the exact confirmed-production failure
+      // mode the typed dispatch's own identical guard below was added for).
+      // Reuses the same recentDirectWhatsappMessagesRef mechanism, keyed on
+      // the raw parsed recipient/body, matching the typed dispatch site's
+      // pattern exactly.
+      const compatParsedDirectMessage = parseSimpleDirectMessage(rawInstruction, people);
+      if (compatParsedDirectMessage) {
+        if (
+          isRecentDirectWhatsappDuplicate(
+            recentDirectWhatsappMessagesRef.current,
+            compatParsedDirectMessage.recipientName,
+            compatParsedDirectMessage.messageText,
+          )
+        ) {
+          return `I already sent ${compatParsedDirectMessage.recipientName} that message just now. I won't send it again.`;
+        }
+      }
+
       const compatDirectMessageFastPath = await executeDirectMessageFastPath(rawInstruction, {
         displayName,
         userId: authUserId,
@@ -2601,6 +2624,13 @@ export default function ElevenLabsAgentWidget({
         normalizeOwnerReference: activeChannelRef.current === "text",
       });
       if (compatDirectMessageFastPath.handled) {
+        if (compatDirectMessageFastPath.status === "sent" && compatParsedDirectMessage) {
+          recordDirectWhatsappSent(
+            recentDirectWhatsappMessagesRef.current,
+            compatParsedDirectMessage.recipientName,
+            compatParsedDirectMessage.messageText,
+          );
+        }
         recordCanonicalConsequentialResult({
           toolName: "send_delegation",
           kind: "direct_message",
