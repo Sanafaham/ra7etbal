@@ -2507,6 +2507,123 @@ export default function ElevenLabsAgentWidget({
     ],
   );
 
+  /**
+   * C-02 legacy containment (2026-09-07). send_delegation must not act as a
+   * second, independent communication-vs-tracked-work classification path —
+   * only execute_instruction (and, by extension, the deterministic fast
+   * paths both channels already converge on) is meant to be authoritative
+   * for that decision. The legacy send_delegation clientTool previously
+   * called sendDelegation(params) directly, trusting only the model's own
+   * composed name/task/message with no fallback to the verbatim owner
+   * utterance — the same class of information loss execute_instruction has
+   * always guarded against via resolveConsequentialInstructionSource
+   * (prefers the transcript over the model's own possibly-lossy rephrasing;
+   * see executeInstruction above for the identical pattern this mirrors).
+   *
+   * This wrapper resolves the best-available original instruction the same
+   * way, then runs it through the EXACT same canonical dispatch order
+   * executeInstruction uses — executeDirectMessageFastPath, then
+   * executeDelegationFastPath — before ever falling back to today's
+   * sendDelegation(params) call. Falling back only when neither fast path
+   * claims the instruction (or when there is no usable instruction at all)
+   * preserves every existing narrow legacy case unchanged: hosting/guest
+   * detection and recurring-instruction detection are already inside
+   * sendDelegation itself and still run exactly as before for whatever
+   * reaches that fallback; multi-person, personal-note, or otherwise
+   * ambiguous instructions are the same set parseDelegationFastPath already
+   * excludes today, so they fall through here identically.
+   *
+   * Duplicate-safety by construction: each branch below returns
+   * immediately, so exactly one of direct-message send, delegation send
+   * (via executeDelegationFastPath's injected sendDelegation), or the
+   * unmodified sendDelegation(params) fallback ever executes per call —
+   * never more than one.
+   */
+  const sendDelegationCompat = useCallback(
+    async (params: Parameters<typeof sendDelegation>[0]): Promise<string> => {
+      const authUserId = useAuthStore.getState().user?.id;
+      if (!authUserId) return sendDelegation(params);
+
+      let people = usePeopleStore.getState().items;
+      if (usePeopleStore.getState().status === "idle" || people.length === 0) {
+        await usePeopleStore.getState().loadFor(authUserId);
+        people = usePeopleStore.getState().items;
+      }
+
+      const normalizedName = extractPersonNameParam(params, "name").trim();
+      const taskText = extractTaskParam(params).trim();
+      const modelMessage = params?.message ?? extractMessageParam(params);
+      // The best reconstruction available from the model's own structured
+      // params, used only as toolInstruction — resolveConsequentialInstructionSource
+      // still prefers the verbatim transcript over this whenever one exists.
+      const toolInstruction =
+        modelMessage?.trim()
+        || (normalizedName && taskText ? `ask ${normalizedName} to ${taskText}` : undefined);
+
+      const lastUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      const capturedOwnerMessage = activeUserRoutingContextRef.current?.message.trim() || lastUserMessage;
+      const lastUserWordCount = lastUserMessage ? lastUserMessage.split(/\s+/).length : 0;
+      const lastUserIsVague =
+        !lastUserMessage
+        || isConfirmation(lastUserMessage)
+        || isRejection(lastUserMessage)
+        || lastUserWordCount <= 5;
+      const capturedHostingTurn = Boolean(
+        capturedOwnerMessage
+        && (pendingHostingClarificationRef.current || detectHouseholdOutcome(capturedOwnerMessage)),
+      );
+      const rawInstruction = resolveConsequentialInstructionSource({
+        capturedOwnerMessage,
+        lastUserMessage,
+        toolInstruction,
+        lastUserIsVague,
+        isHostingTurn: capturedHostingTurn,
+      });
+
+      if (!rawInstruction.trim()) return sendDelegation(params);
+
+      // Deliberately distinct variable names from executeInstruction's own
+      // directMessageFastPath/delegationFastPath locals above (not just a
+      // style choice — carson-protected-behaviors.test.ts and
+      // ElevenLabsAgentWidget.direct-message-parity.test.ts scope
+      // structural checks to each function via bare, unqualified
+      // indexOf-based anchors; a shared variable name would make those
+      // anchors ambiguous and silently scope to the wrong function).
+      const compatDirectMessageFastPath = await executeDirectMessageFastPath(rawInstruction, {
+        displayName,
+        userId: authUserId,
+        people,
+        // Voice composes its own message text via the ElevenLabs model and
+        // must not be touched here — same normalizeOwnerReference contract
+        // executeInstruction's own call site already uses.
+        normalizeOwnerReference: activeChannelRef.current === "text",
+      });
+      if (compatDirectMessageFastPath.handled) {
+        recordCanonicalConsequentialResult({
+          toolName: "send_delegation",
+          kind: "direct_message",
+          resultText: compatDirectMessageFastPath.response,
+          outcome: compatDirectMessageFastPath.status === "sent" ? "success" : "failure",
+        });
+        return compatDirectMessageFastPath.response;
+      }
+
+      const compatDelegationFastPath = await executeDelegationFastPath(
+        rawInstruction,
+        { people, userId: authUserId, displayName },
+        { sendDelegationFn: sendDelegation },
+      );
+      if (compatDelegationFastPath.handled) {
+        return compatDelegationFastPath.response;
+      }
+
+      return sendDelegation(params);
+    },
+    [displayName, sendDelegation, recordCanonicalConsequentialResult],
+  );
+
   // Records a verified create_reminder one-time-path failure so the display-
   // override system can correct Carson's own separately-generated spoken
   // reply if it claims success anyway — mirrors recordCreateAutomationFailure
@@ -6314,13 +6431,17 @@ export default function ElevenLabsAgentWidget({
               toolInFlightRef.current = null;
             }
           },
+          // C-02 legacy containment: calls sendDelegationCompat, not
+          // sendDelegation directly — see sendDelegationCompat's own doc
+          // comment for why (it must not be a second, independent
+          // communication-vs-tracked-work classification path).
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
             const captureBlock = guardCurrentToolInvocation("send_delegation");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
               const result = await runDirectToolWithDiagnostic("send_delegation", params, () =>
-                sendDelegation(params),
+                sendDelegationCompat(params),
               );
               const existing = canonicalConsequentialResultRef.current;
               if (existing?.turnOperationId !== currentOwnerTurnOperationIdRef.current) {

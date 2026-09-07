@@ -44,9 +44,21 @@ describe("ElevenLabsAgentWidget — direct-message owner normalization call site
     expect(callBlock).toContain("normalizeOwnerReference: true");
   });
 
-  it("normalizeOwnerReference is opted into from exactly these two call sites — the shared executor is never opted into normalization from anywhere else", () => {
+  // C-02 legacy containment (2026-09-07): sendDelegationCompat is a third
+  // caller of the shared executeDirectMessageFastPath, model-driven exactly
+  // like executeInstruction's own call site — same channel-gated pattern.
+  it("also opts in at sendDelegationCompat's call site — the legacy send_delegation containment wrapper — using the same channel-gated pattern as the model-driven executeInstruction call site", () => {
+    const callBlock = blockBetween(
+      "const compatDirectMessageFastPath = await executeDirectMessageFastPath(rawInstruction, {",
+      "if (compatDirectMessageFastPath.handled) {",
+    );
+
+    expect(callBlock).toContain('normalizeOwnerReference: activeChannelRef.current === "text"');
+  });
+
+  it("normalizeOwnerReference is opted into from exactly these three call sites — the shared executor is never opted into normalization from anywhere else", () => {
     const occurrences = SOURCE.match(/normalizeOwnerReference:/g) ?? [];
-    expect(occurrences).toHaveLength(2);
+    expect(occurrences).toHaveLength(3);
   });
 
   it("voice's own send_direct_whatsapp_message tool does not duplicate normalization logic itself — it delegates to the shared createAndSendDirectMessage boundary, which now normalizes for every caller", () => {
