@@ -87,4 +87,54 @@ describe("matchCarsonSocialAcknowledgment", () => {
     expect(matchCarsonSocialAcknowledgment("")).toBeNull();
     expect(matchCarsonSocialAcknowledgment(null)).toBeNull();
   });
+
+  // Second confirmed production bug: "Thank you. Look." (owner spoke a
+  // recognized acknowledgment immediately followed by a harmless
+  // conversational fragment) still produced CARSON_REPEAT_PROMPT, because
+  // the original regexes were anchored to the ENTIRE string, not just the
+  // acknowledgment lead. Four categories, per the incident brief:
+  describe("acknowledgment followed by more speech (confirmed production regression)", () => {
+    it('pure acknowledgment — exact regression phrase "Thank you. Look."', () => {
+      expect(matchCarsonSocialAcknowledgment("Thank you. Look.")).toBe(
+        "You're welcome!",
+      );
+    });
+
+    it("acknowledgment followed by another short, non-actionable conversational fragment", () => {
+      expect(matchCarsonSocialAcknowledgment("Thanks. Yeah.")).toBe(
+        "You're welcome!",
+      );
+      expect(matchCarsonSocialAcknowledgment("Okay. Hmm, anyway.")).toBe(
+        "Got it.",
+      );
+    });
+
+    it("acknowledgment followed by an actionable request is NOT swallowed — returns null so the real instruction still reaches normal handling", () => {
+      expect(
+        matchCarsonSocialAcknowledgment("Thank you, can you call Grace?"),
+      ).toBeNull();
+      expect(
+        matchCarsonSocialAcknowledgment(
+          "Thanks. Also remind me to buy milk tomorrow.",
+        ),
+      ).toBeNull();
+      expect(
+        matchCarsonSocialAcknowledgment("Okay, please schedule the meeting."),
+      ).toBeNull();
+    });
+
+    it("acknowledgment followed by a long, genuinely-unclear-length remainder is NOT treated as a pure ack (falls through to normal capture handling instead of guessing)", () => {
+      expect(
+        matchCarsonSocialAcknowledgment(
+          "Thanks so much for that, it really means a lot to me today",
+        ),
+      ).toBeNull();
+    });
+
+    it("genuinely unintelligible/incomplete speech is still rejected upstream by evaluateCarsonTranscriptCapture, unaffected by this widening", () => {
+      expect(evaluateCarsonTranscriptCapture("...").valid).toBe(false);
+      expect(evaluateCarsonTranscriptCapture("").valid).toBe(false);
+      expect(matchCarsonSocialAcknowledgment("...")).toBeNull();
+    });
+  });
 });
