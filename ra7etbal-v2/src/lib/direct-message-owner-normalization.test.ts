@@ -47,6 +47,11 @@ describe("normalizeFirstPersonForOwner", () => {
     expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
   });
 
+  it("does not rewrite a second sentence that remains inside a quote spanning multiple clauses", () => {
+    const text = 'She said, "I am leaving. I\'ll return later."';
+    expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+  });
+
   it("returns the input unchanged when no owner name is available", () => {
     expect(normalizeFirstPersonForOwner("I have no Wi-Fi.", null)).toBe(
       "I have no Wi-Fi.",
@@ -116,6 +121,69 @@ describe("normalizeFirstPersonForOwner", () => {
     // Left entirely unchanged instead of guessing a conjugation.
     it('leaves the whole sentence unchanged rather than producing mixed-person output ("I need Grace to call me.")', () => {
       const text = "I need Grace to call me.";
+      expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+    });
+  });
+
+  // Confirmed production regression: "Carson, ask Saeed to wait for me.
+  // Tell him I'm on my way." produced "Wait for Sana. I'm on my way." on
+  // Saeed's phone — the object-pronoun pass (global) rewrote clause 1's
+  // "wait for me", but the leading-subject pass never reached clause 2's
+  // "I'm" because it was anchored to the start of the whole message, not
+  // the start of each sentence.
+  describe("multi-clause perspective consistency (confirmed production regression)", () => {
+    it('normalizes both clauses of "Wait for me. I\'m on my way." to the same third person', () => {
+      expect(
+        normalizeFirstPersonForOwner("Wait for me. I'm on my way.", "Sana"),
+      ).toBe("Wait for Sana. Sana is on the way.");
+    });
+
+    it('normalizes both clauses of "Tell him to call me. I\'ll speak to him later."', () => {
+      expect(
+        normalizeFirstPersonForOwner(
+          "Tell him to call me. I'll speak to him later.",
+          "Sana",
+        ),
+      ).toBe("Tell him to call Sana. Sana will speak to him later.");
+    });
+
+    it('normalizes the leading possessive clause of "My driver is waiting. Tell him I\'m coming." — the second clause\'s "I\'m" is mid-sentence (not the clause\'s leading subject), so it is left untouched by the same deliberate mid-sentence/quoted-content guard proven by "does not rewrite a first-person reference embedded mid-sentence" above; this is an intentional architecture boundary, not a residual bug', () => {
+      expect(
+        normalizeFirstPersonForOwner(
+          "My driver is waiting. Tell him I'm coming.",
+          "Sana",
+        ),
+      ).toBe("Sana's driver is waiting. Tell him I'm coming.");
+    });
+
+    it("does not split a sentence at an abbreviation's period (Mr.) and still normalizes the real sentence boundary", () => {
+      expect(
+        normalizeFirstPersonForOwner(
+          "Tell Mr. Smith to wait for me. I'm on my way.",
+          "Sana",
+        ),
+      ).toBe("Tell Mr. Smith to wait for Sana. Sana is on the way.");
+    });
+
+    it("does not split a decimal number (3.5) at a false sentence boundary", () => {
+      const text = "Bring me 3.5 kg of rice.";
+      expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(
+        "Bring Sana 3.5 kg of rice.",
+      );
+    });
+
+    it("preserves existing single-clause behavior exactly (no accidental clause-splitting side effect)", () => {
+      expect(normalizeFirstPersonForOwner("I'm on my way.", "Sana")).toBe(
+        "Sana is on the way.",
+      );
+      expect(normalizeFirstPersonForOwner("wait for me.", "Sana")).toBe(
+        "wait for Sana.",
+      );
+    });
+
+    it('still leaves fully quoted first-person content unchanged across a multi-sentence message', () => {
+      const text =
+        'She texted "I am on my way" an hour ago. Please wait for her.';
       expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
     });
   });

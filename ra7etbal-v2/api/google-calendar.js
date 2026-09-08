@@ -77,6 +77,84 @@ function hashOauthState(rawToken) {
   return createHash('sha256').update(rawToken, 'utf8').digest('hex');
 }
 
+// In-memory (per warm Lambda instance) cache of Google Calendar OAuth
+// access tokens, keyed by Supabase user id. Confirmed production latency
+// finding: every route below re-exchanged the stored refresh_token for a
+// brand-new access token on EVERY call, adding one unavoidable external
+// round trip to accounts.google.com even for calls seconds apart in the
+// same voice session -- a real contributor to observed multi-second
+// calendar tool latency. Access tokens are valid ~1 hour; this skips the
+// exchange entirely when a still-valid token for the same uid+refreshToken
+// is cached. Never shared across users (always keyed by uid), never
+// persisted outside this instance's memory, and only ever used if the
+// cached refreshToken still matches the profile's current one -- a
+// disconnect/reconnect/rotation invalidates the match and falls straight
+// back through to a real exchange. A cache miss (cold start, evicted,
+// expired, first call, or forced) behaves exactly like the original
+// unconditional exchange.
+const googleAccessTokenCache = new Map();
+const ACCESS_TOKEN_SAFETY_BUFFER_MS = 60_000;
+
+async function exchangeGoogleRefreshToken(refreshToken) {
+  const accessRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!accessRes.ok) {
+    const errText = await accessRes.text().catch(() => "");
+    return { ok: false, status: accessRes.status, errText };
+  }
+  const json = await accessRes.json();
+  return { ok: true, accessToken: json.access_token, expiresIn: json.expires_in };
+}
+
+function invalidateGoogleAccessToken(uid) {
+  googleAccessTokenCache.delete(uid);
+}
+
+// Test-only: clears the whole in-memory cache so unit tests that mock a
+// fixed sequence of fetch() calls (token exchange included) never get a
+// stale hit carried over from an earlier test case in the same file.
+export function __resetGoogleAccessTokenCacheForTests() {
+  googleAccessTokenCache.clear();
+}
+
+/**
+ * Returns { ok: true, accessToken } (from cache, or freshly exchanged) or
+ * { ok: false, status, errText } — identical shape to
+ * exchangeGoogleRefreshToken(), so every call site's existing 400/401 ->
+ * reconnect_required handling is unchanged. Pass forceRefresh:true (after a
+ * 401 from the actual Calendar API call, meaning the cached token was
+ * rejected despite looking unexpired) to bypass the cache for one retry.
+ */
+async function getGoogleAccessToken(uid, refreshToken, { forceRefresh = false } = {}) {
+  if (!forceRefresh) {
+    const cached = googleAccessTokenCache.get(uid);
+    if (
+      cached &&
+      cached.refreshToken === refreshToken &&
+      cached.expiresAt > Date.now() + ACCESS_TOKEN_SAFETY_BUFFER_MS
+    ) {
+      return { ok: true, accessToken: cached.accessToken };
+    }
+  }
+  const result = await exchangeGoogleRefreshToken(refreshToken);
+  if (result.ok) {
+    googleAccessTokenCache.set(uid, {
+      refreshToken,
+      accessToken: result.accessToken,
+      expiresAt: Date.now() + Math.max(0, Number(result.expiresIn) || 0) * 1000,
+    });
+  }
+  return result;
+}
+
 /**
  * Verifies a Supabase JWT against auth/v1/user and returns the verified
  * user id, or null if the token is missing/invalid. Identical pattern to
@@ -498,23 +576,14 @@ export default async function handler(req, res) {
         return res.status(400).json({ ok: false, code: "invalid_timezone", error: "The profile calendar timezone is invalid." });
       }
 
-      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-      if (!accessRes.ok) {
-        if (accessRes.status === 400 || accessRes.status === 401) {
+      const tokenResult = await getGoogleAccessToken(uid, refreshToken);
+      if (!tokenResult.ok) {
+        if (tokenResult.status === 400 || tokenResult.status === 401) {
           return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
         }
         return res.status(502).json({ ok: false, error: "Google token refresh failed" });
       }
-      const { access_token } = await accessRes.json();
+      let access_token = tokenResult.accessToken;
 
       const query = typeof req.query.query === "string" ? req.query.query.trim().slice(0, 200) : "";
       const matched = [];
@@ -530,10 +599,23 @@ export default async function handler(req, res) {
           ...(query ? { q: query } : {}),
           ...(pageToken ? { pageToken } : {}),
         });
-        const eventsRes = await fetch(
+        let eventsRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
           { headers: { Authorization: `Bearer ${access_token}` } },
         );
+        if (eventsRes.status === 401) {
+          invalidateGoogleAccessToken(uid);
+          const retry = await getGoogleAccessToken(uid, refreshToken, { forceRefresh: true });
+          if (retry.ok) {
+            access_token = retry.accessToken;
+            eventsRes = await fetch(
+              `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+              { headers: { Authorization: `Bearer ${access_token}` } },
+            );
+          } else if (retry.status === 400 || retry.status === 401) {
+            return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+          }
+        }
         if (!eventsRes.ok) return res.status(502).json({ ok: false, error: "Failed to search calendar history" });
         const data = await eventsRes.json();
         for (const item of data.items ?? []) {
@@ -612,22 +694,13 @@ export default async function handler(req, res) {
         return res.status(200).json({ connected: false, events: [] });
       }
 
-      // Exchange refresh_token for access_token
-      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
+      // Exchange refresh_token for access_token (cached across calls -- see
+      // getGoogleAccessToken above)
+      const tokenResult = await getGoogleAccessToken(uid, refreshToken);
 
-      if (!accessRes.ok) {
-        const errText = await accessRes.text();
+      if (!tokenResult.ok) {
         // Revoked / expired token — clear from DB
-        if (accessRes.status === 400 || accessRes.status === 401) {
+        if (tokenResult.status === 400 || tokenResult.status === 401) {
           if (shouldClearRevokedCalendarCredentials(req.query)) {
             await fetch(
               `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`,
@@ -652,11 +725,11 @@ export default async function handler(req, res) {
           res.setHeader("Surrogate-Control", "no-store");
           return res.status(200).json({ connected: false, revoked: true, events: [] });
         }
-        console.error("Google refresh failed:", errText);
+        console.error("Google refresh failed:", tokenResult.errText);
         return res.status(502).json({ error: "Google token refresh failed" });
       }
 
-      const { access_token } = await accessRes.json();
+      let access_token = tokenResult.accessToken;
 
       // Calculate time range
       const calRange = range || "today";
@@ -710,12 +783,48 @@ export default async function handler(req, res) {
         maxResults: isWideRange ? "50" : "20",
       });
 
-      const eventsRes = await fetch(
+      let eventsRes = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events?${eventsParams}`,
         {
           headers: { Authorization: `Bearer ${access_token}` },
         },
       );
+
+      if (eventsRes.status === 401) {
+        invalidateGoogleAccessToken(uid);
+        const retry = await getGoogleAccessToken(uid, refreshToken, { forceRefresh: true });
+        if (retry.ok) {
+          access_token = retry.accessToken;
+          eventsRes = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events?${eventsParams}`,
+            { headers: { Authorization: `Bearer ${access_token}` } },
+          );
+        } else if (retry.status === 400 || retry.status === 401) {
+          if (shouldClearRevokedCalendarCredentials(req.query)) {
+            await fetch(
+              `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`,
+              {
+                method: "PATCH",
+                headers: {
+                  apikey: serviceKey,
+                  Authorization: `Bearer ${serviceKey}`,
+                  "Content-Type": "application/json",
+                  Prefer: "return=minimal",
+                },
+                body: JSON.stringify({
+                  google_refresh_token: null,
+                  google_calendar_connected_at: null,
+                }),
+              },
+            );
+          }
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+          res.setHeader("Surrogate-Control", "no-store");
+          return res.status(200).json({ connected: false, revoked: true, events: [] });
+        }
+      }
 
       if (!eventsRes.ok) {
         console.error("Google Calendar events fetch failed:", await eventsRes.text());
@@ -806,21 +915,13 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
       }
 
-      // Exchange refresh_token for access_token
-      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-      console.log("[calendar-create-debug] token refresh status=%d", accessRes.status);
-      if (!accessRes.ok) {
-        const errText = await accessRes.text();
-        if (accessRes.status === 400 || accessRes.status === 401) {
+      // Exchange refresh_token for access_token (cached across calls -- see
+      // getGoogleAccessToken above; this used to be an unconditional
+      // exchange on every single create_calendar_event call)
+      const tokenResult = await getGoogleAccessToken(uid, refreshToken);
+      console.log("[calendar-create-debug] token result ok=%s status=%s", tokenResult.ok, tokenResult.status ?? "cached_or_fresh");
+      if (!tokenResult.ok) {
+        if (tokenResult.status === 400 || tokenResult.status === 401) {
           console.log("[calendar-create-debug] token revoked/expired, clearing db. returning code=reconnect_required");
           // Clear revoked token
           await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`, {
@@ -835,10 +936,10 @@ export default async function handler(req, res) {
           });
           return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
         }
-        console.error("[calendar-create-debug] token refresh unexpected failure status=%d body=%s", accessRes.status, errText);
+        console.error("[calendar-create-debug] token refresh unexpected failure status=%d body=%s", tokenResult.status, tokenResult.errText);
         return res.status(502).json({ ok: false, error: "Google token refresh failed" });
       }
-      const { access_token } = await accessRes.json();
+      let access_token = tokenResult.accessToken;
 
       // Build event start/end datetimes.
       // Do NOT use JS Date arithmetic to compute times — Vercel runs in UTC,
@@ -886,7 +987,7 @@ export default async function handler(req, res) {
         startDateTime, endDateTime, userTimezone, durationMins);
 
       // Insert event via Google Calendar API
-      const insertRes = await fetch(
+      let insertRes = await fetch(
         "https://www.googleapis.com/calendar/v3/calendars/primary/events",
         {
           method: "POST",
@@ -897,6 +998,35 @@ export default async function handler(req, res) {
           body: JSON.stringify(eventBody),
         },
       );
+
+      if (insertRes.status === 401) {
+        // Cached token was rejected despite looking unexpired (e.g. access
+        // revoked mid-session) — invalidate and retry once with a forced
+        // fresh exchange before giving up.
+        console.log("[calendar-create-debug] Google insert 401, retrying with a forced fresh token");
+        invalidateGoogleAccessToken(uid);
+        const retryToken = await getGoogleAccessToken(uid, refreshToken, { forceRefresh: true });
+        if (retryToken.ok) {
+          access_token = retryToken.accessToken;
+          insertRes = await fetch(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(eventBody),
+            },
+          );
+        } else if (retryToken.status === 400 || retryToken.status === 401) {
+          return res.status(200).json({
+            ok: false,
+            code: "reconnect_required",
+            error: "Google Calendar needs to be reconnected in Settings to allow event creation.",
+          });
+        }
+      }
 
       console.log("[calendar-create-debug] Google insert status=%d", insertRes.status);
 
@@ -956,34 +1086,39 @@ export default async function handler(req, res) {
       const userTimezone = profiles?.[0]?.morning_brief_timezone || "Europe/Istanbul";
       if (!refreshToken) return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
 
-      // Exchange refresh token for access token
-      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: process.env.GOOGLE_CLIENT_ID,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: "refresh_token",
-        }),
-      });
-      if (!accessRes.ok) {
-        if (accessRes.status === 400 || accessRes.status === 401) {
+      // Exchange refresh token for access token (cached across calls -- see
+      // getGoogleAccessToken above)
+      const tokenResult = await getGoogleAccessToken(uid, refreshToken);
+      if (!tokenResult.ok) {
+        if (tokenResult.status === 400 || tokenResult.status === 401) {
           return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
         }
         return res.status(502).json({ ok: false, error: "Google token refresh failed" });
       }
-      const { access_token } = await accessRes.json();
+      let access_token = tokenResult.accessToken;
 
       const patchBody = {};
       if (title) patchBody.summary = title.trim();
 
       // If date or time is changing, fetch the existing event to preserve duration
       if (date || time) {
-        const getRes = await fetch(
+        let getRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
           { headers: { Authorization: `Bearer ${access_token}` } },
         );
+        if (getRes.status === 401) {
+          invalidateGoogleAccessToken(uid);
+          const retry = await getGoogleAccessToken(uid, refreshToken, { forceRefresh: true });
+          if (retry.ok) {
+            access_token = retry.accessToken;
+            getRes = await fetch(
+              `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+              { headers: { Authorization: `Bearer ${access_token}` } },
+            );
+          } else if (retry.status === 400 || retry.status === 401) {
+            return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+          }
+        }
         if (!getRes.ok) {
           return res.status(502).json({ ok: false, error: "Could not retrieve the existing event." });
         }
@@ -1045,7 +1180,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ ok: false, error: "Nothing to update — provide title, date, or time." });
       }
 
-      const patchRes = await fetch(
+      let patchRes = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
         {
           method: "PATCH",
@@ -1056,6 +1191,27 @@ export default async function handler(req, res) {
           body: JSON.stringify(patchBody),
         },
       );
+
+      if (patchRes.status === 401) {
+        invalidateGoogleAccessToken(uid);
+        const retry = await getGoogleAccessToken(uid, refreshToken, { forceRefresh: true });
+        if (retry.ok) {
+          access_token = retry.accessToken;
+          patchRes = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+            {
+              method: "PATCH",
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(patchBody),
+            },
+          );
+        } else if (retry.status === 400 || retry.status === 401) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar needs to be reconnected in Settings." });
+        }
+      }
 
       if (!patchRes.ok) {
         const errBody = await patchRes.text();

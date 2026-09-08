@@ -922,7 +922,8 @@
       "files_functions": [
         "src/lib/text-carson.ts:executeDelegationFromText",
         "src/lib/ai/extract.ts:extractItems",
-        "src/components/home/ElevenLabsAgentWidget.tsx:executeInstruction / clientTools.execute_instruction / guardCurrentToolInvocation"
+        "src/components/home/ElevenLabsAgentWidget.tsx:executeInstruction / clientTools.execute_instruction / guardCurrentToolInvocation",
+        "src/lib/carson-transcript-guard.ts:CARSON_REPEAT_PROMPT / evaluateCarsonTranscriptCapture / matchCarsonSocialAcknowledgment (2026-09-07 registration — was already load-bearing for execute_instruction's invalid-capture handling at ElevenLabsAgentWidget.tsx's guardCurrentVoiceCapture/rawInstruction capture-guard call sites, but had never been added to this or any capability; registered while fixing a confirmed production regression, not a behavior change)"
       ],
       "shared_dependencies": [
         "src/lib/save.ts",
@@ -944,7 +945,8 @@
         "Anthropic API (via api/anthropic.js)"
       ],
       "focused_tests": [
-        "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts",
+        "src/lib/carson-transcript-guard.test.ts"
       ],
       "protected_suite": false,
       "golden_journey_required": false,
