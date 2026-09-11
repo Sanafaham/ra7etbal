@@ -160,6 +160,18 @@ describe("evaluateTavilyMcpSecurityContract (Tavily MCP Credential-Security prot
     expect(result.violations.some((v) => v.startsWith("[C]"))).toBe(true);
   });
 
+  it("[C] violation message reports the drifted secret_id but never leaks other secret_token fields (regression: full serialization must not creep back in)", () => {
+    const fixture = healthyFixture();
+    fixture.tavilyMcp.config.secret_token = {
+      secret_id: "SomeOtherSecretId",
+      value: "SENTINEL_SECRET_VALUE_MUST_NOT_APPEAR",
+    };
+    const result = evaluateTavilyMcpSecurityContract(fixture);
+    const violation = result.violations.find((v) => v.startsWith("[C]"));
+    expect(violation).toContain("SomeOtherSecretId");
+    expect(violation).not.toContain("SENTINEL_SECRET_VALUE_MUST_NOT_APPEAR");
+  });
+
   it("[C] fails when secret_token is unexpectedly absent", () => {
     const fixture = healthyFixture();
     fixture.tavilyMcp.config.secret_token = null;
@@ -221,6 +233,15 @@ describe("evaluateTavilyMcpSecurityContract (Tavily MCP Credential-Security prot
     fixture.tavilyMcp.config.request_headers = { Authorization: "Bearer something" };
     const result = evaluateTavilyMcpSecurityContract(fixture);
     expect(result.ok).toBe(false);
+  });
+
+  it("request_headers violation message reports the header name but never leaks the header value (regression: full serialization must not creep back in)", () => {
+    const fixture = healthyFixture();
+    fixture.tavilyMcp.config.request_headers = { Authorization: "SENTINEL_HEADER_VALUE_MUST_NOT_APPEAR" };
+    const result = evaluateTavilyMcpSecurityContract(fixture);
+    const violation = result.violations.find((v) => v.includes("request_headers"));
+    expect(violation).toContain("Authorization");
+    expect(violation).not.toContain("SENTINEL_HEADER_VALUE_MUST_NOT_APPEAR");
   });
 
   it("fails when one of the three required tools loses its auto_approved status", () => {
