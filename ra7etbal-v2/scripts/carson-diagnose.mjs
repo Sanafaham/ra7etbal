@@ -530,13 +530,13 @@ export function evaluateTavilyMcpSecurityContract({ agent, tavilyMcp, perplexity
 
     if (!cfg.secret_token || cfg.secret_token.secret_id !== c.expectedSecretId) {
       violations.push(
-        `[C] Tavily MCP secret_token does not reference the expected secret id (${c.expectedSecretId}) — got: ${JSON.stringify(cfg.secret_token)}`,
+        `[C] Tavily MCP secret_token does not reference the expected secret id (${c.expectedSecretId}) — got secret_id: ${JSON.stringify(cfg.secret_token?.secret_id ?? null)}`,
       );
     }
 
     if (cfg.request_headers && Object.keys(cfg.request_headers).length > 0) {
       violations.push(
-        `Tavily MCP request_headers is non-empty (${JSON.stringify(cfg.request_headers)}) — contract requires {} unless an explicitly approved architecture change adds headers.`,
+        `Tavily MCP request_headers is non-empty (keys: ${Object.keys(cfg.request_headers).join(", ")}) — contract requires {} unless an explicitly approved architecture change adds headers.`,
       );
     }
 
