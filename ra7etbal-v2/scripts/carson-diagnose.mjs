@@ -15,6 +15,7 @@
  *   node scripts/carson-diagnose.mjs list --after=<unix|iso> --before=<unix|iso>
  *   node scripts/carson-diagnose.mjs inspect --conversation-id=<id> [--keyword="blue pen"] [--tool=get_commitment_history]
  *   node scripts/carson-diagnose.mjs audit
+ *   node scripts/carson-diagnose.mjs tavily-security-audit
  *
  * `audit` is the permanent tool-registration-drift check born from the Blue
  * Pen incident's true root cause: get_commitment_history existed in the
@@ -451,6 +452,152 @@ async function audit(args) {
   }
 }
 
+/**
+ * Tavily MCP Credential-Security protected contract (2026-09-10 remediation
+ * — see RA7ETBAL_STATE.md, "Tavily MCP Credential-Security Remediation").
+ *
+ * The original defect: the Tavily MCP server's connection URL had the raw
+ * Tavily API key embedded as a query parameter, readable by anyone with
+ * ElevenLabs config read access. The fix replaced it with a clean MCP server
+ * using ElevenLabs' stored-secret (`secret_token`) mechanism, verified with a
+ * real production canary after the old key was revoked, then deleted the old
+ * MCP. This constant + evaluator is the permanent, re-runnable check that the
+ * fixed state hasn't silently regressed.
+ *
+ * Like `audit()` above, this requires a live ElevenLabs API key and is not
+ * wired into CI — there is no stored ElevenLabs credential in this project's
+ * CI (see RA7ETBAL_STATE.md, Historical Lookup section, for the same
+ * limitation on the tool-registration-drift audit). Run it by hand —
+ * `npm run carson:diagnose -- tavily-security-audit` — after any change to
+ * Carson's MCP configuration, Tavily, or Perplexity.
+ */
+export const TAVILY_SECURITY_CONTRACT = {
+  activeTavilyMcpId: "wPijh8iY4yMWQPIf4R24",
+  retiredTavilyMcpId: "FcjPIUs6P8UBlIdW2BSb",
+  perplexityMcpId: "ip9w8BVxQBzSovyzaq1X",
+  expectedSecretId: "Lqt6nD9oCUG1kBoXnCKq",
+  requiredApprovalPolicy: "require_approval_per_tool",
+  autoApprovedTools: ["tavily_search", "tavily_extract", "tavily_research"],
+  mustNotBeAutoApproved: ["tavily_crawl", "tavily_map"],
+};
+
+/**
+ * Pure, network-free evaluator — takes already-fetched JSON (the exact shape
+ * `GET /v1/convai/agents/{id}` and `GET /v1/convai/mcp-servers/{id}` return)
+ * and returns { ok, violations }. Never reads a secret VALUE — only whether
+ * `secret_token.secret_id` matches the expected reference — so this function
+ * can never leak or need a credential itself.
+ */
+export function evaluateTavilyMcpSecurityContract({ agent, tavilyMcp, perplexityMcp }) {
+  const violations = [];
+  const c = TAVILY_SECURITY_CONTRACT;
+  const mcpIds = agent?.conversation_config?.agent?.prompt?.mcp_server_ids ?? [];
+
+  if (!mcpIds.includes(c.activeTavilyMcpId)) {
+    violations.push(
+      `[G] Secure Tavily MCP (${c.activeTavilyMcpId}) is missing from Carson's mcp_server_ids: ${JSON.stringify(mcpIds)}`,
+    );
+  }
+  if (mcpIds.includes(c.retiredTavilyMcpId)) {
+    violations.push(
+      `[B] Carson references the retired old Tavily MCP (${c.retiredTavilyMcpId}) — it must never be reattached.`,
+    );
+  }
+  if (!mcpIds.includes(c.perplexityMcpId)) {
+    violations.push(
+      `[F] Perplexity MCP (${c.perplexityMcpId}) is missing from Carson's mcp_server_ids — Tavily maintenance must never remove it.`,
+    );
+  }
+
+  if (!tavilyMcp) {
+    violations.push(
+      "Could not evaluate the active Tavily MCP config — GET /v1/convai/mcp-servers/{id} returned nothing (deleted or unreachable?).",
+    );
+  } else {
+    const cfg = tavilyMcp.config ?? {};
+    const url = cfg.url ?? "";
+    let hasQuery = false;
+    try {
+      hasQuery = Boolean(new URL(url).search);
+    } catch {
+      hasQuery = url.includes("?");
+    }
+    if (hasQuery || /key/i.test(url)) {
+      violations.push(
+        `[A] Tavily MCP URL looks like it may carry an embedded credential (query string present or contains "key"): ${url.split("?")[0]}${hasQuery ? "?<redacted>" : ""}`,
+      );
+    }
+
+    if (!cfg.secret_token || cfg.secret_token.secret_id !== c.expectedSecretId) {
+      violations.push(
+        `[C] Tavily MCP secret_token does not reference the expected secret id (${c.expectedSecretId}) — got: ${JSON.stringify(cfg.secret_token)}`,
+      );
+    }
+
+    if (cfg.request_headers && Object.keys(cfg.request_headers).length > 0) {
+      violations.push(
+        `Tavily MCP request_headers is non-empty (${JSON.stringify(cfg.request_headers)}) — contract requires {} unless an explicitly approved architecture change adds headers.`,
+      );
+    }
+
+    if (cfg.approval_policy !== c.requiredApprovalPolicy) {
+      violations.push(
+        `[D] Tavily MCP approval_policy is "${cfg.approval_policy}", expected "${c.requiredApprovalPolicy}".`,
+      );
+    }
+
+    const approvals = cfg.tool_approval_hashes ?? [];
+    const autoApprovedNames = approvals
+      .filter((a) => a.approval_policy === "auto_approved")
+      .map((a) => a.tool_name);
+
+    for (const name of c.autoApprovedTools) {
+      if (!autoApprovedNames.includes(name)) {
+        violations.push(`Tool "${name}" is expected to be auto_approved but is not (or was never approved).`);
+      }
+    }
+    for (const name of c.mustNotBeAutoApproved) {
+      if (autoApprovedNames.includes(name)) {
+        violations.push(`[E] Tool "${name}" is unexpectedly auto_approved — it must remain unapproved.`);
+      }
+    }
+  }
+
+  if (perplexityMcp && perplexityMcp.id !== c.perplexityMcpId) {
+    violations.push(
+      `Perplexity MCP id mismatch — fetched ${perplexityMcp.id}, expected ${c.perplexityMcpId}.`,
+    );
+  }
+
+  return { ok: violations.length === 0, violations };
+}
+
+async function tavilySecurityAudit(args) {
+  const c = TAVILY_SECURITY_CONTRACT;
+  const [agent, tavilyMcp, perplexityMcp] = await Promise.all([
+    elevenlabsGet(`/agents/${agentId(args)}`),
+    elevenlabsGet(`/mcp-servers/${c.activeTavilyMcpId}`).catch(() => null),
+    elevenlabsGet(`/mcp-servers/${c.perplexityMcpId}`).catch(() => null),
+  ]);
+
+  const { ok, violations } = evaluateTavilyMcpSecurityContract({ agent, tavilyMcp, perplexityMcp });
+
+  console.log("Tavily MCP Credential-Security Contract — live check\n");
+  if (ok) {
+    console.log("PASS — no violations found. Secure Tavily MCP, credential-free URL, correct approvals, Perplexity intact.");
+  } else {
+    console.log(`FAIL — ${violations.length} violation(s):\n`);
+    for (const v of violations) console.log(`  - ${v}`);
+  }
+  console.log(
+    "\nNOTE: this checks live ElevenLabs config only (requires ELEVENLABS_API_KEY, convai_read scope). " +
+      "It does not and cannot verify Tavily-side key revocation — that remains an owner-verified, " +
+      "external Tavily-dashboard fact (see RA7ETBAL_STATE.md).",
+  );
+
+  if (!ok) process.exitCode = 1;
+}
+
 async function main() {
   const [, , command, ...rest] = process.argv;
   const args = parseArgs(rest);
@@ -458,12 +605,14 @@ async function main() {
   if (command === "list") return listConversations(args);
   if (command === "inspect") return inspect(args);
   if (command === "audit") return audit(args);
+  if (command === "tavily-security-audit") return tavilySecurityAudit(args);
 
   console.log(
     "Usage:\n" +
       "  node scripts/carson-diagnose.mjs list --after=<unix|iso> --before=<unix|iso>\n" +
       '  node scripts/carson-diagnose.mjs inspect --conversation-id=<id> [--keyword="blue pen"] [--tool=get_commitment_history]\n' +
-      "  node scripts/carson-diagnose.mjs audit\n",
+      "  node scripts/carson-diagnose.mjs audit\n" +
+      "  node scripts/carson-diagnose.mjs tavily-security-audit\n",
   );
   process.exit(1);
 }

@@ -141,7 +141,19 @@ function loadRequiredCiTestFiles() {
     const script = scripts[key];
     if (typeof script !== "string") continue;
     for (const token of script.split(/\s+/)) {
-      if (token.endsWith(".test.js") || token.endsWith(".test.ts") || token.endsWith(".test.tsx")) {
+      // .test.mjs is a real, pre-existing pattern in this repo (e.g.
+      // scripts/carson-diagnose.test.mjs, scripts/impact-map.test.mjs) — a
+      // capability's focused_tests entry pointing at one of these was
+      // previously unable to ever satisfy rule 8 below, even when genuinely
+      // wired into test:carson-protected, because this extension list never
+      // matched it. Found while registering tavily_mcp_credential_security_contract
+      // (2026-09-10/11) — a real, pre-existing validator gap, not new scope.
+      if (
+        token.endsWith(".test.js") ||
+        token.endsWith(".test.ts") ||
+        token.endsWith(".test.tsx") ||
+        token.endsWith(".test.mjs")
+      ) {
         files.add(token);
       }
     }
