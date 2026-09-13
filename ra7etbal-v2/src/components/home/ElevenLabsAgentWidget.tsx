@@ -149,6 +149,7 @@ import {
   createCanonicalConsequentialResult,
   resolveConsequentialInstructionSource,
   resolveConsequentialOwnerMessage,
+  shouldReplaceProvisionalConsequentialSegment,
   type CanonicalConsequentialKind,
   type CanonicalConsequentialResult,
 } from "../../lib/carson-consequential-result";
@@ -276,6 +277,16 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   // saved note into a task/delegation/reminder) stays blocked above — that is
   // the state-changing step.
 };
+
+// Calendar tools' own success text is a closed, fully-enumerated format this
+// file writes itself (never model-generated) — see createCalendarEvent /
+// updateCalendarEventTool / deleteCalendarEventTool below. Matching it is a
+// reliable success/failure signal for the canonical consequential-result
+// truthfulness backstop, the same way send_delegation/send_direct_whatsapp_message
+// already classify outcome from their own known return strings.
+const CALENDAR_CREATE_SUCCESS_PATTERN = /^Added .+ to your Google Calendar/;
+const CALENDAR_UPDATE_SUCCESS_PATTERN = / is on your calendar\b/;
+const CALENDAR_DELETE_SUCCESS_PATTERN = / is off your calendar\b/;
 
 const CARSON_TYPED_ADVISORY_POLICY =
   "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
@@ -1457,11 +1468,22 @@ export default function ElevenLabsAgentWidget({
   const currentOwnerTurnOperationIdRef = useRef<string | null>(null);
   const canonicalConsequentialResultRef = useRef<CanonicalConsequentialResult | null>(null);
 
+  /** `at` of the canonical result whose truth has already replaced an
+   *  earlier same-turn agent segment (see the onMessage merge step). A
+   *  consequential tool can race ElevenLabs' own pre-tool-speech utterance:
+   *  that provisional segment is displayed first, then this turn's real
+   *  tool outcome arrives as a second "agent" event. Tracking which result
+   *  has already been used to REPLACE (not append to) the transcript
+   *  guarantees one execution produces exactly one final owner-facing
+   *  confirmation, and that a stale/premature claim can never survive
+   *  concatenated next to the truthful outcome. Reset at every new turn. */
+  const consequentialResultReplacedAtRef = useRef<string | null>(null);
+
   const recordCanonicalConsequentialResult = useCallback((input: {
     toolName: CanonicalConsequentialResult["toolName"];
     kind: CanonicalConsequentialKind;
     resultText: string;
-    outcome?: "success" | "failure";
+    outcome?: CanonicalConsequentialResult["outcome"];
     domainOperationId?: string | null;
   }): void => {
     const turnOperationId = currentOwnerTurnOperationIdRef.current;
@@ -5698,6 +5720,7 @@ export default function ElevenLabsAgentWidget({
         lastCreatedReminderRef.current = null;
         currentOwnerTurnOperationIdRef.current = null;
         canonicalConsequentialResultRef.current = null;
+        consequentialResultReplacedAtRef.current = null;
 
         let conversationSummary: string | null = null;
         try {
@@ -5917,6 +5940,7 @@ export default function ElevenLabsAgentWidget({
         lastCreatedReminderRef.current = null;
         currentOwnerTurnOperationIdRef.current = null;
         canonicalConsequentialResultRef.current = null;
+        consequentialResultReplacedAtRef.current = null;
       }
     },
     [
@@ -6064,6 +6088,7 @@ export default function ElevenLabsAgentWidget({
     lastCreatedReminderRef.current = null;
     currentOwnerTurnOperationIdRef.current = null;
     canonicalConsequentialResultRef.current = null;
+    consequentialResultReplacedAtRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
@@ -6429,7 +6454,18 @@ export default function ElevenLabsAgentWidget({
               console.error("[executeInstruction:catch]", err);
               const detail = sanitizeCarsonErrorDetail(err);
               showVisualOutcome("error");
-              return `Could not process that. ${detail}`;
+              const failureText = `Could not process that. ${detail}`;
+              // Truthfulness backstop: a genuine exception means the client
+              // never learned whether the mutation happened — "unclear", not
+              // a verified "failure" — but recording it here is what stops a
+              // separate post-tool reply from claiming success afterward.
+              recordCanonicalConsequentialResult({
+                toolName: "execute_instruction",
+                kind: "rejected",
+                resultText: failureText,
+                outcome: "unclear",
+              });
+              return failureText;
             } finally {
               const toolCompletedPerf = performance.now();
               trace.tool_completed_at = new Date().toISOString();
@@ -6717,26 +6753,54 @@ export default function ElevenLabsAgentWidget({
               lookupCommunicationHistory(params?.person_name ?? ""),
             );
           },
-          create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
+          create_calendar_event: async (params: Parameters<typeof createCalendarEvent>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_calendar_event");
             if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
+            const result = await runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
             );
+            // Truthfulness backstop: createCalendarEvent's own success text is a
+            // closed, fully-enumerated format we control (never model-generated),
+            // so matching it is a reliable success/failure signal — unlike
+            // pattern-matching the ElevenLabs agent's own free-form reply. This
+            // gives calendar tools the same turn-scoped canonical-result
+            // protection execute_instruction/send_delegation/
+            // send_direct_whatsapp_message already have.
+            recordCanonicalConsequentialResult({
+              toolName: "create_calendar_event",
+              kind: CALENDAR_CREATE_SUCCESS_PATTERN.test(result) ? "executed" : "rejected",
+              resultText: result,
+              outcome: CALENDAR_CREATE_SUCCESS_PATTERN.test(result) ? "success" : "failure",
+            });
+            return result;
           },
-          update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
+          update_calendar_event: async (params: Parameters<typeof updateCalendarEventTool>[0]) => {
             const captureBlock = guardCurrentToolInvocation("update_calendar_event");
             if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
+            const result = await runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
             );
+            recordCanonicalConsequentialResult({
+              toolName: "update_calendar_event",
+              kind: CALENDAR_UPDATE_SUCCESS_PATTERN.test(result) ? "executed" : "rejected",
+              resultText: result,
+              outcome: CALENDAR_UPDATE_SUCCESS_PATTERN.test(result) ? "success" : "failure",
+            });
+            return result;
           },
-          delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
+          delete_calendar_event: async (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
             const captureBlock = guardCurrentToolInvocation("delete_calendar_event");
             if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
+            const result = await runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
             );
+            recordCanonicalConsequentialResult({
+              toolName: "delete_calendar_event",
+              kind: CALENDAR_DELETE_SUCCESS_PATTERN.test(result) ? "executed" : "rejected",
+              resultText: result,
+              outcome: CALENDAR_DELETE_SUCCESS_PATTERN.test(result) ? "success" : "failure",
+            });
+            return result;
           },
           save_instruction: async ({
             instruction,
@@ -6870,6 +6934,7 @@ export default function ElevenLabsAgentWidget({
             };
             currentOwnerTurnOperationIdRef.current = turnOperationId;
             canonicalConsequentialResultRef.current = null;
+            consequentialResultReplacedAtRef.current = null;
             setTurnPhase("thinking");
             if (detectAllRecurringSchedules(message).length > 0) {
               recurringRawRef.current = message;
@@ -6956,6 +7021,7 @@ export default function ElevenLabsAgentWidget({
             };
             currentOwnerTurnOperationIdRef.current = turnOperationId;
             canonicalConsequentialResultRef.current = null;
+            consequentialResultReplacedAtRef.current = null;
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -7194,10 +7260,32 @@ export default function ElevenLabsAgentWidget({
               carsonTranscriptTurnStateRef.current,
               { type: "agent_message", text: finalDisplayMessage },
             ).state;
+            // Truthfulness backstop: a covered consequential tool's pre-tool-speech
+            // segment (provisional, possibly wrong) can land as an earlier "agent"
+            // event in this same turn, before finalDisplayMessage above becomes the
+            // tool's own truthful canonical text. REPLACE it here instead of
+            // appending (below), or a duplicate/contradictory claim ("Grace has it.
+            // Grace has it." / a false claim next to the real failure) would reach
+            // the transcript. Tracked by result identity (`at`), not text content —
+            // language-agnostic, fires once per recorded result.
+            const currentCanonicalResult = canonicalConsequentialResultRef.current;
+            const isFreshConsequentialReveal = shouldReplaceProvisionalConsequentialSegment(
+              currentCanonicalResult,
+              currentOwnerTurnOperationIdRef.current,
+              consequentialResultReplacedAtRef.current,
+            );
+            if (isFreshConsequentialReveal && currentCanonicalResult) {
+              consequentialResultReplacedAtRef.current = currentCanonicalResult.at;
+            }
             let mergedDisplayMessage = finalDisplayMessage;
             if (wasAlreadyDisplayedThisTurn && sessionTranscriptRef.current.length >= 2) {
               const previousSegment = sessionTranscriptRef.current[sessionTranscriptRef.current.length - 2];
-              if (previousSegment?.role === "agent") {
+              if (previousSegment?.role === "agent" && isFreshConsequentialReveal) {
+                sessionTranscriptRef.current.splice(sessionTranscriptRef.current.length - 2, 2, {
+                  role,
+                  message: mergedDisplayMessage,
+                });
+              } else if (previousSegment?.role === "agent") {
                 mergedDisplayMessage = `${previousSegment.message} ${finalDisplayMessage}`;
                 sessionTranscriptRef.current.splice(sessionTranscriptRef.current.length - 2, 2, {
                   role,

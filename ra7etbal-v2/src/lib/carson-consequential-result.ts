@@ -18,10 +18,24 @@ export type CanonicalConsequentialKind =
 export interface CanonicalConsequentialResult {
   turnOperationId: string;
   domainOperationId?: string | null;
-  toolName: "execute_instruction" | "send_delegation" | "send_direct_whatsapp_message";
+  toolName:
+    | "execute_instruction"
+    | "send_delegation"
+    | "send_direct_whatsapp_message"
+    | "create_calendar_event"
+    | "update_calendar_event"
+    | "delete_calendar_event";
   kind: CanonicalConsequentialKind;
   resultText: string;
-  outcome: "success" | "failure";
+  /**
+   * "unclear" covers a genuine exception/timeout where the client never
+   * learned whether the underlying mutation succeeded (e.g. execute_instruction's
+   * network catch) — distinct from "failure", a verified non-mutation. Both
+   * outcomes are treated identically by the resolvers below (neither is ever
+   * success-shaped): the distinction exists so the owner-facing text can say
+   * "I couldn't confirm that" rather than falsely implying a known failure.
+   */
+  outcome: "success" | "failure" | "unclear";
   at: string;
 }
 
@@ -76,4 +90,30 @@ export function resolveConsequentialOwnerMessage(
   currentTurnOperationId: string | null,
 ): string {
   return resolveCanonicalConsequentialResult(result, currentTurnOperationId) ?? agentMessage;
+}
+
+/**
+ * A covered consequential tool can race ElevenLabs' own pre-tool-speech
+ * utterance: that provisional segment lands as an earlier "agent" event in
+ * the same turn, before the tool's real outcome is known and recorded here.
+ * Once it is, this turn's second "agent" event must REPLACE the provisional
+ * segment outright rather than being appended after it — appending would
+ * either duplicate a success claim ("Grace has it. Grace has it.") or leave
+ * a false claim sitting next to the truthful one ("Grace has it. I couldn't
+ * send that message."). Returns true at most once per distinct recorded
+ * result (tracked by `at`, the caller's job to persist and pass back as
+ * `lastReplacedResultAt`) — this is what guarantees one execution produces
+ * exactly one final owner-facing confirmation.
+ *
+ * Deliberately keyed on result identity, never on the text itself — the
+ * decision holds regardless of what language the model happens to speak in.
+ */
+export function shouldReplaceProvisionalConsequentialSegment(
+  result: CanonicalConsequentialResult | null,
+  currentTurnOperationId: string | null,
+  lastReplacedResultAt: string | null,
+): boolean {
+  if (!result || !currentTurnOperationId) return false;
+  if (result.turnOperationId !== currentTurnOperationId) return false;
+  return lastReplacedResultAt !== result.at;
 }

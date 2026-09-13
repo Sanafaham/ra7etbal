@@ -643,7 +643,7 @@ describe("Type to Carson — advisory-only gating mechanism (RETIRED per C-01, k
       ["update_calendar_event", "updateCalendarEventTool(params)"],
       ["delete_calendar_event", "deleteCalendarEventTool(params)"],
     ] as const) {
-      const toolBlock = blockBetween(`${toolName}: (params: Parameters<typeof `, "  },");
+      const toolBlock = blockBetween(`${toolName}: async (params: Parameters<typeof `, "  },");
       const guardIndex = toolBlock.indexOf(`guardCurrentToolInvocation("${toolName}")`);
       const executorIndex = toolBlock.indexOf(executorCall);
       expect(guardIndex, toolName).toBeGreaterThan(-1);
