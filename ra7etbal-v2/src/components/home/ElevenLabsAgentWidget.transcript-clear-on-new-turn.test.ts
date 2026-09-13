@@ -86,7 +86,11 @@ describe("ElevenLabsAgentWidget — Carson transcript turn-state wiring", () => 
     // ElevenLabsAgentWidget.multi-segment-agent-message.test.ts for that
     // logic's own dedicated coverage. The invariant this test protects
     // (reducer runs before the display commits) is unchanged.
-    const nearby = SOURCE.slice(idx, idx + 1000);
+    // Widened again (was 1000) for the consequential-result "replace, don't
+    // append" truthfulness backstop that now also sits in this span — see
+    // carson-consequential-result.test.ts and the confirmation/truthfulness
+    // defect fix's own dedicated coverage.
+    const nearby = SOURCE.slice(idx, idx + 2500);
     expect(nearby).toContain('{ type: "agent_message", text: finalDisplayMessage }');
     const setIdx = nearby.indexOf("setLastCarsonMessage(mergedDisplayMessage);");
     const stateIdx = nearby.indexOf("carsonTranscriptTurnStateRef.current = reduceCarsonTranscriptTurn(");

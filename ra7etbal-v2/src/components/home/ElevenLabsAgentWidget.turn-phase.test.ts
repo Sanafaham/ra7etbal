@@ -159,7 +159,11 @@ describe("ElevenLabsAgentWidget — tool start changes UI to Acting, tool end/fa
     expect(markToolRanIndex).toBeGreaterThan(setActingIndex);
     expect(finallyIndex).toBeGreaterThan(markToolRanIndex);
     expect(clearIndex).toBeGreaterThan(finallyIndex);
-    expect(clearIndex).toBeLessThan(start + 3000); // stays within this one clientTools entry
+    // Window widened (was 3000) for the confirmation/truthfulness defect fix's
+    // recordCanonicalConsequentialResult call now sitting in the catch block —
+    // see ElevenLabsAgentWidget.confirmation-truthfulness.test.ts. Still bounded
+    // to this one clientTools entry, just a larger one.
+    expect(clearIndex).toBeLessThan(start + 3800);
   });
 
   // CodeRabbit finding: verify the handler actually returns the promise

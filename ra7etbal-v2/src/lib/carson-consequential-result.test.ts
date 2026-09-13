@@ -5,6 +5,8 @@ import {
   resolveCanonicalConsequentialResult,
   resolveConsequentialOwnerMessage,
   resolveConsequentialInstructionSource,
+  shouldReplaceProvisionalConsequentialSegment,
+  type CanonicalConsequentialResult,
 } from "./carson-consequential-result";
 
 describe("canonical consequential owner results", () => {
@@ -87,5 +89,87 @@ describe("canonical consequential owner results", () => {
         "dinner-turn",
       ),
     ).toBe("Christopher has the dinner plan.");
+  });
+
+  it("accepts the widened outcome union (unclear) and calendar tool names without a type error", () => {
+    const result = createCanonicalConsequentialResult({
+      turnOperationId: "calendar-turn",
+      toolName: "create_calendar_event",
+      kind: "rejected",
+      resultText: "Could not process that. Network error.",
+      outcome: "unclear",
+    });
+    expect(result.outcome).toBe("unclear");
+    expect(result.toolName).toBe("create_calendar_event");
+  });
+});
+
+describe("shouldReplaceProvisionalConsequentialSegment — one execution, one final confirmation", () => {
+  const baseResult: CanonicalConsequentialResult = createCanonicalConsequentialResult({
+    turnOperationId: "grace-turn",
+    toolName: "execute_instruction",
+    kind: "executed",
+    resultText: "Grace has it.",
+    outcome: "success",
+    at: "2026-09-13T10:00:00.000Z",
+  });
+
+  it("replaces on the first reveal of a result for the current turn", () => {
+    expect(shouldReplaceProvisionalConsequentialSegment(baseResult, "grace-turn", null)).toBe(true);
+  });
+
+  it("does not replace again once that exact result has already been shown", () => {
+    expect(
+      shouldReplaceProvisionalConsequentialSegment(baseResult, "grace-turn", baseResult.at),
+    ).toBe(false);
+  });
+
+  it("replaces again for a genuinely new result (a retry gets its own execution)", () => {
+    const retry = createCanonicalConsequentialResult({
+      ...baseResult,
+      resultText: "I couldn't send that message to Grace. Please try again.",
+      outcome: "failure",
+      at: "2026-09-13T10:00:05.000Z",
+    });
+    expect(
+      shouldReplaceProvisionalConsequentialSegment(retry, "grace-turn", baseResult.at),
+    ).toBe(true);
+  });
+
+  it("never replaces across a turn boundary — no result, no id, or a stale turn", () => {
+    expect(shouldReplaceProvisionalConsequentialSegment(null, "grace-turn", null)).toBe(false);
+    expect(shouldReplaceProvisionalConsequentialSegment(baseResult, null, null)).toBe(false);
+    expect(shouldReplaceProvisionalConsequentialSegment(baseResult, "later-turn", null)).toBe(false);
+  });
+
+  it("holds identically for Arabic result text — the decision is keyed on result identity, never on language", () => {
+    const arabicSuccess = createCanonicalConsequentialResult({
+      turnOperationId: "grace-turn-ar",
+      toolName: "send_direct_whatsapp_message",
+      kind: "direct_message",
+      resultText: "أرسلت الرسالة إلى كريستوفر.", // "I sent the message to Christopher."
+      outcome: "success",
+      at: "2026-09-13T11:00:00.000Z",
+    });
+    expect(
+      shouldReplaceProvisionalConsequentialSegment(arabicSuccess, "grace-turn-ar", null),
+    ).toBe(true);
+    // Same result shown again (e.g. a third onMessage segment) must not
+    // trigger a second replace — exactly one confirmation, regardless of script.
+    expect(
+      shouldReplaceProvisionalConsequentialSegment(arabicSuccess, "grace-turn-ar", arabicSuccess.at),
+    ).toBe(false);
+
+    const arabicFailure = createCanonicalConsequentialResult({
+      turnOperationId: "grace-turn-ar-2",
+      toolName: "send_direct_whatsapp_message",
+      kind: "direct_message",
+      resultText: "لم أتمكن من إرسال الرسالة. حاول مرة أخرى.", // "I couldn't send the message. Try again."
+      outcome: "failure",
+      at: "2026-09-13T11:05:00.000Z",
+    });
+    expect(
+      shouldReplaceProvisionalConsequentialSegment(arabicFailure, "grace-turn-ar-2", null),
+    ).toBe(true);
   });
 });
