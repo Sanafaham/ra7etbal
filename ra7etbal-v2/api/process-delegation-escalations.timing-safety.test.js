@@ -297,5 +297,161 @@ describe('Protection 4: candidate query excludes rows that can never be actioned
     expect(candidateUrl).toContain('status=eq.pending');
     expect(candidateUrl).toContain('archived_at=is.null');
     expect(candidateUrl).toContain('order=created_at.asc');
+
+    // The candidate limit must stay bounded AND stay at 50. Anchored so that
+    // silently inflating it (limit=500) fails too — raising the ceiling is a
+    // way of masking starvation rather than fixing it, and the exclusion above
+    // is what makes a 50-row window sufficient.
+    expect(candidateUrl).toMatch(/[?&]limit=50(?:&|$)/);
+
+    // The decisive ordering property: the exclusion and the limit ride the
+    // SAME PostgREST request, so Postgres applies the predicate before LIMIT.
+    // A future change that drops the predicate and instead filters the 50
+    // returned rows in JavaScript would leave the starvation defect fully
+    // intact (the unactionable rows would still consume the window), and is
+    // rejected here. Both mutations of this exact shape were verified to turn
+    // this assertion RED before the fix was frozen.
+    expect(candidateUrl).toMatch(/assigned_to=not\.is\.null[\s\S]*[?&]limit=50(?:&|$)/);
+  });
+
+  it('keeps the escalation guard idempotent — a task already stamped escalated_at produces no second owner escalation', async () => {
+    const now = new Date('2026-07-02T15:05:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    // Created 35 minutes ago — past BOTH the 10-minute follow-up and the
+    // 20-minute escalation thresholds, so only the stamped guards can stop a
+    // duplicate send. This is the owner-escalation counterpart to the
+    // followup_sent_at claim races already covered in the followup-guard suite.
+    const task = {
+      id: 'task-already-escalated',
+      user_id: 'user-1',
+      description: 'bring the car around.',
+      type: 'delegation',
+      assigned_to: 'Christopher',
+      status: 'pending',
+      needs_follow_up: true,
+      confirmation_url: 'https://ra7etbal.com/confirm?task=task-already-escalated',
+      created_at: '2026-07-02T14:30:00.000Z',
+      followup_sent_at: '2026-07-02T14:40:00.000Z',
+      escalated_at: '2026-07-02T14:50:00.000Z',
+    };
+
+    const jsonResponse = (body, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+    const fetchMock = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/tasks') && u.includes('select=')) return jsonResponse([task]);
+      return jsonResponse([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const req = {
+      method: 'POST',
+      url: '/api/process-delegation-escalations',
+      headers: { authorization: 'Bearer cron-secret', 'user-agent': 'Upstash-QStash' },
+      body: {},
+      query: {},
+    };
+    let jsonBody = null;
+    const res = { status() { return this; }, json(b) { jsonBody = b; return this; } };
+
+    await handler(req, res);
+    vi.useRealTimers();
+
+    expect(jsonBody.escalationsSent).toBe(0);
+    expect(jsonBody.followupsSent).toBe(0);
+
+    // No owner push lookup, and no re-stamp of either guard column.
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/rest/v1/push_subscriptions'))).toBe(false);
+    const stampCalls = fetchMock.mock.calls.filter(
+      ([u, init]) => String(u).includes('/rest/v1/tasks') && init?.method === 'PATCH',
+    );
+    expect(stampCalls).toHaveLength(0);
+  });
+});
+
+// ── Protection 5: the saturation alarm must survive ──────────────────────────
+//
+// The alarm added alongside the starvation fix is the only signal that would
+// surface a recurrence (a different unactionable row shape, or genuine volume
+// growth past MAX_TASKS_PER_RUN) while it is still just a warning rather than
+// missed escalations. It must stay present, and must remain purely
+// observational — it may never gate or alter processing.
+describe('Protection 5: candidate-window saturation alarm', () => {
+  function saturationFetchMock(rowCount) {
+    const rows = Array.from({ length: rowCount }, (_, i) => ({
+      id: `task-${i}`,
+      user_id: 'user-1',
+      description: 'bring the car around.',
+      type: 'delegation',
+      assigned_to: 'Christopher',
+      status: 'pending',
+      needs_follow_up: true,
+      confirmation_url: `https://ra7etbal.com/confirm?task=task-${i}`,
+      created_at: '2026-07-02T14:30:00.000Z',
+      // Both guards stamped, so a saturated window performs no sends and the
+      // test isolates the alarm itself rather than send behavior.
+      followup_sent_at: '2026-07-02T14:40:00.000Z',
+      escalated_at: '2026-07-02T14:50:00.000Z',
+    }));
+    const jsonResponse = (body) => ({
+      ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body),
+    });
+    return vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/tasks') && u.includes('select=')) return jsonResponse(rows);
+      return jsonResponse([]);
+    });
+  }
+
+  async function runWithRows(rowCount) {
+    const now = new Date('2026-07-02T15:05:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', saturationFetchMock(rowCount));
+
+    const req = {
+      method: 'POST',
+      url: '/api/process-delegation-escalations',
+      headers: { authorization: 'Bearer cron-secret', 'user-agent': 'Upstash-QStash' },
+      body: {},
+      query: {},
+    };
+    let jsonBody = null;
+    const res = { status() { return this; }, json(b) { jsonBody = b; return this; } };
+
+    await handler(req, res);
+    vi.useRealTimers();
+
+    const saturationLogs = errorSpy.mock.calls.filter(
+      ([msg]) => String(msg).includes('candidate window saturated'),
+    );
+    return { saturationLogs, jsonBody };
+  }
+
+  it('raises the alarm when the candidate window comes back full, without altering processing', async () => {
+    const { saturationLogs, jsonBody } = await runWithRows(50);
+
+    expect(saturationLogs).toHaveLength(1);
+    expect(saturationLogs[0][1]).toMatchObject({ candidates: 50, maxTasksPerRun: 50 });
+
+    // Observational only — every row was still examined, and the guards still
+    // suppressed every send exactly as they would on a non-saturated run.
+    expect(jsonBody.checked).toBe(50);
+    expect(jsonBody.followupsSent).toBe(0);
+    expect(jsonBody.escalationsSent).toBe(0);
+  });
+
+  it('stays silent on a normal, non-saturated run', async () => {
+    const { saturationLogs, jsonBody } = await runWithRows(3);
+
+    expect(saturationLogs).toHaveLength(0);
+    expect(jsonBody.checked).toBe(3);
   });
 });
