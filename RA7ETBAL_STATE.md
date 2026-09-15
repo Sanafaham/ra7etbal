@@ -12,7 +12,9 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Current next task
 
-### Carson confirmation/truthfulness defect ("Grace has it" premature/duplicate confirmation) — CLOSED / PROTECTED / LOCKED (2026-09-15)
+### Carson confirmation/truthfulness defect ("Grace has it" premature/duplicate confirmation) — APPLICATION-SIDE FIX IMPLEMENTED, TESTED, NOT YET MERGED — ELEVENLABS PRE-TOOL-SPEECH CHANGE STILL BLOCKED ON ACCESS (2026-09-13)
+
+**Update (2026-09-15): this defect is now CLOSED / PROTECTED / LOCKED.** The heading above is preserved verbatim as the original 2026-09-13 status line (per `state-doc-integrity`'s rule that a closed section's heading must never simply disappear); both conditions it describes have since been resolved — the application-side fix was merged as PR #407, and the ElevenLabs Pre-tool-speech change was unblocked, built on an isolated branch, promoted to Main, and accepted in real production. Read the heading as historical, and this section's body as current.
 
 **LOCK RULE: do not reopen or materially alter this behavior without new production evidence of a regression, or an explicitly authorized product change.**
 
