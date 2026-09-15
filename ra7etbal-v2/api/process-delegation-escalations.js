@@ -240,6 +240,19 @@ export default async function handler(req, res) {
   // rows can be recognized by the operational signals used elsewhere in the
   // app: assigned_to + needs_follow_up. Keeping the query wider lets this job
   // log exactly why a row was skipped instead of silently missing it.
+  //
+  // The one exception is assigned_to, which getDelegationSkipReason rejects
+  // unconditionally ('no assigned person') before any other check — so a row
+  // without one can never be acted on, only logged. Confirmed production
+  // incident (2026-09-14, task 41770f40): reminder/automation rows stay
+  // status='pending' forever and accumulate a few per day, and because this
+  // query is ordered oldest-first with a hard limit, 87 of 93 eligible rows
+  // were unactionable no-assignee rows and 45 of them occupied the 50-row
+  // window. Real delegations newer than the window's tail (41770f40 ranked
+  // 87th) became permanently invisible to BOTH invocation paths — the
+  // per-task QStash wake-up re-derives eligibility through this same query
+  // by design, so it starved identically. Excluding them here restores the
+  // intended reach without changing which rows are actionable.
   const oldestRelevantCutoff = new Date(now.getTime() - followupThresholdMs).toISOString();
 
   const headers = supabaseHeaders(serviceKey);
@@ -251,6 +264,7 @@ export default async function handler(req, res) {
     `created_at,followup_sent_at,escalated_at,image_path,attachment_count,proof_image_path,quality_review_status` +
     `&status=eq.pending` +
     `&archived_at=is.null` +
+    `&assigned_to=not.is.null` +
     `&created_at=lte.${encodeURIComponent(oldestRelevantCutoff)}` +
     `&order=created_at.asc` +
     `&limit=${MAX_TASKS_PER_RUN}`;
@@ -290,6 +304,19 @@ export default async function handler(req, res) {
     escalateThresholdMs,
     testMode,
   });
+
+  // The candidate window is oldest-first with a hard limit, so a full page
+  // means rows newer than this page's tail were not examined at all this run
+  // — the exact silent-starvation shape that hid task 41770f40 for 30+ hours.
+  // Log loudly rather than letting a saturated window look like a normal run.
+  if (tasks.length >= MAX_TASKS_PER_RUN) {
+    console.error('[escalation] candidate window saturated — newer delegations may be starved', {
+      candidates: tasks.length,
+      maxTasksPerRun: MAX_TASKS_PER_RUN,
+      oldestCandidateCreatedAt: tasks[0]?.created_at || null,
+      newestExaminedCreatedAt: tasks[tasks.length - 1]?.created_at || null,
+    });
+  }
 
   const stats = { checked: tasks.length, followupsSent: 0, escalationsSent: 0, errors: [] };
 
