@@ -213,3 +213,89 @@ describe('scheduled triggers cannot bypass the ageMs + guard re-check', () => {
     expect(sendCalls).toHaveLength(1);
   });
 });
+
+// ── Protection 4: the candidate window must not be starved by rows that can
+//    never be acted on ────────────────────────────────────────────────────────
+//
+// Confirmed production incident (2026-09-14, task 41770f40 "bring the car
+// around." / Christopher): the candidate query is ordered created_at.asc with
+// a hard limit of MAX_TASKS_PER_RUN. Reminder/automation rows stay
+// status='pending' indefinitely and accrue a few per day, and they carry no
+// assigned_to — getDelegationSkipReason rejects them unconditionally ('no
+// assigned person'), so they can only ever be logged, never acted on. They
+// had nonetheless grown to 87 of 93 eligible rows, filling 45 of the 50
+// candidate slots and pushing every newer real delegation past the window's
+// tail. Task 41770f40 ranked 87th and went 30+ hours with followup_sent_at
+// and escalated_at both null.
+//
+// This starved BOTH invocation paths at once, which is why neither covered
+// it: the per-task QStash wake-up deliberately re-derives eligibility through
+// this same query (Protection 2/3 above) rather than trusting its payload, so
+// it hit the identical truncated page.
+//
+// The fix excludes no-assignee rows at the PostgREST level. That is
+// behavior-preserving by construction — assigned_to is the first
+// unconditional rejection in getDelegationSkipReason — so it removes only
+// rows that were already guaranteed to be skipped.
+describe('Protection 4: candidate query excludes rows that can never be actioned', () => {
+  it('filters no-assignee rows at the query level so they cannot consume the limited candidate window', async () => {
+    const now = new Date('2026-07-02T14:45:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    const task = {
+      id: 'task-due',
+      user_id: 'user-1',
+      description: 'bring the car around.',
+      type: 'delegation',
+      assigned_to: 'Christopher',
+      status: 'pending',
+      needs_follow_up: true,
+      confirmation_url: 'https://ra7etbal.com/confirm?task=task-due',
+      created_at: '2026-07-02T14:30:00.000Z',
+      followup_sent_at: null,
+      escalated_at: null,
+    };
+
+    const jsonResponse = (body, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+    const fetchMock = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/tasks') && u.includes('select=')) return jsonResponse([task]);
+      if (u.includes('/rest/v1/routines')) return jsonResponse([]);
+      if (u.includes('/rest/v1/automations')) return jsonResponse([]);
+      return jsonResponse([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const req = {
+      method: 'POST',
+      url: '/api/process-delegation-escalations',
+      headers: { authorization: 'Bearer cron-secret', 'user-agent': 'Upstash-QStash' },
+      body: {},
+      query: {},
+    };
+    const res = { status() { return this; }, json() { return this; } };
+
+    await handler(req, res);
+    vi.useRealTimers();
+
+    const candidateCall = fetchMock.mock.calls.find(
+      ([u]) => String(u).includes('/rest/v1/tasks') && String(u).includes('select='),
+    );
+    expect(candidateCall).toBeDefined();
+
+    const candidateUrl = String(candidateCall[0]);
+    // The actual regression guard: without this predicate the window fills
+    // with unactionable no-assignee rows and newer delegations never load.
+    expect(candidateUrl).toContain('assigned_to=not.is.null');
+    // The rest of the candidate contract must stay intact alongside it.
+    expect(candidateUrl).toContain('status=eq.pending');
+    expect(candidateUrl).toContain('archived_at=is.null');
+    expect(candidateUrl).toContain('order=created_at.asc');
+  });
+});
