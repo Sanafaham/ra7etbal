@@ -369,9 +369,10 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     captureCandidates,
     routineAutomationTaskIds: digest.routineAutomationTaskIds,
     recurringSourceIndexes: digest.recurringSourceIndexes,
-    // An empty digest (auth failure or query error) carries no link evidence, so
-    // the membership below is the pre-correction one — report partial, never full.
-    recurringSourceFailed: !digest.recurringSourceIndexes,
+    // Explicit flag, not inferred from absent indexes: a digest that loaded fine
+    // for an owner with no automations must still count as complete, while a
+    // failed auth/read must not — the membership below would be pre-correction.
+    recurringSourceFailed: digest.recurringSourceLinksLoaded !== true,
     capturesFailed,
   });
 

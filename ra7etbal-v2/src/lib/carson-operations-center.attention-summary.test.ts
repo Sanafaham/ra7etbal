@@ -42,6 +42,10 @@ const { fetchAttentionEvidence, fetchAttentionSummary, renderAttentionSummary } 
   "./carson-operations-center"
 );
 
+// A digest that LOADED SUCCESSFULLY for an owner with no automations — which is
+// what these tests mock for the happy path. recurringSourceLinksLoaded is true
+// because both link reads returned (empty is a valid result); a digest whose
+// reads actually failed is covered separately below.
 const EMPTY_DIGEST = {
   pending: [],
   escalated: [],
@@ -50,6 +54,12 @@ const EMPTY_DIGEST = {
   firingToday: [],
   firingTomorrow: [],
   routineAutomationTaskIds: new Set<string>(),
+  recurringSourceIndexes: {
+    automationLinks: new Map(),
+    routineLinks: new Map(),
+    notificationAutomationClaims: new Map(),
+  },
+  recurringSourceLinksLoaded: true,
 };
 
 function makeTask(overrides: Partial<Task> = {}): Task {

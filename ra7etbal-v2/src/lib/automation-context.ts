@@ -91,6 +91,14 @@ export interface AutomationDigest {
    * much is the intended direction.
    */
   recurringSourceIndexes?: RecurringSourceIndexes;
+  /**
+   * True only when BOTH recurring-source link reads actually returned. Absence
+   * of indexes alone cannot carry this: a digest that loaded fine for an owner
+   * with no automations looks identical to one whose reads failed, and the
+   * difference decides whether the attention read may call itself complete.
+   * Consumers supersede nothing when the evidence is missing either way.
+   */
+  recurringSourceLinksLoaded?: boolean;
 }
 
 interface AutomationJoinFields {
@@ -158,6 +166,7 @@ const EMPTY_DIGEST: AutomationDigest = {
   // Consumers supersede nothing either way (fail-safe), but the attention path
   // uses this distinction to report completeness as partial rather than full.
   recurringSourceIndexes: undefined,
+  recurringSourceLinksLoaded: false,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +227,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // Newest-first ordering means that if the cap is ever reached, the links that
   // survive are the recent ones supersession actually depends on, and any task
   // whose link is missing simply resolves to unresolved and stays visible.
-  const { data: recurringRunLinks } = await supabase
+  const { data: recurringRunLinks, error: recurringRunLinksError } = await supabase
     .from("automation_runs")
     .select("task_id, automation_id, user_id")
     .not("task_id", "is", null)
@@ -229,7 +238,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // holds metadata.routine_id, automation_reminder holds
   // metadata.automation_id. Filtering to them keeps the rest of the owner's
   // notification history — and its metadata — out of the digest entirely.
-  const { data: recurringNotificationLinks } = await supabase
+  const { data: recurringNotificationLinks, error: recurringNotificationLinksError } = await supabase
     .from("owner_notifications")
     .select("target_id, kind, user_id, metadata")
     .not("target_id", "is", null)
@@ -381,13 +390,22 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
       .filter(Boolean),
   );
 
+  // A failed link read must not masquerade as "this owner has no recurring
+  // history" — that would let the attention path report pre-correction
+  // membership as complete.
+  const recurringSourceLinksLoaded =
+    !recurringRunLinksError &&
+    !recurringNotificationLinksError &&
+    recurringRunLinks != null &&
+    recurringNotificationLinks != null;
+
   const recurringSourceIndexes: RecurringSourceIndexes = {
     automationLinks: indexAutomationSourceLinks(recurringRunLinks ?? []),
     routineLinks: indexRoutineSourceLinks(recurringNotificationLinks ?? []),
     notificationAutomationClaims: indexNotificationAutomationClaims(recurringNotificationLinks ?? []),
   };
 
-  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds, recurringSourceIndexes };
+  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds, recurringSourceIndexes, recurringSourceLinksLoaded };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

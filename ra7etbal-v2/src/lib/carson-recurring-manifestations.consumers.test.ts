@@ -488,6 +488,21 @@ describe("attention completeness is truthful about missing link evidence", () =>
     expect(failed.code).toBe("attention_read_partial");
   });
 
+  it("reports full for a loaded digest whose owner simply has no recurring history", () => {
+    // The distinction CI caught: "loaded, nothing in it" must NOT be reported as
+    // partial. Empty indexes with a successful load are complete evidence.
+    const loadedButEmpty = compose({
+      recurringSourceFailed: false,
+      recurringSourceIndexes: {
+        automationLinks: new Map(),
+        routineLinks: new Map(),
+        notificationAutomationClaims: new Map(),
+      },
+    });
+
+    expect(loadedButEmpty.completeness).toBe("full");
+  });
+
   it("reports full when the link evidence is present", () => {
     const ok = compose({
       recurringSourceFailed: false,
