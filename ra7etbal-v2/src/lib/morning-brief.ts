@@ -146,8 +146,21 @@ export function buildMorningBriefSpoken(
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
+  // todayEvs is same-local-day membership and therefore includes events that
+  // have ALREADY ENDED earlier today. It is kept in that form deliberately: it
+  // still answers "did anything happen today at all", which the slot below
+  // needs in order to stay truthful when everything has elapsed.
   const todayEvs   = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
+  // Production defect 2026-09-26: a 16:00-17:00 appointment was spoken at 18:38
+  // as "You also have Hairdresser Appointment at 4:00 PM" because the spoken
+  // slot fell through to todayEvs, which still contained the elapsed event. The
+  // same payload's ra7etbal_state already said "Past: ... ended 5:00 PM" — the
+  // authoritative classification existed and simply was not consulted here.
+  // Reuses classifyCalendarEvent() rather than adding a second notion of
+  // calendar truth; all-day events classify as "upcoming" by that function's
+  // own contract, so their behavior is unchanged.
+  const todayAhead = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "upcoming");
 
   // ── URGENT — items requiring Sana's direct action ─────────────────────────
   // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
@@ -276,14 +289,21 @@ export function buildMorningBriefSpoken(
       : `You're currently in ${ev.title}.`;
   } else if (todayEvs.length === 0) {
     slotCalendar = "Your calendar is clear today.";
-  } else if (todayEvs.length === 1) {
-    const ev = todayEvs[0];
+  } else if (todayAhead.length === 0) {
+    // Everything on today's calendar has already ended. "Your calendar is clear
+    // today" would be its own falsehood — appointments did happen — so say what
+    // is actually true about the rest of the day instead.
+    slotCalendar = "Nothing else on your calendar today.";
+  } else if (todayAhead.length === 1) {
+    const ev = todayAhead[0];
     const t  = evTime(ev);
     slotCalendar = t
       ? `You also have ${ev.title} at ${t}.`
       : `You also have ${ev.title} on the calendar today.`;
   } else {
-    slotCalendar = `You also have ${spokenCount(todayEvs.length)} events on the calendar today.`;
+    // Counts only what is still ahead: "3 events" when two already finished is
+    // the same stale claim in aggregate form.
+    slotCalendar = `You also have ${spokenCount(todayAhead.length)} events on the calendar today.`;
   }
 
   // ── AUTOMATION STATUS ──────────────────────────────────────────────────────
