@@ -27,7 +27,7 @@ import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
   type RecurringSourceIndexes,
-} from "../../shared/carson-recurring-manifestations";
+} from "../../shared/carson-recurring-manifestations.js";
 
 export interface CarsonContextInput {
   tasks: Task[];

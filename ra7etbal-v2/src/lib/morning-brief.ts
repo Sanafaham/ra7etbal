@@ -27,7 +27,7 @@ import { formatAutomationForMorning } from "./automation-context";
 import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
-} from "../../shared/carson-recurring-manifestations";
+} from "../../shared/carson-recurring-manifestations.js";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 // PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):

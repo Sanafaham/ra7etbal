@@ -30,7 +30,7 @@ import { buildDailyBrief } from "../../lib/daily-brief";
 import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
-} from "../../../shared/carson-recurring-manifestations";
+} from "../../../shared/carson-recurring-manifestations.js";
 import {
   detectWeeklyPlanningIntent,
   isWeekPlanExpired,

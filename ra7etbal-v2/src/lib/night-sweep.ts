@@ -9,7 +9,7 @@ import { formatAutomationForNight } from "./automation-context";
 import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
-} from "../../shared/carson-recurring-manifestations";
+} from "../../shared/carson-recurring-manifestations.js";
 import { taskLabel, buildCompletionPhrase, isMaterialWaitingItem } from "./morning-brief";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";

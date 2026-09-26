@@ -18,7 +18,7 @@ import {
   indexNotificationAutomationClaims,
   indexRoutineSourceLinks,
   type RecurringSourceIndexes,
-} from "../../shared/carson-recurring-manifestations";
+} from "../../shared/carson-recurring-manifestations.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -155,12 +155,11 @@ export const RECURRING_PROVENANCE_NOTIFICATION_KINDS = ["routine_reminder", "aut
 
 /**
  * The digest shape used whenever no live automation state could be read — auth
- * failure, query error, or a timeout at a caller's boundary. Exported so callers
- * that impose their own timeout degrade to exactly the same shape this module
- * uses internally, rather than inventing a second "empty" that might disagree
- * about recurringSourceLinksLoaded.
+ * failure or query error. Module-local: an earlier revision exported it for a
+ * caller-side timeout that review showed to be a correctness regression and that
+ * was reverted, so nothing outside this module needs it.
  */
-export const EMPTY_AUTOMATION_DIGEST: AutomationDigest = {
+const EMPTY_AUTOMATION_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
   failed: [],

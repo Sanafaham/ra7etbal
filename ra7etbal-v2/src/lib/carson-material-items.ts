@@ -27,7 +27,7 @@ import { buildMorningBrief, isMaterialWaitingItem } from "./morning-brief";
 import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
-} from "../../shared/carson-recurring-manifestations";
+} from "../../shared/carson-recurring-manifestations.js";
 import { MORNING_START_HOUR } from "./night-sweep";
 
 export interface MaterialItem {
