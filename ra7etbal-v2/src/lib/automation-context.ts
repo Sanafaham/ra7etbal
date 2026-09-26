@@ -153,7 +153,14 @@ export const RECURRING_SOURCE_LINK_LIMIT = 5000;
  */
 export const RECURRING_PROVENANCE_NOTIFICATION_KINDS = ["routine_reminder", "automation_reminder"];
 
-const EMPTY_DIGEST: AutomationDigest = {
+/**
+ * The digest shape used whenever no live automation state could be read — auth
+ * failure, query error, or a timeout at a caller's boundary. Exported so callers
+ * that impose their own timeout degrade to exactly the same shape this module
+ * uses internally, rather than inventing a second "empty" that might disagree
+ * about recurringSourceLinksLoaded.
+ */
+export const EMPTY_AUTOMATION_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
   failed: [],
@@ -175,7 +182,7 @@ const EMPTY_DIGEST: AutomationDigest = {
 
 /**
  * Single Supabase fetch that powers all automation context consumers.
- * Returns EMPTY_DIGEST on auth failure or query error (never throws).
+ * Returns EMPTY_AUTOMATION_DIGEST on auth failure or query error (never throws).
  */
 export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const now = new Date();
@@ -184,7 +191,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return EMPTY_DIGEST;
+  if (!user) return EMPTY_AUTOMATION_DIGEST;
 
   const window48hAgo = new Date(nowMs - 48 * 3_600_000).toISOString();
   const window24hAgo = new Date(nowMs - 24 * 3_600_000).toISOString();
@@ -227,24 +234,28 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // Newest-first ordering means that if the cap is ever reached, the links that
   // survive are the recent ones supersession actually depends on, and any task
   // whose link is missing simply resolves to unresolved and stays visible.
-  const { data: recurringRunLinks, error: recurringRunLinksError } = await supabase
-    .from("automation_runs")
-    .select("task_id, automation_id, user_id")
-    .not("task_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(RECURRING_SOURCE_LINK_LIMIT);
+  // Independent reads — issued together, mirroring the server path's Promise.all.
+  // Awaiting them serially added two round trips to every session start and
+  // every typed attention answer for no reason.
+  const [
+    { data: recurringRunLinks, error: recurringRunLinksError },
+    { data: recurringNotificationLinks, error: recurringNotificationLinksError },
+  ] = await Promise.all([
+    supabase
+      .from("automation_runs")
+      .select("task_id, automation_id, user_id")
+      .not("task_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(RECURRING_SOURCE_LINK_LIMIT),
+    supabase
+      .from("owner_notifications")
+      .select("target_id, kind, user_id, metadata")
+      .not("target_id", "is", null)
+      .in("kind", RECURRING_PROVENANCE_NOTIFICATION_KINDS)
+      .order("occurred_at", { ascending: false })
+      .limit(RECURRING_SOURCE_LINK_LIMIT),
+  ]);
 
-  // Only these two kinds ever carry recurring provenance: routine_reminder
-  // holds metadata.routine_id, automation_reminder holds
-  // metadata.automation_id. Filtering to them keeps the rest of the owner's
-  // notification history — and its metadata — out of the digest entirely.
-  const { data: recurringNotificationLinks, error: recurringNotificationLinksError } = await supabase
-    .from("owner_notifications")
-    .select("target_id, kind, user_id, metadata")
-    .not("target_id", "is", null)
-    .in("kind", RECURRING_PROVENANCE_NOTIFICATION_KINDS)
-    .order("occurred_at", { ascending: false })
-    .limit(RECURRING_SOURCE_LINK_LIMIT);
 
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
@@ -636,7 +647,7 @@ export function formatAutomationForNight(digest: AutomationDigest): string {
  * pass the digest to spoken brief functions (avoids a duplicate Supabase fetch).
  */
 export async function fetchAndBuildAutomationStatusBlock(): Promise<string> {
-  const digest = await fetchAutomationDigest().catch(() => EMPTY_DIGEST);
+  const digest = await fetchAutomationDigest().catch(() => EMPTY_AUTOMATION_DIGEST);
   return buildAutomationStatusBlock(digest);
 }
 

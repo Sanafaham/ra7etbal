@@ -459,7 +459,7 @@ function PersistentCarsonWidget({
       : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow, freshNeedsYou);
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock, recurringSourceIndexes: (freshDigest ?? automationDigest)?.recurringSourceIndexes }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock, recurringSourceIndexes: freshDigest?.recurringSourceIndexes }),
       spokenBrief: isNightSweep
         ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou)
         : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou),

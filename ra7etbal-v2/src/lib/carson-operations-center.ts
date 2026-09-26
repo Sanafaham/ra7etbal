@@ -19,7 +19,7 @@
 
 import { supabase } from "./supabase";
 import { listTasks } from "./tasks";
-import { fetchAutomationDigest } from "./automation-context";
+import { fetchAutomationDigest, EMPTY_AUTOMATION_DIGEST } from "./automation-context";
 import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
 import { fetchUnresolvedCaptureCandidates, type UnresolvedCapture } from "./carson-unresolved-captures";
 import { markCarsonNotesSurfaced } from "./carson-notes";
@@ -331,7 +331,15 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   // fetchAutomationDigest never throws — it returns an empty digest on
   // auth failure or query error, so routineAutomationTaskIds below is
   // always defined (possibly empty), never undefined-because-it-threw.
-  const digestPromise = fetchAutomationDigest();
+  //
+  // Held to the same timeout budget as the three sources above. It was
+  // previously awaited unbounded, which a slow read could use to stall the whole
+  // attention response past the budget the others are bound by — and this digest
+  // now also carries the recurring-source link reads and the authority to mark
+  // the result complete. On timeout it degrades to EMPTY_DIGEST, so
+  // recurringSourceLinksLoaded is false and completeness reports partial rather
+  // than presenting pre-correction membership as the full picture.
+  const digestPromise = withTimeout(fetchAutomationDigest()).catch(() => EMPTY_AUTOMATION_DIGEST);
 
   let tasks: Task[] | null = null;
   let tasksFailed = false;

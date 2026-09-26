@@ -20,6 +20,7 @@ vi.mock("./supabase", () => ({ supabase: {} }));
 const { buildCarsonContext } = await import("./carson-context");
 const { buildMorningBriefSpoken } = await import("./morning-brief");
 const { buildNightSweepSpoken } = await import("./night-sweep");
+const { deriveNightSweepMaterialItems, deriveMorningBriefMaterialItems } = await import("./carson-material-items");
 import { composeAttentionEvidence } from "../../shared/carson-attention-summary.js";
 import {
   indexAutomationSourceLinks,
@@ -586,6 +587,84 @@ describe("recurring staff delegations survive at every consumer boundary", () =>
     ].map((i) => i.id);
 
     expect(ids).toContain("deleg-3");
+  });
+});
+
+describe("material items share the current membership", () => {
+  /**
+   * Review finding: deriveNightSweepMaterialItems was the one sibling left
+   * unnarrowed, so a stale overdue recurring manifestation still became a
+   * MaterialItem and got spoken as new/changed material in an evening follow-up
+   * session — re-surfacing exactly what the spoken sweep now omits.
+   */
+  function overdueRecurringTail() {
+    const tasks: Task[] = [];
+    const runs: Array<{ task_id: string; automation_id: string; user_id: string }> = [];
+    for (let i = 0; i < 6; i++) {
+      const id = `rec-${i}`;
+      const day = String(26 - i).padStart(2, "0");
+      tasks.push(
+        task({
+          id,
+          type: "reminder",
+          description: "Update the Rahet Bal master plan.",
+          // Overdue, so it is material on the overdue path.
+          due_at: `2026-09-${day}T12:00:00.000Z`,
+          created_at: `2026-09-${day}T11:15:00.000Z`,
+        }),
+      );
+      runs.push({ task_id: id, automation_id: AUTOMATION, user_id: OWNER });
+    }
+    return {
+      tasks,
+      recurringSourceIndexes: {
+        automationLinks: indexAutomationSourceLinks(runs),
+        routineLinks: new Map(),
+        notificationAutomationClaims: new Map(),
+      },
+    };
+  }
+
+  it("night-sweep material items drop superseded recurring manifestations", () => {
+    const { tasks, recurringSourceIndexes } = overdueRecurringTail();
+
+    const before = deriveNightSweepMaterialItems(tasks, digest(), [], NOW, []);
+    const after = deriveNightSweepMaterialItems(
+      tasks,
+      digest({ recurringSourceIndexes }),
+      [],
+      NOW,
+      [],
+    );
+
+    const recurringIds = (items: Array<{ id: string }>) =>
+      items.map((i) => i.id).filter((id) => id.startsWith("rec-"));
+
+    expect(recurringIds(before).length).toBeGreaterThan(1);
+    expect(recurringIds(after).length).toBeLessThanOrEqual(1);
+    for (const id of recurringIds(after)) expect(id).toBe("rec-0");
+    // Nothing new appeared.
+    for (const item of after) expect(before.map((b) => b.id)).toContain(item.id);
+  });
+
+  it("morning-brief material items do the same", () => {
+    const { tasks, recurringSourceIndexes } = overdueRecurringTail();
+
+    const before = deriveMorningBriefMaterialItems(tasks, [], digest(), [], NOW, []);
+    const after = deriveMorningBriefMaterialItems(
+      tasks,
+      [],
+      digest({ recurringSourceIndexes }),
+      [],
+      NOW,
+      [],
+    );
+
+    const count = (items: Array<{ id: string }>) =>
+      items.map((i) => i.id).filter((id) => id.startsWith("rec-")).length;
+
+    expect(count(after)).toBeLessThanOrEqual(count(before));
+    expect(count(after)).toBeLessThanOrEqual(1);
   });
 });
 
