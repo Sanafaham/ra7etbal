@@ -1327,7 +1327,9 @@
         "src/lib/night-sweep.ts:buildNightSweepSpoken",
         "src/lib/automation-context.ts:fetchAutomationDigest / dedupeLatestPerAutomation / formatAutomationForMorning / formatAutomationForNight",
         "src/lib/staff-messages.ts:listOpenStaffEscalationsForNeedsYou (Needs You source — read-only, pre-existing)",
-        "src/lib/quality-lifecycle.ts:isQualityOwnerReviewStatus (owner-decision-required signal — read-only, pre-existing, already used by daily-brief.ts/needs-you-timestamp.ts for the same purpose)"
+        "src/lib/quality-lifecycle.ts:isQualityOwnerReviewStatus (owner-decision-required signal — read-only, pre-existing, already used by daily-brief.ts/needs-you-timestamp.ts for the same purpose)",
+        "src/lib/carson-context.ts:buildCarsonContext — the ra7etbal_state session-start snapshot shared by Voice and Text Carson (OPEN / PENDING LOOPS / COMPLETED blocks, and the COMPLETED-is-history-only guard that forces get_commitment_history); computed in App.tsx alongside opening_line/daily_brief from the same live tasks/automationDigest/calendarEvents/needsYou inputs",
+        "shared/carson-recurring-manifestations.js:resolveRecurringSource / deriveRecurringManifestationState / collectSupersededManifestationIds / withoutSupersededManifestations — the single shared definition of which recurring manifestation is CURRENT (P3 5b); derived only, never writes, and shared by carson-context.ts, morning-brief.ts, night-sweep.ts, carson-material-items.ts and the attention summary so CURRENT cannot diverge between surfaces"
       ],
       "shared_dependencies": [],
       "db": {
@@ -1350,7 +1352,9 @@
         "src/lib/carson-material-items.test.ts",
         "src/lib/automation-context.test.ts",
         "src/lib/morning-brief.test.ts",
-        "src/lib/night-sweep.test.ts"
+        "src/lib/night-sweep.test.ts",
+        "src/lib/carson-recurring-manifestations.test.ts",
+        "src/lib/carson-recurring-manifestations.consumers.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": false,
@@ -1399,7 +1403,8 @@
         "src/lib/tasks.ts:listTasks (existing, owner-scoped via RLS)",
         "src/lib/staff-messages.ts:listOpenStaffEscalationsForNeedsYou (existing, owner-scoped via RLS — same source proactive_opening_brief's Needs You slot already uses)",
         "src/lib/automation-context.ts:fetchAutomationDigest (existing, owner-scoped via RLS)",
-        "src/lib/morning-brief.ts:buildMorningBrief / taskLabel (existing, canonical relevance classifier — reused, not reimplemented)"
+        "src/lib/morning-brief.ts:buildMorningBrief / taskLabel (existing, canonical relevance classifier — reused, not reimplemented)",
+        "shared/carson-recurring-manifestations.js (existing relationships only — derives which recurring manifestation is CURRENT from automation_runs.task_id->automation_id and owner_notifications.target_id->metadata.routine_id; membership only, never writes, and strictly separate from the routineAutomationTaskIds briefing-worthiness exclusion)"
       ],
       "db": {
         "tables": [
@@ -1441,7 +1446,8 @@
         "api/_carson-attention-agent.test.js",
         "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
         "src/lib/reminder-time-shared-parity.test.ts",
-        "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts",
+        "src/lib/carson-recurring-manifestations.consumers.test.ts"
       ],
       "protected_suite": false,
       "golden_journey_required": false,
@@ -1479,12 +1485,18 @@
         "scripts/carson-diagnose.mjs:TAVILY_SECURITY_CONTRACT / evaluateTavilyMcpSecurityContract / tavilySecurityAudit — pure, network-free evaluator (unit-tested) plus a live-fetching CLI wrapper (manual-run only, requires ELEVENLABS_API_KEY, no CI credential exists for it — see 'unresolved' below)"
       ],
       "shared_dependencies": [],
-      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
       "external_boundaries": [
         "ElevenLabs Conversational AI API (GET/POST/DELETE /v1/convai/mcp-servers, GET/PATCH /v1/convai/agents/{id}, POST /v1/convai/mcp-servers/{id}/tool-approvals)",
         "Tavily remote MCP server (https://mcp.tavily.com/mcp/) — authenticated via ElevenLabs stored secret, never a URL-embedded key"
       ],
-      "focused_tests": ["scripts/carson-diagnose.test.mjs"],
+      "focused_tests": [
+        "scripts/carson-diagnose.test.mjs"
+      ],
       "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": [],
