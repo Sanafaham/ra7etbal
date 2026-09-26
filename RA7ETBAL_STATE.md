@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-09-15 (Carson latency workstream — INVESTIGATED, NEVER PUBLISHED, NEVER LATENCY-VERIFIED; the stale ElevenLabs treatment branch `latency-prompt-hygiene-19-line-v227` has been retired (renamed `RETIRED-DO-NOT-PUBLISH-latency-prompt-hygiene-19-line-v227`, `is_archived: true`, 0% traffic, never merged) with Main and the live production configuration verified byte-identical before and after; latency remains UNFINISHED but NON-BLOCKING for the Production Master Plan — see "Carson latency workstream" below. Also: Delegation follow-up + escalation starvation defect — FIXED, MERGED as `e6ab6ef` via PR #408, DEPLOYED, PRODUCTION VERIFIED at 07:10:01 UTC: the oldest-first candidate query with limit 50 was being filled by unactionable no-assignee reminder rows (87 of 93 eligible), starving both invocation paths; task 41770f40 ranked 87th and went 30+ hours without follow-up or escalation. See "Delegation follow-up + escalation starvation defect" below. Also: Carson confirmation/truthfulness defect — CLOSED / PROTECTED / LOCKED. Application-side fix merged via PR #407 and ElevenLabs-side Pre-tool-speech-Off + C-02 routing prompt correction promoted to production Main; real owner production acceptance passed through the actual Ra7etBal app for tracked staff work, direct communication, and calendar action; durable regression protection confirmed via existing `carson-protected-behaviors.test.ts`/`confirmation-truthfulness.test.ts` coverage, no new test code needed. See "Carson confirmation/truthfulness defect" below. Also, 2026-09-10: Tavily MCP Credential-Security remediation — exposed Tavily API key removed from the live ElevenLabs MCP connection URL, replaced with a stored-secret reference, verified via real production canary post-revocation, old MCP retired — VERIFIED / CLOSED / PROTECTED, see "Stable and protected". Also, unrelated to this branch of work: three Carson production regression fixes (direct-message perspective normalization, transcript-guard casual-speech handling, Google Calendar access-token caching) implemented and tested on branch `claude/carson-production-regression-forensic-m4oaoo` — NOT YET MERGED, awaiting owner review. Supabase reminder safety-net scheduler consolidation and Disk IO/bloat cleanup — PR #399 merged, production pg_cron/history maintenance verified live — CLOSED, see "Stable and protected". Substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Task-neutral substitute-review language Repair #4 — PR #351 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Separately recorded, not yet fixed: `approved_alternative_media_routing` — approved-alternative media delivered to the owner instead of the worker.)
+Last updated: 2026-09-26 (P3 5b — recurring-manifestation / current-operational-state correction: PRODUCTION VERIFIED / OWNER VOICE VERIFIED / CLOSED, PR #412 merged as `91b88fd0003289b4dd5444c7ab87925da25e2256` — see "P3 5b — recurring-manifestation supersession" below. The owner voice canary that verified it ALSO exposed two separate, pre-existing spoken-brief truthfulness defects, both OPEN and both recorded below: an elapsed same-day calendar event spoken as upcoming (RELEASE BLOCKER), and the "One reminder is overdue" hardcoded-count wording. A latent ElevenLabs timezone mismatch and the canary latency evidence are also recorded. Previously: Carson latency workstream — INVESTIGATED, NEVER PUBLISHED, NEVER LATENCY-VERIFIED; the stale ElevenLabs treatment branch `latency-prompt-hygiene-19-line-v227` has been retired (renamed `RETIRED-DO-NOT-PUBLISH-latency-prompt-hygiene-19-line-v227`, `is_archived: true`, 0% traffic, never merged) with Main and the live production configuration verified byte-identical before and after; latency remains UNFINISHED but NON-BLOCKING for the Production Master Plan — see "Carson latency workstream" below. Also: Delegation follow-up + escalation starvation defect — FIXED, MERGED as `e6ab6ef` via PR #408, DEPLOYED, PRODUCTION VERIFIED at 07:10:01 UTC: the oldest-first candidate query with limit 50 was being filled by unactionable no-assignee reminder rows (87 of 93 eligible), starving both invocation paths; task 41770f40 ranked 87th and went 30+ hours without follow-up or escalation. See "Delegation follow-up + escalation starvation defect" below. Also: Carson confirmation/truthfulness defect — CLOSED / PROTECTED / LOCKED. Application-side fix merged via PR #407 and ElevenLabs-side Pre-tool-speech-Off + C-02 routing prompt correction promoted to production Main; real owner production acceptance passed through the actual Ra7etBal app for tracked staff work, direct communication, and calendar action; durable regression protection confirmed via existing `carson-protected-behaviors.test.ts`/`confirmation-truthfulness.test.ts` coverage, no new test code needed. See "Carson confirmation/truthfulness defect" below. Also, 2026-09-10: Tavily MCP Credential-Security remediation — exposed Tavily API key removed from the live ElevenLabs MCP connection URL, replaced with a stored-secret reference, verified via real production canary post-revocation, old MCP retired — VERIFIED / CLOSED / PROTECTED, see "Stable and protected". Also, unrelated to this branch of work: three Carson production regression fixes (direct-message perspective normalization, transcript-guard casual-speech handling, Google Calendar access-token caching) implemented and tested on branch `claude/carson-production-regression-forensic-m4oaoo` — NOT YET MERGED, awaiting owner review. Supabase reminder safety-net scheduler consolidation and Disk IO/bloat cleanup — PR #399 merged, production pg_cron/history maintenance verified live — CLOSED, see "Stable and protected". Substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Task-neutral substitute-review language Repair #4 — PR #351 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Separately recorded, not yet fixed: `approved_alternative_media_routing` — approved-alternative media delivered to the owner instead of the worker.)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,101 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### P3 5b — recurring-manifestation supersession — PRODUCTION VERIFIED / OWNER VOICE VERIFIED / CLOSED (2026-09-26)
+
+**Implementation:** PR #412, merged to `main` as `91b88fd0003289b4dd5444c7ab87925da25e2256`. Production deployment identity verified by `carson-production-canary` run `36232262412` (`deployment_identity: ok`, zero failures) against that exact SHA; the merged Main tree hash was byte-identical to the approved branch head `b567ead5a239e5ed1bb9ac38756cf0c9d1aa7435`.
+
+**Root cause.** A recurring source (an automation or a routine) creates a new `tasks` row every time it fires, and nothing ever closes those rows — closure depended on an owner confirmation that, for owner-only recurring reminders, never happens. They accrued at a fixed rate per day with zero attrition, and because every operational surface reads pending tasks newest-first, the stale history crowded out the owner's genuine responsibilities. At diagnosis the bounded OPEN 15 in `ra7etbal_state` was 15/15 recurring, so **all 10** genuine responsibilities — three escalated Christopher delegations among them — were invisible to Carson.
+
+**Core behavior.** One shared, pure derivation (`shared/carson-recurring-manifestations.js`): a recurring manifestation is CURRENT only where a strictly newer manifestation of the same source, for the same user, truthfully replaces the older owner-facing responsibility. Source identity comes only from existing authoritative relationships — `automation_runs.task_id -> automation_id` (read across **every** `current_state`, so identity never depends on whether delivery succeeded) and `owner_notifications.target_id -> metadata.routine_id`. Task title/description are never used as identity.
+
+**Supersession is derived only.** Historical rows remain physically intact and `pending`, and stay fully visible to history and UI surfaces. No `status`, `confirmed_at`, `archived_at` or `dismissed_at` is written, nothing is deleted, and `automation_runs` / `owner_notifications` are never mutated. No schema change, no migration, no data cleanup, no new writer, no new background job. Attention ordering (`created_at` DESC) and the 15-row window are unchanged.
+
+**Accountability guard (owner-approved safety narrowing, 2026-09-26).** Supersession rests on the claim that today's firing restates yesterday's. That is true for an owner-only recurring reminder ("Charge your phone") and **false** the moment another person is accountable. A manifestation carrying an assignee, `needs_follow_up`, type `delegation`/`followup`, or a stamped `followup_sent_at`/`escalated_at` is excluded from supersession entirely — it neither supersedes nor is superseded — and remains governed by its legitimate delegation/follow-up/escalation lifecycle. A Monday delegation to Christopher is still outstanding even after Tuesday's manifestation exists. This guard was found by independent review before deployment, when the first implementation would have hidden escalated recurring delegations.
+
+**Fail-safe throughout.** Signal disagreement between the run relationship and a notification's corroborating `automation_id`, two channels claiming one task, a tenant mismatch, an unusable timestamp, or missing evidence all resolve to ambiguous/unresolved and are **never** superseded. A failed or incomplete source-link read reports attention completeness as `partial` rather than presenting pre-correction membership as complete.
+
+**Production evidence (verification snapshot, 2026-09-26 — evidence only, NOT permanent invariants; the population keeps growing):**
+
+- 135 recurring manifestations resolved in the then-current verification population
+- 0 ambiguous
+- 130 historical recurring manifestations superseded from CURRENT operational membership only
+- 5 current recurring manifestations (exactly one per applicable recurring source)
+- 10 genuine responsibilities, all visible
+- bounded CURRENT set = 5 recurring + 10 genuine
+- 0 superseded rows carrying accountability signals
+- zero pre-existing task rows mutated by the correction (the only two rows touched after merge were brand-new rows created by the normal automation runner, `created_at = updated_at`)
+- failed automation-run evidence preserved (the 2026-09-13 run remains `failed` with its `failure_reason` verbatim; its task remains `pending`, `confirmed_at` null)
+
+**Owner voice canary (2026-09-26, conversation `conv_1301m3f99zm3ev8raw51hpsv9k56`).** Sana asked Production Carson "What needs my attention?" by voice. `get_items_needing_attention` **succeeded**, and Carson surfaced the genuine population ("Seven overdue reminders and 3 open waiting items") with no historical recurring flood. The captured `ra7etbal_state` shows exactly one manifestation per recurring source and no truncation notice; the pre-deployment payload of 2026-09-25 shows `(showing 15 of 140 open items)`. That is a direct before/after proof in real Production voice data that the corrected operational state reaches the live Carson path.
+
+**Verification gates.** 59 focused tests; protected suite 128 files / 2534 tests, 0 regressions; impact-map required set 78 files / 1782 tests; typecheck, build and registry validation clean; 10/10 CI green on the exact merged SHA. Review: four rounds of the repository's substantive independent review gate — rounds 1–3 each found a real defect, all corrected with gates rerun. **CodeRabbit did not run** (repository configuration: automatic review is skipped for this repository) and is not represented as having passed; its green commit status reads "Review skipped: manual review required".
+
+**Carried findings — recorded, NOT fixed by this work:**
+
+- **A. Routine source identity durability.** Routine-backed identity depends on an `owner_notifications` row that `sendOwnerPush()` writes only after its push-subscription check passes, so an owner with no enabled web push resolves no routine source. Fails safe: unresolved is never superseded, so the manifestation stays visible.
+- **B. Automation history durability.** `automation_runs.automation_id` is `ON DELETE CASCADE` through automation deletion, so deleting an automation would remove the historical source identity of every task it produced. No application code deletes runs.
+- **C. Bounded attention zero slack.** The corrected snapshot filled exactly 15 rows (5 recurring + 10 genuine). The window size is not the defect, but the margin is zero.
+- **D. Digest await / source-link read performance.** The attention path's digest await is unbounded and the two source-link reads scan whole history with no `created_at` index. Bounding the await was attempted during review and reverted, because it emptied `routineAutomationTaskIds` on timeout and re-admitted suppressed tasks — a correctness regression. Requires a separately scoped, measured change.
+
+### Stale elapsed calendar event spoken as upcoming — OPEN / PRODUCTION REPRODUCED / ROOT CAUSE PROVEN / RELEASE BLOCKER (2026-09-26)
+
+**Observed Production failure.** At approximately 18:38 Europe/Zurich on 2026-09-26, Carson told Sana: *"You also have Hairdresser Appointment at 4:00 PM."* The event ran 16:00–17:00 Europe/Zurich and had **ended approximately 1 hour 38 minutes before Carson spoke**.
+
+**Authoritative source record (Google Calendar, not Supabase — no `hairdresser` row exists in `tasks`, `carson_notes` or `carson_todos`):**
+
+```
+id      : ma7tirqvhngn73f83l8s7mol1k
+summary : Hairdresser Appointment
+start   : 2026-09-26T16:00:00+02:00 (Europe/Zurich)
+end     : 2026-09-26T17:00:00+02:00
+status  : confirmed   (never modified after creation)
+```
+
+Production conversation: `conv_1301m3f99zm3ev8raw51hpsv9k56`.
+
+**Root cause (proven).** `src/lib/morning-brief.ts` builds `todayEvs` with **date-only** membership (`d >= todayStart && d < tomStart`), which includes events that have already ended. The existing `classifyCalendarEvent()` in `src/lib/calendar.ts` correctly returns `past` when `now >= end`, but the spoken-opening calendar slot uses that classifier **only for in-progress detection** and never removes past events from `todayEvs` before falling through to `` `You also have ${ev.title} at ${t}.` ``. An elapsed same-day event is therefore presented as though it remains upcoming.
+
+**This is NOT** model hallucination, stale cache, a calendar timezone-conversion error, or a PR #412 regression. The defective claim already exists inside the `opening_line` dynamic variable before ElevenLabs speaks it, and the **same payload** contained the truthful `ra7etbal_state` line `- Past: Hairdresser Appointment, ended 5:00 PM`. Two builders, one `now`, opposite answers.
+
+**Proven recurrence, pre-dating the deployment.** On 2026-09-25 at approximately 18:40 Europe/Zurich (conversation `conv_9701m3cq0qa2e2c8da0sa8kzdp1m`, ~16 hours **before** PR #412 was merged), Carson said *"You also have Doctor's Appointment at 4:00 PM"* for a 16:00–17:00 event, while the same payload's `ra7etbal_state` correctly said `- Past: Doctor's Appointment, ended 5:00 PM`. Identical source, path, mechanism and wording template.
+
+**Not caused by P3 5b — proven three ways.** PR #412's diff on `morning-brief.ts` is exactly three hunks (the import, `currentTasks`, `activePending`) and touches neither the `todayEvs` filter nor the calendar slot; `calendar.ts` and `carson-opening.ts` are not in the diff at all; and both calendar lines were last modified by `577578c` (2026-08-28, PR #354). Do **not** reopen P3 5b for this defect.
+
+**Smallest safe correction boundary (described only — NOT implemented).** Reuse the existing `classifyCalendarEvent()` truth when determining spoken-opening calendar eligibility: elapsed/past same-day events must not be represented as upcoming or current appointments. Preserve in-progress events, future/upcoming events, all-day behavior, timezone correctness, DST/midnight behavior, calendar history, and the existing truthful `ra7etbal_state` rendering. Check Night Sweep symmetry before implementing, but do not redesign Night Sweep.
+
+### Spoken opening hardcodes "One reminder is overdue" — OPEN / PRODUCTION REPRODUCED / ROOT CAUSE PROVEN (2026-09-26)
+
+**Production evidence, same voice canary.** The opening said *"One reminder is overdue: Call Loulya."* while `get_items_needing_attention` in the same conversation said *"Seven overdue reminders and 3 open waiting items."* Production truth at that moment: **7** overdue pending reminders.
+
+**Root cause (proven).** `src/lib/morning-brief.ts` selects a single overdue reminder for relevance (`brief.overdueItems.find(t => t.type === "reminder")`) and then hardcodes the wording `` `One reminder is overdue: ${...}` ``, presenting a selected example as the total count. This is **not** a classifier disagreement — both paths see the same underlying overdue population. It also appeared verbatim in the 2026-09-25 pre-deployment opening, so it is pre-existing and not caused by PR #412.
+
+Kept deliberately separate from the stale-calendar blocker above: same file and same failure class (the spoken brief asserting something its own data does not support), but a different mechanism. NOT implemented.
+
+### ElevenLabs `system__time` / `system__timezone` mismatch — RECORDED ONLY, NOT FIXED (2026-09-26)
+
+During the owner voice canary the app's authoritative owner/calendar time was **Europe/Zurich, ~18:38, UTC+2** (`current_time` dynamic variable, and the Google Calendar event's own `+02:00` offsets). ElevenLabs' own system variables reported **Europe/Istanbul, ~19:39, UTC+3** (`system__timezone`, `system__time_hour = 19`).
+
+This mismatch did **not** cause the stale-appointment defect, because `opening_line` is computed by the app using the correct Europe/Zurich time. It is recorded as a real latent truthfulness risk for any behavior that relies directly on `system__time` / `system__timezone`. No timezone configuration was changed.
+
+### Owner voice canary latency evidence — RECORDED FOR THE LATENCY WORKSTREAM, NOT OPTIMIZED (2026-09-26)
+
+Measured stage timings from conversation `conv_1301m3f99zm3ev8raw51hpsv9k56`:
+
+| Stage | Measured |
+| --- | --- |
+| ASR trailing service latency | 45 ms |
+| Tool-request LLM (TTFB / generation) | ~3.66 s |
+| `get_items_needing_attention` execution | ~1.0 s |
+| Response LLM TTFB | ~1.36 s |
+| Response LLM to last sentence | ~2.09 s |
+| TTS TTFB | 163 ms |
+| Opening TTS TTFB | 485 ms |
+| **Owner-perceived end-of-speech → first audio (`convai_ttf_audio_since_silence`)** | **~6.899 s** |
+
+The ~6.9 s owner-perceived delay is the primary product-level latency measurement from this canary, and is larger than any single component; the dominant contributor is the ~3.66 s tool-request LLM stage. Recorded as evidence only — latency work is the next engineering workstream after the stale-calendar correction, and nothing was optimized here.
+
 
 ### Delegation follow-up + escalation starvation defect — FIXED, MERGED, DEPLOYED, PRODUCTION VERIFIED (2026-09-15)
 
