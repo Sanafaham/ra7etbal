@@ -27,6 +27,7 @@ const { buildMorningBriefSpoken } = await import("./morning-brief");
 const { buildCarsonContext } = await import("./carson-context");
 const { classifyCalendarEvent } = await import("./calendar");
 const { buildNightSweepSpoken } = await import("./night-sweep");
+const { deriveMorningBriefMaterialItems, deriveNightSweepMaterialItems } = await import("./carson-material-items");
 
 import type { CalendarEvent } from "./calendar";
 import type { Task } from "../types/task";
@@ -350,5 +351,71 @@ describe("Night Sweep — evidence that it does not share this defect", () => {
 
     expect(withBoth).toContain("Board Review");
     expect(withBoth).not.toContain("Hairdresser");
+  });
+});
+
+describe("material items — the sibling path that also reaches opening_line", () => {
+  /**
+   * deriveMorningBriefMaterialItems' text is spoken verbatim as the opening line
+   * on a follow-up session. Without the same elapsed boundary, an event added
+   * mid-day and finished before the next session reproduces the exact
+   * Hairdresser falsehood ("You have X on the calendar today") through this
+   * path instead of the spoken calendar slot.
+   */
+  it("drops an elapsed same-day event from morning-brief material items", () => {
+    const items = deriveMorningBriefMaterialItems([], [], digest(), [HAIRDRESSER], NOW_1838, []);
+
+    expect(items.map((i) => i.id)).not.toContain("calendar:ma7tirqvhngn73f83l8s7mol1k");
+    expect(items.some((i) => i.text.includes("Hairdresser"))).toBe(false);
+  });
+
+  it("keeps an event that is still ahead today", () => {
+    const later = ev({
+      id: "later",
+      title: "Dentist",
+      start: "2026-09-26T20:00:00+02:00",
+      end: "2026-09-26T21:00:00+02:00",
+    });
+
+    const items = deriveMorningBriefMaterialItems([], [], digest(), [later], NOW_1838, []);
+
+    expect(items.map((i) => i.id)).toContain("calendar:later");
+    expect(items.some((i) => i.text === "You have Dentist on the calendar today.")).toBe(true);
+  });
+
+  it("keeps an in-progress event, which is genuinely current", () => {
+    const running = ev({
+      id: "running",
+      title: "Team Sync",
+      start: "2026-09-26T18:00:00+02:00",
+      end: "2026-09-26T19:00:00+02:00",
+    });
+
+    const items = deriveMorningBriefMaterialItems([], [], digest(), [running], NOW_1838, []);
+
+    expect(items.map((i) => i.id)).toContain("calendar:running");
+  });
+
+  it("keeps an all-day event", () => {
+    const allDay = ev({ id: "allday", title: "Public Holiday", start: "2026-09-26", allDay: true });
+
+    const items = deriveMorningBriefMaterialItems([], [], digest(), [allDay], NOW_1838, []);
+
+    expect(items.map((i) => i.id)).toContain("calendar:allday");
+  });
+
+  it("night-sweep material items are tomorrow-bounded and unaffected", () => {
+    const tomorrow = ev({
+      id: "tm",
+      title: "Board Review",
+      start: "2026-09-27T10:00:00+02:00",
+      end: "2026-09-27T11:00:00+02:00",
+    });
+
+    const items = deriveNightSweepMaterialItems([], digest(), [HAIRDRESSER, tomorrow], NOW_1838, []);
+    const ids = items.map((i) => i.id);
+
+    expect(ids).toContain("calendar:tm");
+    expect(ids).not.toContain("calendar:ma7tirqvhngn73f83l8s7mol1k");
   });
 });

@@ -20,6 +20,7 @@
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import type { CalendarEvent } from "./calendar";
+import { classifyCalendarEvent } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isReminderOverdue } from "./reminder-time";
@@ -301,6 +302,15 @@ export function deriveMorningBriefMaterialItems(
     if (!ev.start) continue;
     const d = new Date(ev.start);
     if (Number.isNaN(d.getTime())) continue;
+    // Same elapsed-event truthfulness boundary as the spoken calendar slot in
+    // morning-brief.ts. This text is spoken verbatim as the opening line on a
+    // follow-up session, so without this an event added mid-day and finished
+    // before the next session reproduces the exact 2026-09-26 Hairdresser
+    // falsehood ("You have X on the calendar today") through this sibling path.
+    // Reuses classifyCalendarEvent(); all-day events classify as "upcoming" by
+    // its contract and in-progress events remain genuinely current, so both are
+    // unaffected.
+    if (classifyCalendarEvent(ev, now) === "past") continue;
     if (d >= todayStart && d < tomStart) {
       items.push({
         id: `calendar:${ev.id}`,
