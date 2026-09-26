@@ -1354,7 +1354,8 @@
         "src/lib/morning-brief.test.ts",
         "src/lib/night-sweep.test.ts",
         "src/lib/carson-recurring-manifestations.test.ts",
-        "src/lib/carson-recurring-manifestations.consumers.test.ts"
+        "src/lib/carson-recurring-manifestations.consumers.test.ts",
+        "src/lib/morning-brief.calendar-elapsed.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": false,
