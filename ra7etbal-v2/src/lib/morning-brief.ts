@@ -24,6 +24,10 @@ import type { CalendarEvent } from "./calendar";
 import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForMorning } from "./automation-context";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 // PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
@@ -104,7 +108,15 @@ export function buildMorningBriefSpoken(
   automationDigest?: AutomationDigest,
   needsYou?: OpenStaffEscalation[],
 ): string {
-  const brief  = buildMorningBrief(tasks, people, now, automationDigest?.routineAutomationTaskIds);
+  // P3 5b — stale recurring manifestations are not part of the current
+  // operational picture. Membership narrowing only: the classifier, its
+  // relevance rules, wording and ordering are untouched, and nothing that was
+  // previously suppressed becomes visible.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+  );
+  const brief  = buildMorningBrief(currentTasks, people, now, automationDigest?.routineAutomationTaskIds);
   const name   = displayName?.trim() || null;
   const hour   = now.getHours();
   const nowMs  = now.getTime();
@@ -147,7 +159,7 @@ export function buildMorningBriefSpoken(
 
   const tomorrowStart    = new Date(todayStart.getTime() + 86_400_000);
   const horizonEnd       = new Date(todayStart.getTime() + 14 * 86_400_000);
-  const activePending    = tasks.filter(t => t.archived_at == null && t.status === "pending");
+  const activePending    = currentTasks.filter(t => t.archived_at == null && t.status === "pending");
   const upcomingDeadline = activePending
     .filter(t => {
       if (!t.due_at) return false;

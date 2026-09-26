@@ -23,6 +23,11 @@ import type { CalendarEvent } from "./calendar";
 import { formatReminderDue } from "./reminder-time";
 import { classifyCalendarEvent, formatEventTime, formatEventEndTime } from "./calendar";
 import { derivePendingItems, formatPendingItemsForCarson } from "./pending-items";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+  type RecurringSourceIndexes,
+} from "../../shared/carson-recurring-manifestations";
 
 export interface CarsonContextInput {
   tasks: Task[];
@@ -63,6 +68,18 @@ export interface CarsonContextInput {
    * Injected verbatim into Carson's context so it guides assignment decisions.
    */
   householdRules?: string | null;
+  /**
+   * Recurring-source link evidence from `fetchAutomationDigest()`
+   * (`AutomationDigest.recurringSourceIndexes`), used to drop superseded
+   * historical recurring manifestations from OPEN and PENDING LOOPS — P3 5b.
+   *
+   * Optional, and omitting it is safe: with no indexes nothing resolves to a
+   * recurring source, so nothing is superseded and this builder behaves exactly
+   * as it did before. That is the intended fail-safe when the digest has not
+   * loaded yet or its fetch failed — a partially-loaded context shows too much,
+   * never too little.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
 }
 
 /**
@@ -226,7 +243,18 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     }
   }
 
-  const unarchived = tasks.filter((t) => t.archived_at == null);
+  // ── Current operational membership (P3 5b) ────────────────────────────────
+  // A recurring source creates a new task every time it fires and nothing ever
+  // closes those rows, so the stale history — 133 of 143 pending rows in
+  // Production on 2026-09-26 — filled the bounded OPEN 15 below and hid every
+  // genuine responsibility the owner is accountable for. Superseded
+  // manifestations are dropped from the CURRENT operational view only. The rows
+  // are untouched, still `pending`, and still fully visible to history surfaces;
+  // ordering and the 15-row window are unchanged.
+  const supersededIds = collectSupersededManifestationIds(tasks, input.recurringSourceIndexes);
+  const currentTasks = withoutSupersededManifestations(tasks, supersededIds);
+
+  const unarchived = currentTasks.filter((t) => t.archived_at == null);
   const open = unarchived.filter((t) => t.status !== "done");
 
   // ── Open tasks ────────────────────────────────────────────────────────────
@@ -254,7 +282,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
   }
 
   // ── Pending loops (stale, escalated, waiting — explicit open loop list) ─────
-  const pendingItems = derivePendingItems(tasks, now);
+  const pendingItems = derivePendingItems(currentTasks, now);
   lines.push(formatPendingItemsForCarson(pendingItems, now));
 
   // ── Recent completions (last 5, regardless of confirmation date) ──────────

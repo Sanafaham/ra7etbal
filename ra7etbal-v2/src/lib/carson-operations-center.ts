@@ -368,6 +368,7 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     needsYouFailed,
     captureCandidates,
     routineAutomationTaskIds: digest.routineAutomationTaskIds,
+    recurringSourceIndexes: digest.recurringSourceIndexes,
     capturesFailed,
   });
 

@@ -6,6 +6,10 @@ import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForNight } from "./automation-context";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations";
 import { taskLabel, buildCompletionPhrase, isMaterialWaitingItem } from "./morning-brief";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
@@ -513,6 +517,13 @@ export function buildNightSweepSpoken(
   const MS_DAY   = 24 * 60 * 60 * 1000;
   const _calEvs  = calendarEvents ?? [];
   const name     = displayName?.trim() || null;
+  // P3 5b — same shared definition of CURRENT as every other operational
+  // surface. Membership narrowing only: Night Sweep's own wording, schedule,
+  // classification and ordering are untouched.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+  );
   // This builder only ever runs for Night Sweep-kind sessions (App.tsx's
   // isNightSweep, spanning 20:00-05:59 per MORNING_START_HOUR) — the
   // greeting is always evening-appropriate, never re-derived from the raw
@@ -562,7 +573,7 @@ export function buildNightSweepSpoken(
   }
 
   // ── S3: OPEN LOOP ──────────────────────────────────────────────────────────
-  const active = tasks.filter(t => t.archived_at == null && t.status === "pending");
+  const active = currentTasks.filter(t => t.archived_at == null && t.status === "pending");
   const waitingOn = active
     .filter(t => {
       if (t.type === "delegation" && t.assigned_to) return true;

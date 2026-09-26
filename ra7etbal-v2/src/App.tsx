@@ -381,8 +381,11 @@ function PersistentCarsonWidget({
   );
 
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock, recurringSourceIndexes: automationDigest?.recurringSourceIndexes }),
+    // automationDigest carries recurringSourceIndexes (P3 5b): without it in the
+    // dependency list the OPEN block would keep rendering the pre-digest view,
+    // showing stale recurring manifestations until some other input changed.
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock, automationDigest],
   );
   const isEvening = now.getHours() >= EVENING_HOUR || now.getHours() < MORNING_START_HOUR;
   const spokenBrief = useMemo(
@@ -456,7 +459,7 @@ function PersistentCarsonWidget({
       : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow, freshNeedsYou);
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock, recurringSourceIndexes: (freshDigest ?? automationDigest)?.recurringSourceIndexes }),
       spokenBrief: isNightSweep
         ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou)
         : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou),

@@ -24,6 +24,10 @@ import type { AutomationDigest } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isReminderOverdue } from "./reminder-time";
 import { buildMorningBrief, isMaterialWaitingItem } from "./morning-brief";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations";
 import { MORNING_START_HOUR } from "./night-sweep";
 
 export interface MaterialItem {
@@ -203,7 +207,12 @@ export function deriveMorningBriefMaterialItems(
   needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
-  const brief = buildMorningBrief(tasks, people, now, automationDigest?.routineAutomationTaskIds);
+  // P3 5b — shared definition of CURRENT; membership narrowing only.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+  );
+  const brief = buildMorningBrief(currentTasks, people, now, automationDigest?.routineAutomationTaskIds);
 
   for (const t of brief.overdueItems) {
     items.push({

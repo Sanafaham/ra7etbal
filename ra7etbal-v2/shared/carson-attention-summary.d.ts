@@ -1,4 +1,5 @@
 import type { UnresolvedCapture } from "./carson-unresolved-captures-classifier";
+import type { RecurringSourceIndexes } from "./carson-recurring-manifestations";
 
 export type AttentionCategory =
   | "needsYou"
@@ -49,6 +50,10 @@ interface TaskLike {
   archived_at: string | null;
   needs_follow_up: boolean;
   quality_review_status: string | null | undefined;
+  /** Read by the P3 5b recurring-manifestation derivation. */
+  user_id?: string | null;
+  created_at?: string | null;
+  dismissed_at?: string | null;
 }
 
 export function composeAttentionEvidence(input: {
@@ -61,6 +66,11 @@ export function composeAttentionEvidence(input: {
   captureCandidates: UnresolvedCapture[] | null;
   capturesFailed: boolean;
   routineAutomationTaskIds?: Set<string>;
+  /**
+   * Recurring-source link evidence (P3 5b). Omitting it resolves no source, so
+   * nothing is superseded and composition behaves exactly as before.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
 }): AttentionSummaryEvidence;
 
 export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string;

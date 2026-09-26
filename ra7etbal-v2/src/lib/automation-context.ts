@@ -13,6 +13,12 @@
 
 import { supabase } from "./supabase";
 import { filterSupportedOperationalAutomations, isSupportedOperationalAutomation } from "./automation-support";
+import {
+  indexAutomationSourceLinks,
+  indexNotificationAutomationClaims,
+  indexRoutineSourceLinks,
+  type RecurringSourceIndexes,
+} from "../../shared/carson-recurring-manifestations";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -66,6 +72,25 @@ export interface AutomationDigest {
    * stay suppressed.
    */
   routineAutomationTaskIds: Set<string>;
+  /**
+   * Recurring-source link evidence (P3 5b), carried here because this digest is
+   * already the single fetch every operational surface receives.
+   *
+   * These are raw indexes, not a decision: each surface applies the shared
+   * derivation in shared/carson-recurring-manifestations.js over its OWN task
+   * list, so there is exactly one definition of CURRENT and no surface has to
+   * re-derive source identity for itself.
+   *
+   * Distinct from routineAutomationTaskIds above, which answers a different and
+   * stricter question — "is this task's automation run still open, and therefore
+   * not briefing-worthy" — and is unchanged by this slice.
+   *
+   * Optional: a digest assembled without it (an older caller, or a partial
+   * fixture) resolves no recurring source, so nothing is superseded and every
+   * consumer behaves exactly as it did before. Degrading toward showing too
+   * much is the intended direction.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
 }
 
 interface AutomationJoinFields {
@@ -111,6 +136,11 @@ const EMPTY_DIGEST: AutomationDigest = {
   firingToday: [],
   firingTomorrow: [],
   routineAutomationTaskIds: new Set(),
+  recurringSourceIndexes: {
+    automationLinks: new Map(),
+    routineLinks: new Map(),
+    notificationAutomationClaims: new Map(),
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,6 +185,24 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .select("task_id, automations!inner(automation_type, assignee_id, cadence_type, status)")
     .in("current_state", ["sent", "followup_sent"])
     .not("task_id", "is", null);
+
+  // ── Recurring-source link evidence (P3 5b) ────────────────────────────────
+  // Deliberately spans EVERY current_state, unlike the routineAutomationTaskIds
+  // query above. A run's automation_id is the authoritative record of which
+  // recurring source produced a task, and that is true regardless of whether
+  // the run's delivery succeeded — identity and execution outcome are separate
+  // columns. Filtering to "successful" states is exactly what made the
+  // 2026-09-13 failed run's task unresolvable under a notifications-only
+  // design. RLS scopes both reads to the signed-in owner.
+  const { data: recurringRunLinks } = await supabase
+    .from("automation_runs")
+    .select("task_id, automation_id, user_id")
+    .not("task_id", "is", null);
+
+  const { data: recurringNotificationLinks } = await supabase
+    .from("owner_notifications")
+    .select("target_id, kind, user_id, metadata")
+    .not("target_id", "is", null);
 
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
@@ -300,7 +348,13 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
       .filter(Boolean),
   );
 
-  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds };
+  const recurringSourceIndexes: RecurringSourceIndexes = {
+    automationLinks: indexAutomationSourceLinks(recurringRunLinks ?? []),
+    routineLinks: indexRoutineSourceLinks(recurringNotificationLinks ?? []),
+    notificationAutomationClaims: indexNotificationAutomationClaims(recurringNotificationLinks ?? []),
+  };
+
+  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds, recurringSourceIndexes };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
