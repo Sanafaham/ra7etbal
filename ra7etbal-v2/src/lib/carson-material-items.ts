@@ -24,6 +24,10 @@ import type { AutomationDigest } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isReminderOverdue } from "./reminder-time";
 import { buildMorningBrief, isMaterialWaitingItem } from "./morning-brief";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations.js";
 import { MORNING_START_HOUR } from "./night-sweep";
 
 export interface MaterialItem {
@@ -203,7 +207,12 @@ export function deriveMorningBriefMaterialItems(
   needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
-  const brief = buildMorningBrief(tasks, people, now, automationDigest?.routineAutomationTaskIds);
+  // P3 5b — shared definition of CURRENT; membership narrowing only.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+  );
+  const brief = buildMorningBrief(currentTasks, people, now, automationDigest?.routineAutomationTaskIds);
 
   for (const t of brief.overdueItems) {
     items.push({
@@ -314,7 +323,16 @@ export function deriveNightSweepMaterialItems(
   needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
-  const active = tasks.filter((t) => t.archived_at == null && t.status === "pending");
+  // P3 5b — same shared definition of CURRENT as deriveMorningBriefMaterialItems
+  // above and buildNightSweepSpoken. Without this, a stale overdue recurring
+  // manifestation still becomes a MaterialItem and gets spoken as new/changed
+  // material in an evening follow-up session, re-surfacing exactly what the
+  // spoken sweep now omits.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+  );
+  const active = currentTasks.filter((t) => t.archived_at == null && t.status === "pending");
 
   const waitingOn = active.filter((t) => {
     if (t.type === "delegation" && t.assigned_to) return true;

@@ -39,6 +39,10 @@
 import { taskLabel, formatReminderDue } from "./carson-morning-brief-classifier.js";
 import { buildDailyBriefBuckets } from "./carson-daily-brief-classifier.js";
 import { classifyAttentionWorthyCaptures } from "./carson-unresolved-captures-classifier.js";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "./carson-recurring-manifestations.js";
 
 const MS_14_DAYS = 14 * 24 * 60 * 60 * 1000;
 
@@ -91,6 +95,8 @@ export function composeAttentionEvidence({
   captureCandidates,
   capturesFailed,
   routineAutomationTaskIds,
+  recurringSourceIndexes,
+  recurringSourceFailed = false,
 }) {
   const empty = {
     needsYou: [],
@@ -113,6 +119,16 @@ export function composeAttentionEvidence({
   const unresolvedCaptures = [];
 
   if (tasks) {
+    // P3 5b — the same shared definition of CURRENT every other operational
+    // surface uses. Superseded historical recurring manifestations are not
+    // current work, so they take no part in any bucket below. Membership only:
+    // every bucket rule, and the routineAutomationTaskIds exclusion (a stricter,
+    // separate briefing-worthiness question), are unchanged.
+    tasks = withoutSupersededManifestations(
+      tasks,
+      collectSupersededManifestationIds(tasks, recurringSourceIndexes),
+    );
+
     const daily = buildDailyBriefBuckets(tasks, now);
     for (const t of daily.needsYou) needsYou.push(toAttentionItem(t, "needsYou", now));
     for (const t of daily.waitingOnOthers) waiting.push(toAttentionItem(t, "waiting", now));
@@ -174,7 +190,13 @@ export function composeAttentionEvidence({
     }
   }
 
-  const completeness = tasksFailed || needsYouFailed || capturesFailed ? "partial" : "full";
+  // recurringSourceFailed matters as much as the other three: without the link
+  // evidence nothing resolves to a recurring source, so the buckets above hold
+  // the PRE-correction membership — stale recurring manifestations included.
+  // Reporting that as "full" would present the very thing this slice removes as
+  // the complete current picture.
+  const completeness =
+    tasksFailed || needsYouFailed || capturesFailed || recurringSourceFailed ? "partial" : "full";
 
   return {
     ok: true,

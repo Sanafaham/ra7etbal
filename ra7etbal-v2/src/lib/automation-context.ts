@@ -13,6 +13,12 @@
 
 import { supabase } from "./supabase";
 import { filterSupportedOperationalAutomations, isSupportedOperationalAutomation } from "./automation-support";
+import {
+  indexAutomationSourceLinks,
+  indexNotificationAutomationClaims,
+  indexRoutineSourceLinks,
+  type RecurringSourceIndexes,
+} from "../../shared/carson-recurring-manifestations.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -66,6 +72,33 @@ export interface AutomationDigest {
    * stay suppressed.
    */
   routineAutomationTaskIds: Set<string>;
+  /**
+   * Recurring-source link evidence (P3 5b), carried here because this digest is
+   * already the single fetch every operational surface receives.
+   *
+   * These are raw indexes, not a decision: each surface applies the shared
+   * derivation in shared/carson-recurring-manifestations.js over its OWN task
+   * list, so there is exactly one definition of CURRENT and no surface has to
+   * re-derive source identity for itself.
+   *
+   * Distinct from routineAutomationTaskIds above, which answers a different and
+   * stricter question — "is this task's automation run still open, and therefore
+   * not briefing-worthy" — and is unchanged by this slice.
+   *
+   * Optional: a digest assembled without it (an older caller, or a partial
+   * fixture) resolves no recurring source, so nothing is superseded and every
+   * consumer behaves exactly as it did before. Degrading toward showing too
+   * much is the intended direction.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
+  /**
+   * True only when BOTH recurring-source link reads actually returned. Absence
+   * of indexes alone cannot carry this: a digest that loaded fine for an owner
+   * with no automations looks identical to one whose reads failed, and the
+   * difference decides whether the attention read may call itself complete.
+   * Consumers supersede nothing when the evidence is missing either way.
+   */
+  recurringSourceLinksLoaded?: boolean;
 }
 
 interface AutomationJoinFields {
@@ -103,7 +136,30 @@ export function dedupeLatestPerAutomation(rows: Record<string, unknown>[]): Reco
   return result;
 }
 
-const EMPTY_DIGEST: AutomationDigest = {
+/**
+ * Upper bound on recurring-source link rows read per digest fetch, mirrored by
+ * the server path in api/_carson-attention-evidence.js. Generously above the
+ * measured Production volume (229 runs / 192 provenance notifications on
+ * 2026-09-26, growing ~5/day per source) so the cap is not reached in practice,
+ * while still being an explicit bound rather than an unbounded table scan.
+ */
+export const RECURRING_SOURCE_LINK_LIMIT = 5000;
+
+/**
+ * The only owner_notifications kinds that carry recurring provenance:
+ * routine_reminder holds metadata.routine_id, automation_reminder holds
+ * metadata.automation_id. Verified against Production — no other kind carries
+ * either key.
+ */
+export const RECURRING_PROVENANCE_NOTIFICATION_KINDS = ["routine_reminder", "automation_reminder"];
+
+/**
+ * The digest shape used whenever no live automation state could be read — auth
+ * failure or query error. Module-local: an earlier revision exported it for a
+ * caller-side timeout that review showed to be a correctness regression and that
+ * was reverted, so nothing outside this module needs it.
+ */
+const EMPTY_AUTOMATION_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
   failed: [],
@@ -111,6 +167,12 @@ const EMPTY_DIGEST: AutomationDigest = {
   firingToday: [],
   firingTomorrow: [],
   routineAutomationTaskIds: new Set(),
+  // Deliberately absent, not empty. Empty maps would mean "this owner genuinely
+  // has no recurring history"; absence means "the link evidence is unknown".
+  // Consumers supersede nothing either way (fail-safe), but the attention path
+  // uses this distinction to report completeness as partial rather than full.
+  recurringSourceIndexes: undefined,
+  recurringSourceLinksLoaded: false,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +181,7 @@ const EMPTY_DIGEST: AutomationDigest = {
 
 /**
  * Single Supabase fetch that powers all automation context consumers.
- * Returns EMPTY_DIGEST on auth failure or query error (never throws).
+ * Returns EMPTY_AUTOMATION_DIGEST on auth failure or query error (never throws).
  */
 export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const now = new Date();
@@ -128,7 +190,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return EMPTY_DIGEST;
+  if (!user) return EMPTY_AUTOMATION_DIGEST;
 
   const window48hAgo = new Date(nowMs - 48 * 3_600_000).toISOString();
   const window24hAgo = new Date(nowMs - 24 * 3_600_000).toISOString();
@@ -155,6 +217,44 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .select("task_id, automations!inner(automation_type, assignee_id, cadence_type, status)")
     .in("current_state", ["sent", "followup_sent"])
     .not("task_id", "is", null);
+
+  // ── Recurring-source link evidence (P3 5b) ────────────────────────────────
+  // Deliberately spans EVERY current_state, unlike the routineAutomationTaskIds
+  // query above. A run's automation_id is the authoritative record of which
+  // recurring source produced a task, and that is true regardless of whether
+  // the run's delivery succeeded — identity and execution outcome are separate
+  // columns. Filtering to "successful" states is exactly what made the
+  // 2026-09-13 failed run's task unresolvable under a notifications-only
+  // design. RLS scopes both reads to the signed-in owner.
+  // Both reads are explicitly ordered and bounded. Unordered reads would be
+  // silently capped by PostgREST's max-rows setting, and the surviving subset
+  // could differ between calls and between the browser and server paths — so
+  // the same task could flip between CURRENT and superseded across renders.
+  // Newest-first ordering means that if the cap is ever reached, the links that
+  // survive are the recent ones supersession actually depends on, and any task
+  // whose link is missing simply resolves to unresolved and stays visible.
+  // Independent reads — issued together, mirroring the server path's Promise.all.
+  // Awaiting them serially added two round trips to every session start and
+  // every typed attention answer for no reason.
+  const [
+    { data: recurringRunLinks, error: recurringRunLinksError },
+    { data: recurringNotificationLinks, error: recurringNotificationLinksError },
+  ] = await Promise.all([
+    supabase
+      .from("automation_runs")
+      .select("task_id, automation_id, user_id")
+      .not("task_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(RECURRING_SOURCE_LINK_LIMIT),
+    supabase
+      .from("owner_notifications")
+      .select("target_id, kind, user_id, metadata")
+      .not("target_id", "is", null)
+      .in("kind", RECURRING_PROVENANCE_NOTIFICATION_KINDS)
+      .order("occurred_at", { ascending: false })
+      .limit(RECURRING_SOURCE_LINK_LIMIT),
+  ]);
+
 
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
@@ -300,7 +400,29 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
       .filter(Boolean),
   );
 
-  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds };
+  // A failed link read must not masquerade as "this owner has no recurring
+  // history" — that would let the attention path report pre-correction
+  // membership as complete.
+  const recurringSourceLinksLoaded =
+    !recurringRunLinksError &&
+    !recurringNotificationLinksError &&
+    recurringRunLinks != null &&
+    recurringNotificationLinks != null;
+
+  // Absent, not empty, when the evidence could not be read — matching this
+  // field's documented contract and the server path's own null convention.
+  // Empty maps mean "this owner genuinely has no recurring history"; absence
+  // means "unknown". Consumers supersede nothing either way, but only the
+  // explicit recurringSourceLinksLoaded flag decides completeness.
+  const recurringSourceIndexes: RecurringSourceIndexes | undefined = recurringSourceLinksLoaded
+    ? {
+        automationLinks: indexAutomationSourceLinks(recurringRunLinks ?? []),
+        routineLinks: indexRoutineSourceLinks(recurringNotificationLinks ?? []),
+        notificationAutomationClaims: indexNotificationAutomationClaims(recurringNotificationLinks ?? []),
+      }
+    : undefined;
+
+  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds, recurringSourceIndexes, recurringSourceLinksLoaded };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -531,7 +653,7 @@ export function formatAutomationForNight(digest: AutomationDigest): string {
  * pass the digest to spoken brief functions (avoids a duplicate Supabase fetch).
  */
 export async function fetchAndBuildAutomationStatusBlock(): Promise<string> {
-  const digest = await fetchAutomationDigest().catch(() => EMPTY_DIGEST);
+  const digest = await fetchAutomationDigest().catch(() => EMPTY_AUTOMATION_DIGEST);
   return buildAutomationStatusBlock(digest);
 }
 

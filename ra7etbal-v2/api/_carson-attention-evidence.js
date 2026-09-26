@@ -23,6 +23,19 @@
 import { composeAttentionEvidence, renderAttentionSummary } from "../shared/carson-attention-summary.js";
 import { noteToCapture, todoToCapture } from "../shared/carson-unresolved-captures-classifier.js";
 import { isSupportedOperationalAutomation } from "../shared/automation-support-classifier.js";
+import {
+  indexAutomationSourceLinks,
+  indexNotificationAutomationClaims,
+  indexRoutineSourceLinks,
+} from "../shared/carson-recurring-manifestations.js";
+
+/**
+ * Kept in sync with src/lib/automation-context.ts's exports of the same names.
+ * Duplicated rather than imported because this server module must not pull in
+ * the browser Supabase client that file creates at import time.
+ */
+const RECURRING_SOURCE_LINK_LIMIT = 5000;
+const RECURRING_PROVENANCE_NOTIFICATION_KINDS = ["routine_reminder", "automation_reminder"];
 
 // Mirrors carson-operations-center.ts's ATTENTION_SOURCE_TIMEOUT_MS. A
 // literal duplicate of a tuning constant, not a business rule — see that
@@ -165,6 +178,47 @@ async function fetchRoutineAutomationTaskIds(ctx) {
 }
 
 /**
+ * Recurring-source link evidence (P3 5b) — the server mirror of
+ * fetchAutomationDigest()'s recurringSourceIndexes.
+ *
+ * Deliberately spans EVERY automation_runs.current_state, unlike
+ * fetchRoutineAutomationTaskIds above: a run's automation_id records which
+ * recurring source produced a task regardless of whether its delivery
+ * succeeded. Both reads are RLS-scoped to the caller.
+ */
+async function fetchRecurringSourceIndexes(ctx) {
+  // Explicitly ordered and bounded, mirroring fetchAutomationDigest() exactly —
+  // an unordered read would be silently capped by PostgREST's max-rows setting
+  // and the surviving subset could differ between the browser and server paths,
+  // making the same task CURRENT on one and superseded on the other. Only
+  // routine_reminder and automation_reminder carry recurring provenance, so the
+  // rest of the owner's notification history never leaves the database.
+  const [runRows, notificationRows] = await Promise.all([
+    restGet({
+      ...ctx,
+      table: "automation_runs",
+      query:
+        "select=task_id,automation_id,user_id&task_id=not.is.null" +
+        `&order=created_at.desc&limit=${RECURRING_SOURCE_LINK_LIMIT}`,
+    }),
+    restGet({
+      ...ctx,
+      table: "owner_notifications",
+      query:
+        "select=target_id,kind,user_id,metadata&target_id=not.is.null" +
+        `&kind=in.(${RECURRING_PROVENANCE_NOTIFICATION_KINDS.join(",")})` +
+        `&order=occurred_at.desc&limit=${RECURRING_SOURCE_LINK_LIMIT}`,
+    }),
+  ]);
+
+  return {
+    automationLinks: indexAutomationSourceLinks(runRows),
+    routineLinks: indexRoutineSourceLinks(notificationRows),
+    notificationAutomationClaims: indexNotificationAutomationClaims(notificationRows),
+  };
+}
+
+/**
  * Server-side equivalent of src/lib/carson-operations-center.ts's
  * fetchAttentionEvidence(). Same per-source concurrency/timeout/partial-
  * failure semantics; same shared composition — see that file's own header
@@ -182,6 +236,10 @@ export async function fetchAttentionEvidenceForServer({ supabaseUrl, anonKey, au
   // failed automation-runs read degrades to "no routine exclusions" rather
   // than failing the whole attention read.
   const routineIdsPromise = withTimeout(fetchRoutineAutomationTaskIds(ctx)).catch(() => new Set());
+  // Same degrade-never-fail contract (P3 5b): with no link evidence nothing
+  // resolves to a recurring source, so nothing is superseded and the attention
+  // read returns its pre-correction membership rather than failing.
+  const recurringSourceIndexesPromise = withTimeout(fetchRecurringSourceIndexes(ctx)).catch(() => null);
 
   let tasks = null;
   let tasksFailed = false;
@@ -208,6 +266,12 @@ export async function fetchAttentionEvidenceForServer({ supabaseUrl, anonKey, au
   }
 
   const routineAutomationTaskIds = await routineIdsPromise;
+  // A failed or timed-out link read means the membership below is the
+  // PRE-correction one. That must be reported as partial, never as complete:
+  // silently serving stale recurring manifestations as the full current picture
+  // is the exact untruthfulness this slice exists to remove.
+  const recurringSourceIndexes = await recurringSourceIndexesPromise;
+  const recurringSourceFailed = recurringSourceIndexes === null;
 
   const evidence = composeAttentionEvidence({
     generatedAt,
@@ -219,6 +283,8 @@ export async function fetchAttentionEvidenceForServer({ supabaseUrl, anonKey, au
     captureCandidates,
     capturesFailed,
     routineAutomationTaskIds,
+    recurringSourceIndexes,
+    recurringSourceFailed,
   });
 
   // Same "only mark what was truly surfaced" contract as the browser path

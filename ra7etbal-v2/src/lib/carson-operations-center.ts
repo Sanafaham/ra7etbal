@@ -331,6 +331,19 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   // fetchAutomationDigest never throws — it returns an empty digest on
   // auth failure or query error, so routineAutomationTaskIds below is
   // always defined (possibly empty), never undefined-because-it-threw.
+  //
+  // Deliberately NOT under withTimeout, unlike the three sources above.
+  //
+  // A timeout here would empty routineAutomationTaskIds, and that set SUPPRESSES
+  // tasks tied to an open automation run — so degrading it re-admits those tasks
+  // into overdueReminders/upcomingReminders. That is a change to protected
+  // attention membership on the degraded path, and it is not P3 5b's to make.
+  // An earlier revision of this slice did add the timeout; review caught that it
+  // traded a latency risk for a correctness regression, so it was reverted.
+  //
+  // The unbounded await is pre-existing behavior. The latency exposure it
+  // represents is real and recorded as a carried finding for a separate,
+  // properly scoped change — not fixed here.
   const digestPromise = fetchAutomationDigest();
 
   let tasks: Task[] | null = null;
@@ -368,6 +381,11 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     needsYouFailed,
     captureCandidates,
     routineAutomationTaskIds: digest.routineAutomationTaskIds,
+    recurringSourceIndexes: digest.recurringSourceIndexes,
+    // Explicit flag, not inferred from absent indexes: a digest that loaded fine
+    // for an owner with no automations must still count as complete, while a
+    // failed auth/read must not — the membership below would be pre-correction.
+    recurringSourceFailed: digest.recurringSourceLinksLoaded !== true,
     capturesFailed,
   });
 
