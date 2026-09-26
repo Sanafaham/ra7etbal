@@ -128,6 +128,23 @@ export function dedupeLatestPerAutomation(rows: Record<string, unknown>[]): Reco
   return result;
 }
 
+/**
+ * Upper bound on recurring-source link rows read per digest fetch, mirrored by
+ * the server path in api/_carson-attention-evidence.js. Generously above the
+ * measured Production volume (229 runs / 192 provenance notifications on
+ * 2026-09-26, growing ~5/day per source) so the cap is not reached in practice,
+ * while still being an explicit bound rather than an unbounded table scan.
+ */
+export const RECURRING_SOURCE_LINK_LIMIT = 5000;
+
+/**
+ * The only owner_notifications kinds that carry recurring provenance:
+ * routine_reminder holds metadata.routine_id, automation_reminder holds
+ * metadata.automation_id. Verified against Production — no other kind carries
+ * either key.
+ */
+export const RECURRING_PROVENANCE_NOTIFICATION_KINDS = ["routine_reminder", "automation_reminder"];
+
 const EMPTY_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
@@ -136,11 +153,11 @@ const EMPTY_DIGEST: AutomationDigest = {
   firingToday: [],
   firingTomorrow: [],
   routineAutomationTaskIds: new Set(),
-  recurringSourceIndexes: {
-    automationLinks: new Map(),
-    routineLinks: new Map(),
-    notificationAutomationClaims: new Map(),
-  },
+  // Deliberately absent, not empty. Empty maps would mean "this owner genuinely
+  // has no recurring history"; absence means "the link evidence is unknown".
+  // Consumers supersede nothing either way (fail-safe), but the attention path
+  // uses this distinction to report completeness as partial rather than full.
+  recurringSourceIndexes: undefined,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -194,15 +211,31 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // columns. Filtering to "successful" states is exactly what made the
   // 2026-09-13 failed run's task unresolvable under a notifications-only
   // design. RLS scopes both reads to the signed-in owner.
+  // Both reads are explicitly ordered and bounded. Unordered reads would be
+  // silently capped by PostgREST's max-rows setting, and the surviving subset
+  // could differ between calls and between the browser and server paths — so
+  // the same task could flip between CURRENT and superseded across renders.
+  // Newest-first ordering means that if the cap is ever reached, the links that
+  // survive are the recent ones supersession actually depends on, and any task
+  // whose link is missing simply resolves to unresolved and stays visible.
   const { data: recurringRunLinks } = await supabase
     .from("automation_runs")
     .select("task_id, automation_id, user_id")
-    .not("task_id", "is", null);
+    .not("task_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(RECURRING_SOURCE_LINK_LIMIT);
 
+  // Only these two kinds ever carry recurring provenance: routine_reminder
+  // holds metadata.routine_id, automation_reminder holds
+  // metadata.automation_id. Filtering to them keeps the rest of the owner's
+  // notification history — and its metadata — out of the digest entirely.
   const { data: recurringNotificationLinks } = await supabase
     .from("owner_notifications")
     .select("target_id, kind, user_id, metadata")
-    .not("target_id", "is", null);
+    .not("target_id", "is", null)
+    .in("kind", RECURRING_PROVENANCE_NOTIFICATION_KINDS)
+    .order("occurred_at", { ascending: false })
+    .limit(RECURRING_SOURCE_LINK_LIMIT);
 
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase

@@ -96,6 +96,7 @@ export function composeAttentionEvidence({
   capturesFailed,
   routineAutomationTaskIds,
   recurringSourceIndexes,
+  recurringSourceFailed = false,
 }) {
   const empty = {
     needsYou: [],
@@ -189,7 +190,13 @@ export function composeAttentionEvidence({
     }
   }
 
-  const completeness = tasksFailed || needsYouFailed || capturesFailed ? "partial" : "full";
+  // recurringSourceFailed matters as much as the other three: without the link
+  // evidence nothing resolves to a recurring source, so the buckets above hold
+  // the PRE-correction membership — stale recurring manifestations included.
+  // Reporting that as "full" would present the very thing this slice removes as
+  // the complete current picture.
+  const completeness =
+    tasksFailed || needsYouFailed || capturesFailed || recurringSourceFailed ? "partial" : "full";
 
   return {
     ok: true,

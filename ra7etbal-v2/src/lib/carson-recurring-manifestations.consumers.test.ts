@@ -465,6 +465,115 @@ describe("attention evidence receives the same current membership", () => {
   });
 });
 
+describe("attention completeness is truthful about missing link evidence", () => {
+  function compose(extra: Record<string, unknown>) {
+    return composeAttentionEvidence({
+      generatedAt: NOW.toISOString(),
+      now: NOW,
+      tasks: [task({ id: "t1" })],
+      tasksFailed: false,
+      needsYou: [],
+      needsYouFailed: false,
+      captureCandidates: [],
+      capturesFailed: false,
+      routineAutomationTaskIds: new Set(),
+      ...extra,
+    } as never) as unknown as { completeness: string; code: string };
+  }
+
+  it("reports partial when the recurring-source read failed", () => {
+    const failed = compose({ recurringSourceFailed: true });
+
+    expect(failed.completeness).toBe("partial");
+    expect(failed.code).toBe("attention_read_partial");
+  });
+
+  it("reports full when the link evidence is present", () => {
+    const ok = compose({
+      recurringSourceFailed: false,
+      recurringSourceIndexes: {
+        automationLinks: new Map(),
+        routineLinks: new Map(),
+        notificationAutomationClaims: new Map(),
+      },
+    });
+
+    expect(ok.completeness).toBe("full");
+  });
+});
+
+describe("recurring staff delegations survive at every consumer boundary", () => {
+  /**
+   * The review finding this pins: a recurring DELEGATION automation creates a
+   * separately accountable obligation per firing, so an older unconfirmed or
+   * escalated manifestation must stay visible everywhere.
+   */
+  function delegationTail() {
+    const tasks: Task[] = [];
+    const runs: Array<{ task_id: string; automation_id: string; user_id: string }> = [];
+    for (let i = 0; i < 4; i++) {
+      const id = `deleg-${i}`;
+      tasks.push(
+        task({
+          id,
+          type: "delegation",
+          description: "bring the car around.",
+          assigned_to: "Christopher",
+          needs_follow_up: true,
+          escalated_at: i === 3 ? "2026-09-23T00:39:57.000Z" : null,
+          created_at: `2026-09-${String(26 - i).padStart(2, "0")}T12:15:00.000Z`,
+        }),
+      );
+      runs.push({ task_id: id, automation_id: AUTOMATION, user_id: OWNER });
+    }
+    return {
+      tasks,
+      recurringSourceIndexes: {
+        automationLinks: indexAutomationSourceLinks(runs),
+        routineLinks: new Map(),
+        notificationAutomationClaims: new Map(),
+      },
+    };
+  }
+
+  it("keeps every recurring delegation manifestation in the OPEN block", () => {
+    const { tasks, recurringSourceIndexes } = delegationTail();
+
+    const context = buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes });
+    const open = openBlockLines(context);
+
+    expect(open).toHaveLength(4);
+    expect(open.filter((l) => l.includes("Christopher"))).toHaveLength(4);
+  });
+
+  it("keeps the escalated one in the attention evidence", () => {
+    const { tasks, recurringSourceIndexes } = delegationTail();
+
+    const evidence = composeAttentionEvidence({
+      generatedAt: NOW.toISOString(),
+      now: NOW,
+      tasks,
+      tasksFailed: false,
+      needsYou: [],
+      needsYouFailed: false,
+      captureCandidates: [],
+      capturesFailed: false,
+      routineAutomationTaskIds: new Set(),
+      recurringSourceIndexes,
+    } as never) as unknown as Record<string, Array<{ id: string }>>;
+
+    const ids = [
+      ...evidence.needsYou,
+      ...evidence.overdueReminders,
+      ...evidence.upcomingReminders,
+      ...evidence.waiting,
+      ...evidence.later,
+    ].map((i) => i.id);
+
+    expect(ids).toContain("deleg-3");
+  });
+});
+
 describe("failed-run manifestation at the consumer boundary", () => {
   it("supersedes the 2026-09-13 orphan without touching its task fields", () => {
     const orphan = task({

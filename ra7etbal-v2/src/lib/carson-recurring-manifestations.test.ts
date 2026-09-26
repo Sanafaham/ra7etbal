@@ -39,6 +39,10 @@ interface TestTask {
   type?: string;
   description?: string;
   confirmed_at?: string | null;
+  assigned_to?: string | null;
+  needs_follow_up?: boolean;
+  followup_sent_at?: string | null;
+  escalated_at?: string | null;
 }
 
 function task(over: Partial<TestTask> & { id: string; created_at: string }): TestTask {
@@ -50,6 +54,10 @@ function task(over: Partial<TestTask> & { id: string; created_at: string }): Tes
     type: "action",
     description: "Update the Rahet Bal master plan.",
     confirmed_at: null,
+    assigned_to: null,
+    needs_follow_up: false,
+    followup_sent_at: null,
+    escalated_at: null,
     ...over,
   };
 }
@@ -493,6 +501,77 @@ describe("non-recurring and resolved work is untouched", () => {
     const state = deriveRecurringManifestationState(tasks, indexes);
 
     expect(state.get("bad")?.isCurrent).toBe(true);
+  });
+});
+
+describe("independent accountability is never superseded", () => {
+  /**
+   * Found by review before deploy, and the most dangerous shape this module
+   * could get wrong. A recurring automation can be a staff delegation, which
+   * creates a separately tracked, person-accountable obligation per firing.
+   * Today's firing does not discharge Monday's unconfirmed — possibly
+   * escalated — delegation, so hiding it would destroy the accountability
+   * Ra7etBal exists to keep.
+   */
+  function pairFrom(older: Partial<TestTask>) {
+    const tasks = [
+      task({ id: "newer", created_at: "2026-09-26T12:15:00Z" }),
+      task({ id: "older", created_at: "2026-09-24T12:15:00Z", ...older }),
+    ];
+    const indexes = indexesFor([
+      automationRun("newer", AUTOMATION_A),
+      automationRun("older", AUTOMATION_A),
+    ]);
+    return deriveRecurringManifestationState(tasks, indexes);
+  }
+
+  it("never supersedes an older recurring DELEGATION manifestation", () => {
+    const state = pairFrom({ type: "delegation", assigned_to: "Christopher" });
+    expect(state.get("older")?.isCurrent).toBe(true);
+  });
+
+  it("never supersedes an escalated older manifestation", () => {
+    const state = pairFrom({ escalated_at: "2026-09-24T12:35:00Z" });
+    expect(state.get("older")?.isCurrent).toBe(true);
+  });
+
+  it("never supersedes a manifestation whose follow-up was already sent", () => {
+    const state = pairFrom({ followup_sent_at: "2026-09-24T12:25:00Z" });
+    expect(state.get("older")?.isCurrent).toBe(true);
+  });
+
+  it("never supersedes a manifestation with an assignee or needs_follow_up", () => {
+    expect(pairFrom({ assigned_to: "Nasira" }).get("older")?.isCurrent).toBe(true);
+    expect(pairFrom({ needs_follow_up: true }).get("older")?.isCurrent).toBe(true);
+    expect(pairFrom({ type: "followup" }).get("older")?.isCurrent).toBe(true);
+  });
+
+  it("an accountable manifestation does not supersede its siblings either", () => {
+    // A delegation source keeps EVERY manifestation visible: the accountable
+    // newest one takes no part, so it cannot hide the older ones.
+    const tasks = [
+      task({ id: "newest", type: "delegation", assigned_to: "Christopher", created_at: "2026-09-26T12:15:00Z" }),
+      task({ id: "middle", type: "delegation", assigned_to: "Christopher", created_at: "2026-09-25T12:15:00Z" }),
+      task({ id: "oldest", type: "delegation", assigned_to: "Christopher", created_at: "2026-09-24T12:15:00Z" }),
+    ];
+    const indexes = indexesFor([
+      automationRun("newest", AUTOMATION_A),
+      automationRun("middle", AUTOMATION_A),
+      automationRun("oldest", AUTOMATION_A),
+    ]);
+
+    expect(collectSupersededManifestationIds(tasks, indexes).size).toBe(0);
+  });
+
+  it("a blank assigned_to is not accountability and still supersedes", () => {
+    const state = pairFrom({ assigned_to: "   " });
+    expect(state.get("older")?.isCurrent).toBe(false);
+  });
+
+  it("still supersedes a plain owner-only recurring reminder", () => {
+    // The proven Production case must keep working.
+    const state = pairFrom({ type: "action", assigned_to: null });
+    expect(state.get("older")?.isCurrent).toBe(false);
   });
 });
 

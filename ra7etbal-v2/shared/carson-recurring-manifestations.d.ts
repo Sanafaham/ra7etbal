@@ -27,6 +27,15 @@ export interface RecurringManifestationTask {
   created_at?: string | null;
   archived_at?: string | null;
   dismissed_at?: string | null;
+  /**
+   * Independent-accountability signals. Any of these excludes the task from
+   * supersession entirely — see isSupersessionCandidate in the implementation.
+   */
+  type?: string | null;
+  assigned_to?: string | null;
+  needs_follow_up?: boolean | null;
+  followup_sent_at?: string | null;
+  escalated_at?: string | null;
 }
 
 export interface AutomationSourceLink {

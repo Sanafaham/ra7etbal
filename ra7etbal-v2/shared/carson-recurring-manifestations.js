@@ -319,13 +319,43 @@ export function withoutSupersededManifestations(tasks, supersededIds) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Whether a task is unresolved at rest, and therefore part of the current
- * operational picture that supersession reasons about.
+ * Whether a task is unresolved at rest AND carries no independent
+ * accountability of its own, and is therefore part of the current operational
+ * picture that supersession reasons about.
+ *
+ * A task that is already done, cancelled, dismissed or archived is finished
+ * history: it neither supersedes anything nor needs superseding, which also
+ * keeps a genuine owner confirmation from being reinterpreted here.
+ *
+ * The accountability guard is the important half. Supersession rests on the
+ * claim that today's firing restates yesterday's — true for an owner-only
+ * recurring reminder ("charge your phone"), and false the moment another person
+ * is on the hook. A recurring staff delegation creates a separate, individually
+ * tracked obligation per firing: Monday's unconfirmed — possibly escalated —
+ * delegation is NOT discharged by Tuesday's existing, and hiding it would
+ * destroy exactly the accountability Ra7etBal exists to keep. So any
+ * manifestation carrying an assignee, a follow-up requirement, or evidence that
+ * the follow-up/escalation machinery has already acted on it is excluded from
+ * supersession entirely — it neither supersedes nor is superseded, so a source
+ * that produces delegations keeps every manifestation visible.
+ *
+ * This deliberately scopes the correction to the defect that was actually
+ * proven in Production (owner-only recurring reminders with no accountable
+ * party) and makes hiding person-accountable work structurally impossible
+ * rather than merely unlikely.
  */
 function isSupersessionCandidate(task) {
   if (task?.archived_at != null) return false;
   if (task?.dismissed_at != null) return false;
   if (task?.status !== "pending") return false;
+
+  // Independent accountability — never superseded.
+  if (task?.type === "delegation" || task?.type === "followup") return false;
+  if (typeof task?.assigned_to === "string" && task.assigned_to.trim() !== "") return false;
+  if (task?.needs_follow_up === true) return false;
+  if (task?.followup_sent_at != null) return false;
+  if (task?.escalated_at != null) return false;
+
   return true;
 }
 

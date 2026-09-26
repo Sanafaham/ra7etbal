@@ -28,6 +28,10 @@ import { getHouseholdRules } from "../../lib/household-rules";
 import { fetchAutomationDigest, buildAutomationStatusBlock } from "../../lib/automation-context";
 import { buildDailyBrief } from "../../lib/daily-brief";
 import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../../shared/carson-recurring-manifestations";
+import {
   detectWeeklyPlanningIntent,
   isWeekPlanExpired,
   isWeekPlanRetryRequest,
@@ -5158,7 +5162,6 @@ export default function ElevenLabsAgentWidget({
             await useTasksStore.getState().loadFor(authUserId, { force: true });
           }
           const tasks = useTasksStore.getState().items;
-          const brief = buildDailyBrief(tasks, new Date());
 
           const [todos, householdRulesRow, automationDigest, persistentMemory] = await Promise.all([
             listActiveTodos(50).catch(() => []),
@@ -5166,6 +5169,18 @@ export default function ElevenLabsAgentWidget({
             fetchAutomationDigest().catch(() => null),
             loadPersistentMemory().catch(() => ""),
           ]);
+
+          // P3 5b — weekly planning reasons about current operational state, so
+          // it shares the same definition of CURRENT as every other surface.
+          // buildDailyBrief moved below the digest fetch purely so the link
+          // evidence is available to narrow its input; its own classification is
+          // unchanged. Absent evidence supersedes nothing, so a failed digest
+          // degrades to the previous membership rather than hiding anything.
+          const currentTasks = withoutSupersededManifestations(
+            tasks,
+            collectSupersededManifestationIds(tasks, automationDigest?.recurringSourceIndexes),
+          );
+          const brief = buildDailyBrief(currentTasks, new Date());
 
           const result = await buildWeekPlan({
             sourceText: rawInstruction,

@@ -71,6 +71,11 @@ export function composeAttentionEvidence(input: {
    * nothing is superseded and composition behaves exactly as before.
    */
   recurringSourceIndexes?: RecurringSourceIndexes;
+  /**
+   * True when the recurring-source link read failed or timed out, so the
+   * membership is the pre-correction one and completeness must report "partial".
+   */
+  recurringSourceFailed?: boolean;
 }): AttentionSummaryEvidence;
 
 export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string;
