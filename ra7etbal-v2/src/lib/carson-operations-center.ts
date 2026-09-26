@@ -19,7 +19,7 @@
 
 import { supabase } from "./supabase";
 import { listTasks } from "./tasks";
-import { fetchAutomationDigest, EMPTY_AUTOMATION_DIGEST } from "./automation-context";
+import { fetchAutomationDigest } from "./automation-context";
 import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
 import { fetchUnresolvedCaptureCandidates, type UnresolvedCapture } from "./carson-unresolved-captures";
 import { markCarsonNotesSurfaced } from "./carson-notes";
@@ -332,14 +332,19 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   // auth failure or query error, so routineAutomationTaskIds below is
   // always defined (possibly empty), never undefined-because-it-threw.
   //
-  // Held to the same timeout budget as the three sources above. It was
-  // previously awaited unbounded, which a slow read could use to stall the whole
-  // attention response past the budget the others are bound by — and this digest
-  // now also carries the recurring-source link reads and the authority to mark
-  // the result complete. On timeout it degrades to EMPTY_DIGEST, so
-  // recurringSourceLinksLoaded is false and completeness reports partial rather
-  // than presenting pre-correction membership as the full picture.
-  const digestPromise = withTimeout(fetchAutomationDigest()).catch(() => EMPTY_AUTOMATION_DIGEST);
+  // Deliberately NOT under withTimeout, unlike the three sources above.
+  //
+  // A timeout here would empty routineAutomationTaskIds, and that set SUPPRESSES
+  // tasks tied to an open automation run — so degrading it re-admits those tasks
+  // into overdueReminders/upcomingReminders. That is a change to protected
+  // attention membership on the degraded path, and it is not P3 5b's to make.
+  // An earlier revision of this slice did add the timeout; review caught that it
+  // traded a latency risk for a correctness regression, so it was reverted.
+  //
+  // The unbounded await is pre-existing behavior. The latency exposure it
+  // represents is real and recorded as a carried finding for a separate,
+  // properly scoped change — not fixed here.
+  const digestPromise = fetchAutomationDigest();
 
   let tasks: Task[] | null = null;
   let tasksFailed = false;

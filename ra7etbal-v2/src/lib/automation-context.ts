@@ -410,11 +410,18 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     recurringRunLinks != null &&
     recurringNotificationLinks != null;
 
-  const recurringSourceIndexes: RecurringSourceIndexes = {
-    automationLinks: indexAutomationSourceLinks(recurringRunLinks ?? []),
-    routineLinks: indexRoutineSourceLinks(recurringNotificationLinks ?? []),
-    notificationAutomationClaims: indexNotificationAutomationClaims(recurringNotificationLinks ?? []),
-  };
+  // Absent, not empty, when the evidence could not be read — matching this
+  // field's documented contract and the server path's own null convention.
+  // Empty maps mean "this owner genuinely has no recurring history"; absence
+  // means "unknown". Consumers supersede nothing either way, but only the
+  // explicit recurringSourceLinksLoaded flag decides completeness.
+  const recurringSourceIndexes: RecurringSourceIndexes | undefined = recurringSourceLinksLoaded
+    ? {
+        automationLinks: indexAutomationSourceLinks(recurringRunLinks ?? []),
+        routineLinks: indexRoutineSourceLinks(recurringNotificationLinks ?? []),
+        notificationAutomationClaims: indexNotificationAutomationClaims(recurringNotificationLinks ?? []),
+      }
+    : undefined;
 
   return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds, recurringSourceIndexes, recurringSourceLinksLoaded };
 }
