@@ -165,9 +165,11 @@ export function buildMorningBriefSpoken(
   // ── URGENT — items requiring Sana's direct action ─────────────────────────
   // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
   // Production defect 2026-09-27: with SEVEN overdue one-time reminders (oldest
-  // 33 days) Carson said "One reminder is overdue: Pay bills." — `.find()` took
-  // the first and the wording hardcoded "One", so six responsibilities Sana had
-  // asked Carson to remember were dropped from the brief every day.
+  // 33 days) the spoken opening still began "One reminder is overdue: " and named
+  // a single item — `.find()` took the first and the wording hardcoded "One", so
+  // six responsibilities Sana had asked Carson to remember were dropped from the
+  // brief every day. (Which one was named depended on task-store order, which is
+  // why the ordering below is now deterministic.)
   //
   // Same authoritative population (brief.overdueItems, which by its own
   // classifier only ever holds overdue `reminder` rows, already narrowed by P3 5b
@@ -462,9 +464,11 @@ function spokenDaysOverdue(dueAt: string, now: Date): string {
   const dueMidnight = new Date(due.getFullYear(), due.getMonth(), due.getDate());
   const days = Math.round((todayMidnight.getTime() - dueMidnight.getTime()) / 86_400_000);
 
-  if (days <= 0) return "earlier today";
-  if (days === 1) return "since yesterday";
-  return `${spokenCount(days)} days`;
+  // One grammatical frame for every age ("due <when>"), so a mixed-age list
+  // cannot read as "Pay bills, 30 days; and Call Loulya, earlier today".
+  if (days <= 0) return "due earlier today";
+  if (days === 1) return "due yesterday";
+  return `due ${spokenCount(days)} days ago`;
 }
 
 /** Joins spoken clauses as "a; b; and c" — one item returns itself unchanged. */
@@ -503,8 +507,10 @@ function spokenOverdueReminders(reminders: Task[], now: Date): string {
     return `${lead}: ${spokenJoin(reminders.map(describe))}.`;
   }
 
+  // One sentence, not two: the brief's documented budget counts slots as
+  // sentences, so a two-sentence urgent slot would silently exceed it.
   const named = reminders.slice(0, OVERDUE_REMINDERS_NAMED_LIMIT).map(describe);
-  return `${lead}. The ${spokenCount(OVERDUE_REMINDERS_NAMED_LIMIT)} oldest: ${spokenJoin(named)}.`;
+  return `${lead} — the ${spokenCount(OVERDUE_REMINDERS_NAMED_LIMIT)} oldest: ${spokenJoin(named)}.`;
 }
 
 /**

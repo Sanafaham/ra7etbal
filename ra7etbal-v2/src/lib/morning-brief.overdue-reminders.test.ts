@@ -3,13 +3,16 @@
  *
  * Sana had SEVEN overdue one-time reminders (oldest 33 days: "Call Loulya",
  * "Check my mailbox", "Check my email"; then "Pay bills" and "Call the doctor"
- * at 30 days; "Call Loulya" at 19 and at 6 days). Carson's spoken opening said:
+ * at 30 days; "Call Loulya" at 19 and at 6 days). Carson's spoken opening still
+ * began:
  *
- *     "One reminder is overdue: Pay bills."
+ *     "One reminder is overdue: <a single item>"
  *
  * because `morning-brief.ts` selected the overdue set with `.find()` and the
  * wording hardcoded "One". Six of the seven responsibilities Sana had asked
  * Carson to remember were silently dropped from the brief every single day.
+ * Which single item got named depended on task-store order, so this suite pins
+ * deterministic ordering rather than asserting the historically spoken item.
  *
  * These tests exercise the real spoken opening (buildMorningBriefSpoken),
  * because the defect was only ever visible there.
@@ -181,7 +184,7 @@ describe("buildMorningBriefSpoken — overdue reminder truthfulness", () => {
       reminder({ id: "h1", description: "Pay bills", due_at: hoursAgo }),
       reminder({ id: "h2", description: "Call the doctor", due_at: daysAgo(6) }),
     ]);
-    expect(out).toMatch(/earlier today/);
+    expect(out).toMatch(/due earlier today/);
     expect(out).not.toMatch(/zero days/);
   });
 
@@ -190,7 +193,7 @@ describe("buildMorningBriefSpoken — overdue reminder truthfulness", () => {
       reminder({ id: "d1", description: "Pay bills", due_at: daysAgo(1) }),
       reminder({ id: "d2", description: "Call the doctor", due_at: daysAgo(6) }),
     ]);
-    expect(out).toMatch(/since yesterday/);
+    expect(out).toMatch(/due yesterday/);
     expect(out).not.toMatch(/one days/);
   });
 
