@@ -26,7 +26,6 @@ const OWNER = "owner-user-1";
 
 function task(over: Partial<Task> & { id: string }): Task {
   return {
-    id: over.id,
     user_id: OWNER,
     type: "action",
     description: "Recurring manifestation",
