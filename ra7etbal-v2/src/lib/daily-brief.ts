@@ -1,5 +1,10 @@
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations.js";
+import type { RecurringSourceIndexes } from "../../shared/carson-recurring-manifestations";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
@@ -21,8 +26,43 @@ export interface DailyBriefSummary {
   lines: string[];
 }
 
-export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
-  const activeTasks = tasks.filter((task) => task.archived_at == null);
+export interface BuildDailyBriefOptions {
+  /**
+   * P3 5b recurring source-link indexes (`AutomationDigest.recurringSourceIndexes`).
+   *
+   * When supplied, superseded recurring manifestations are dropped BEFORE
+   * bucketing, so the Home / What's Happening operational surfaces present
+   * CURRENT operational responsibilities instead of raw historical rows —
+   * the same derivation carson-context.ts, morning-brief.ts, night-sweep.ts,
+   * carson-material-items.ts and the attention summary already consume.
+   *
+   * FAIL SAFE: omitted, undefined, or an index that cannot authoritatively
+   * resolve a task's source (unresolved or ambiguous/conflicting provenance)
+   * leaves that task VISIBLE. Extra visible information is always preferred
+   * over falsely hiding a genuine responsibility. Supersession is never
+   * inferred from title, task text, similarity, timing alone or cadence
+   * alone — only from the shared derivation's authoritative identity rules,
+   * which also protect separately accountable tracked work via the
+   * accountability guard.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
+}
+
+export function buildDailyBrief(
+  tasks: Task[],
+  now = new Date(),
+  options: BuildDailyBriefOptions = {},
+): DailyBrief {
+  // Derived only — never writes, never deletes, never mutates the caller's
+  // array. Superseded rows remain physically intact and reachable through the
+  // historical surfaces (History tab / done+archived lists), which read the
+  // task store directly rather than these operational buckets.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, options.recurringSourceIndexes),
+  );
+
+  const activeTasks = currentTasks.filter((task) => task.archived_at == null);
   const waitingIds = new Set(
     activeTasks.filter((task) => isWaitingTask(task)).map((task) => task.id),
   );

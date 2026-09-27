@@ -13,6 +13,7 @@ import StaffEscalationCard from "../components/tasks/StaffEscalationCard";
 import Modal from "../components/ui/Modal";
 import { useTaskList } from "../hooks/useTaskList";
 import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { useRecurringSourceIndexes } from "../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
@@ -209,7 +210,14 @@ export default function Updates() {
     return m;
   }, [people]);
 
-  const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  // P3 5b: superseded recurring manifestations are historical, not current
+  // Pending work. Fail safe — until the link read completes, `indexes` is
+  // undefined and nothing is hidden.
+  const { indexes: recurringSourceIndexes } = useRecurringSourceIndexes();
+  const brief = useMemo(
+    () => buildDailyBrief(tasks, now, { recurringSourceIndexes }),
+    [tasks, now, recurringSourceIndexes],
+  );
 
   // Phase C — open staff escalations (Phase B) merged into the same Needs
   // You list. Deliberately not folded into buildDailyBrief()/needsAttention

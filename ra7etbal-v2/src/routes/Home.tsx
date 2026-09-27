@@ -4,6 +4,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useCarsonStore } from "../stores/carson";
 import { useAuth } from "../hooks/useAuth";
 import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { useRecurringSourceIndexes } from "../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { usePeopleStore } from "../stores/people";
@@ -52,7 +53,14 @@ export default function Home() {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  // P3 5b: Home's Needs You / Waiting / Handled summaries must read the same
+  // CURRENT operational population as What's Happening, not raw historical
+  // manifestation rows. Fail safe — undefined indexes hide nothing.
+  const { indexes: recurringSourceIndexes } = useRecurringSourceIndexes();
+  const brief = useMemo(
+    () => buildDailyBrief(tasks, now, { recurringSourceIndexes }),
+    [tasks, now, recurringSourceIndexes],
+  );
 
   // Phase C — open staff escalations (Phase B) counted alongside real
   // needsAttention tasks. Deliberately not folded into buildDailyBrief()
