@@ -250,8 +250,10 @@ export default function Updates() {
   // Pending reminders due in the next 14 days. Reminders already shown in
   // Needs You stay there only, so one reminder never renders in both sections.
   const upcomingReminders = useMemo(() => {
-    return getUpcomingReminderTasks(tasks, brief.needsAttention, now);
-  }, [tasks, brief.needsAttention, now]);
+    // brief.currentTasks, not `tasks`: a superseded manifestation must not be
+    // dropped from Pending yet still surface here.
+    return getUpcomingReminderTasks(brief.currentTasks, brief.needsAttention, now);
+  }, [brief.currentTasks, brief.needsAttention, now]);
 
   // IDs already shown in upcomingReminders — exclude from brief.later to avoid duplication
   const upcomingReminderIds = useMemo(

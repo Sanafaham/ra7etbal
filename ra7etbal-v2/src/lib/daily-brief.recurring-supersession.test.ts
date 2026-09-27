@@ -360,6 +360,60 @@ describe("buildDailyBrief — P3 5b recurring manifestation supersession", () =>
     expect(brief.later.map((t) => t.id)).toEqual(["r2"]);
   });
 
+  it("16. brief.currentTasks is the post-supersession population adjacent lists must reuse", () => {
+    // A future-dated reminder-typed manifestation: dropped from `later` as
+    // superseded, so Updates' "Upcoming reminders" must not resurrect it. That
+    // list reads brief.currentTasks, so pin what currentTasks contains.
+    const tasks = [
+      task({ id: "old-rem", type: "reminder", created_at: "2026-09-01T00:00:00.000Z", due_at: "2026-10-01T09:00:00.000Z" }),
+      task({ id: "new-rem", type: "reminder", created_at: "2026-09-05T00:00:00.000Z", due_at: "2026-10-02T09:00:00.000Z" }),
+    ];
+    const indexes = indexesFor([
+      { task_id: "old-rem", automation_id: "auto-A" },
+      { task_id: "new-rem", automation_id: "auto-A" },
+    ]);
+
+    const brief = buildDailyBrief(tasks, new Date("2026-09-26T00:00:00.000Z"), {
+      recurringSourceIndexes: indexes,
+    });
+
+    expect(brief.currentTasks.map((t) => t.id)).toEqual(["new-rem"]);
+    expect(brief.currentTasks.map((t) => t.id)).not.toContain("old-rem");
+  });
+
+  it("17. currentTasks is every row when nothing is superseded (fail safe)", () => {
+    const tasks = [task({ id: "a" }), task({ id: "b" })];
+    const brief = buildDailyBrief(tasks, new Date("2026-09-26T00:00:00.000Z"));
+    expect(brief.currentTasks.map((t) => t.id)).toEqual(["a", "b"]);
+  });
+
+  it("18. bottom-nav badge population cannot drift: a superseded decision row is excluded", () => {
+    // The badge counts needsAttention. A `decision`-typed recurring
+    // manifestation IS eligible for both needsAttention and supersession, so
+    // the badge must read the same post-supersession population as Home and
+    // Updates or the three surfaces disagree.
+    const tasks = [
+      task({ id: "old-dec", type: "decision", created_at: "2026-09-01T00:00:00.000Z" }),
+      task({ id: "new-dec", type: "decision", created_at: "2026-09-05T00:00:00.000Z" }),
+    ];
+    const indexes = indexesFor([
+      { task_id: "old-dec", automation_id: "auto-A" },
+      { task_id: "new-dec", automation_id: "auto-A" },
+    ]);
+
+    const withIndexes = buildDailyBrief(tasks, new Date("2026-09-06T00:00:00.000Z"), {
+      recurringSourceIndexes: indexes,
+    });
+    const withoutIndexes = buildDailyBrief(tasks, new Date("2026-09-06T00:00:00.000Z"));
+
+    // Aligned: only the CURRENT decision counts.
+    expect(withIndexes.needsAttention.map((t) => t.id)).toEqual(["new-dec"]);
+    // Fail safe when links are unavailable: both still count.
+    expect(withoutIndexes.needsAttention.map((t) => t.id)).toEqual(
+      expect.arrayContaining(["old-dec", "new-dec"]),
+    );
+  });
+
   it("15. production-shaped population: 135 manifestations + 7 reminders + 3 delegations", () => {
     const tasks: Task[] = [];
     const runRows: Array<{ task_id: string; automation_id: string }> = [];

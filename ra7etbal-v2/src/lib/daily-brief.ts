@@ -8,6 +8,16 @@ import type { RecurringSourceIndexes } from "../../shared/carson-recurring-manif
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
+  /**
+   * The post-supersession population these buckets were derived from — i.e.
+   * CURRENT operational rows. Exposed so a consumer that needs the SAME
+   * population for an adjacent list (e.g. Updates' "Upcoming reminders", which
+   * reads reminders outside the `later` bucket) reuses this one derivation
+   * instead of re-deriving it or falling back to raw rows, which would let a
+   * row be hidden from Pending yet still appear in that adjacent list.
+   * Identical to the input array when nothing is superseded.
+   */
+  currentTasks: Task[];
   needsAttention: Task[];
   waitingOnOthers: Task[];
   later: Task[];
@@ -86,6 +96,7 @@ export function buildDailyBrief(
     .sort((a, b) => getDoneSortValue(b) - getDoneSortValue(a));
 
   return {
+    currentTasks,
     needsAttention,
     waitingOnOthers,
     later,

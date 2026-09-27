@@ -3,6 +3,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { useCarsonStore } from "../../stores/carson";
 import { useTasksStore } from "../../stores/tasks";
 import { useOpenStaffEscalations } from "../../hooks/useOpenStaffEscalations";
+import { useRecurringSourceIndexes } from "../../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../../lib/daily-brief";
 
@@ -36,11 +37,16 @@ export default function BottomNav() {
 
   const updatesIsActive = pathname === "/updates" || pathname.startsWith("/updates");
 
+  // P3 5b: the badge must read the same CURRENT operational population as Home
+  // and Updates, or the three surfaces drift — the property this capability's
+  // contract exists to guarantee.
+  const { indexes: recurringSourceIndexes } = useRecurringSourceIndexes();
+
   const updatesBadge = useMemo(() => {
-    const brief = buildDailyBrief(tasks, new Date());
+    const brief = buildDailyBrief(tasks, new Date(), { recurringSourceIndexes });
     const visible = filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id));
     return brief.needsAttention.length + visible.length;
-  }, [tasks, staffEscalations]);
+  }, [tasks, staffEscalations, recurringSourceIndexes]);
 
   return (
     <nav
