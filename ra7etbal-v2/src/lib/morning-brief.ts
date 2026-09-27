@@ -164,7 +164,24 @@ export function buildMorningBriefSpoken(
 
   // ── URGENT — items requiring Sana's direct action ─────────────────────────
   // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
-  const overdueReminder = brief.overdueItems.find(t => t.type === "reminder");
+  // Production defect 2026-09-27: with SEVEN overdue one-time reminders (oldest
+  // 33 days) Carson said "One reminder is overdue: Pay bills." — `.find()` took
+  // the first and the wording hardcoded "One", so six responsibilities Sana had
+  // asked Carson to remember were dropped from the brief every day.
+  //
+  // Same authoritative population (brief.overdueItems, which by its own
+  // classifier only ever holds overdue `reminder` rows, already narrowed by P3 5b
+  // supersession and routineAutomationTaskIds upstream) — no second overdue
+  // population and no new classifier. Ordering is made deterministic here
+  // because the classifier preserves input order, which is store order: oldest
+  // due first, then id, so the same set always speaks the same line.
+  const overdueReminders = brief.overdueItems
+    .filter(t => t.type === "reminder")
+    .sort((a, b) => {
+      const byDue = new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime();
+      return byDue !== 0 ? byDue : a.id.localeCompare(b.id);
+    });
+  const overdueReminder = overdueReminders[0] ?? undefined;
   const todayReminder   = brief.needsAttention.find(
     t => t.type === "reminder" && t.due_at && !isReminderOverdue(t.due_at, now),
   );
@@ -184,7 +201,7 @@ export function buildMorningBriefSpoken(
 
   let slotUrgent = "";
   if (overdueReminder) {
-    slotUrgent = `One reminder is overdue: ${spokenDesc(overdueReminder.description)}.`;
+    slotUrgent = spokenOverdueReminders(overdueReminders, now);
   } else if (todayReminder) {
     const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
     slotUrgent = timeSuffix
@@ -428,6 +445,66 @@ function spokenTimeSuffix(dueAt: string | null, now: Date): string {
   result = result.replace(/:00\s*(AM|PM)/gi, " $1");
 
   return result.trim();
+}
+
+/**
+ * How long a reminder has been overdue, in calendar days, as a spoken clause.
+ *
+ * Deliberately narrow: it reports elapsed time since `due_at` and nothing else.
+ * It never characterises delivery ("missed", "undelivered", "you didn't see it")
+ * and never implies acknowledgment, completion, dismissal, snooze or intent —
+ * no reminder lifecycle field is read here. Calendar-day arithmetic mirrors
+ * spokenDaysUntil() so "yesterday" means the same thing in both directions.
+ */
+function spokenDaysOverdue(dueAt: string, now: Date): string {
+  const due = new Date(dueAt);
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueMidnight = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const days = Math.round((todayMidnight.getTime() - dueMidnight.getTime()) / 86_400_000);
+
+  if (days <= 0) return "earlier today";
+  if (days === 1) return "since yesterday";
+  return `${spokenCount(days)} days`;
+}
+
+/** Joins spoken clauses as "a; b; and c" — one item returns itself unchanged. */
+function spokenJoin(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join("; ")}; and ${parts[parts.length - 1]}`;
+}
+
+/** How many overdue reminders are named individually before summarising. */
+const OVERDUE_REMINDERS_NAMED_LIMIT = 3;
+
+/**
+ * The spoken overdue-reminder clause.
+ *
+ * Carson must carry the COMPLETE overdue set, so the total count is always
+ * spoken truthfully. Beyond OVERDUE_REMINDERS_NAMED_LIMIT the opening would stop
+ * being usable aloud, so the oldest few are named and explicitly labelled as the
+ * oldest — the total still stands on its own, and the named items are never
+ * presented as the whole set.
+ *
+ * `reminders` must already be the authoritative, deterministically ordered
+ * overdue population (oldest first). This function does no selection of its own.
+ */
+function spokenOverdueReminders(reminders: Task[], now: Date): string {
+  const total = reminders.length;
+  if (total === 0) return "";
+
+  // Unchanged singular behavior.
+  if (total === 1) return `One reminder is overdue: ${spokenDesc(reminders[0].description)}.`;
+
+  const describe = (t: Task) =>
+    `${spokenDesc(t.description)}, ${spokenDaysOverdue(t.due_at!, now)}`;
+  const lead = `${capFirst(spokenCount(total))} reminders are overdue`;
+
+  if (total <= OVERDUE_REMINDERS_NAMED_LIMIT) {
+    return `${lead}: ${spokenJoin(reminders.map(describe))}.`;
+  }
+
+  const named = reminders.slice(0, OVERDUE_REMINDERS_NAMED_LIMIT).map(describe);
+  return `${lead}. The ${spokenCount(OVERDUE_REMINDERS_NAMED_LIMIT)} oldest: ${spokenJoin(named)}.`;
 }
 
 /**
