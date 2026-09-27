@@ -533,7 +533,7 @@
     },
     {
       "id": "needs_you_waiting_handled_state",
-      "contract": "Needs You is a decision queue, not an ownership queue: only tasks the extraction pipeline classified as type === 'decision' (plus always-surfaced cancelled tasks and quality-review intervention items) appear in Needs You. Waiting and Handled counts and the bottom-nav badge all read the single shared buildDailyBrief().needsAttention classifier so the three surfaces cannot drift.",
+      "contract": "Needs You is a decision queue, not an ownership queue: only tasks the extraction pipeline classified as type === 'decision' (plus always-surfaced cancelled tasks and quality-review intervention items) appear in Needs You. Waiting and Handled counts and the bottom-nav badge all read the single shared buildDailyBrief().needsAttention classifier so the three surfaces cannot drift. Superseded P3 5b recurring manifestations are excluded from these operational buckets before bucketing (buildDailyBrief's optional recurringSourceIndexes), reusing shared/carson-recurring-manifestations.js as the only supersession authority; fail safe — absent, incomplete or ambiguous provenance leaves a manifestation visible, and the accountability guard keeps separately accountable tracked work visible regardless of shared recurring provenance.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; PROTECTED per RA7ETBAL_STATE.md (PR #59)",
       "production_entry_points": [
         "src/routes/Home.tsx",
@@ -542,9 +542,12 @@
       "files_functions": [
         "src/lib/daily-brief.ts:buildDailyBrief / isNeedsYouTask / isWaitingInterventionTask",
         "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel",
-        "src/lib/needs-you-staff-escalations.ts"
+        "src/lib/needs-you-staff-escalations.ts",
+        "src/hooks/useRecurringSourceIndexes.ts:useRecurringSourceIndexes — Home/Updates access path to the existing AutomationDigest.recurringSourceIndexes; yields undefined unless recurringSourceLinksLoaded === true"
       ],
-      "shared_dependencies": [],
+      "shared_dependencies": [
+        "shared/carson-recurring-manifestations.js"
+      ],
       "db": {
         "tables": [
           "tasks"
@@ -559,7 +562,8 @@
         "src/lib/needs-you-staff-escalations.test.ts",
         "src/routes/Home.test.ts",
         "src/routes/Updates.test.ts",
-        "src/components/nav/BottomNav.staff-escalation-badge.test.ts"
+        "src/components/nav/BottomNav.staff-escalation-badge.test.ts",
+        "src/lib/daily-brief.recurring-supersession.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": false,

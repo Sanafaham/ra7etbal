@@ -13,6 +13,7 @@ import StaffEscalationCard from "../components/tasks/StaffEscalationCard";
 import Modal from "../components/ui/Modal";
 import { useTaskList } from "../hooks/useTaskList";
 import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { useRecurringSourceIndexes } from "../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
@@ -209,7 +210,14 @@ export default function Updates() {
     return m;
   }, [people]);
 
-  const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  // P3 5b: superseded recurring manifestations are historical, not current
+  // Pending work. Fail safe — until the link read completes, `indexes` is
+  // undefined and nothing is hidden.
+  const { indexes: recurringSourceIndexes } = useRecurringSourceIndexes();
+  const brief = useMemo(
+    () => buildDailyBrief(tasks, now, { recurringSourceIndexes }),
+    [tasks, now, recurringSourceIndexes],
+  );
 
   // Phase C — open staff escalations (Phase B) merged into the same Needs
   // You list. Deliberately not folded into buildDailyBrief()/needsAttention
@@ -242,8 +250,10 @@ export default function Updates() {
   // Pending reminders due in the next 14 days. Reminders already shown in
   // Needs You stay there only, so one reminder never renders in both sections.
   const upcomingReminders = useMemo(() => {
-    return getUpcomingReminderTasks(tasks, brief.needsAttention, now);
-  }, [tasks, brief.needsAttention, now]);
+    // brief.currentTasks, not `tasks`: a superseded manifestation must not be
+    // dropped from Pending yet still surface here.
+    return getUpcomingReminderTasks(brief.currentTasks, brief.needsAttention, now);
+  }, [brief.currentTasks, brief.needsAttention, now]);
 
   // IDs already shown in upcomingReminders — exclude from brief.later to avoid duplication
   const upcomingReminderIds = useMemo(

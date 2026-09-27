@@ -1,8 +1,23 @@
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+import {
+  collectSupersededManifestationIds,
+  withoutSupersededManifestations,
+} from "../../shared/carson-recurring-manifestations.js";
+import type { RecurringSourceIndexes } from "../../shared/carson-recurring-manifestations";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
+  /**
+   * The post-supersession population these buckets were derived from — i.e.
+   * CURRENT operational rows. Exposed so a consumer that needs the SAME
+   * population for an adjacent list (e.g. Updates' "Upcoming reminders", which
+   * reads reminders outside the `later` bucket) reuses this one derivation
+   * instead of re-deriving it or falling back to raw rows, which would let a
+   * row be hidden from Pending yet still appear in that adjacent list.
+   * Identical to the input array when nothing is superseded.
+   */
+  currentTasks: Task[];
   needsAttention: Task[];
   waitingOnOthers: Task[];
   later: Task[];
@@ -21,8 +36,43 @@ export interface DailyBriefSummary {
   lines: string[];
 }
 
-export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
-  const activeTasks = tasks.filter((task) => task.archived_at == null);
+export interface BuildDailyBriefOptions {
+  /**
+   * P3 5b recurring source-link indexes (`AutomationDigest.recurringSourceIndexes`).
+   *
+   * When supplied, superseded recurring manifestations are dropped BEFORE
+   * bucketing, so the Home / What's Happening operational surfaces present
+   * CURRENT operational responsibilities instead of raw historical rows —
+   * the same derivation carson-context.ts, morning-brief.ts, night-sweep.ts,
+   * carson-material-items.ts and the attention summary already consume.
+   *
+   * FAIL SAFE: omitted, undefined, or an index that cannot authoritatively
+   * resolve a task's source (unresolved or ambiguous/conflicting provenance)
+   * leaves that task VISIBLE. Extra visible information is always preferred
+   * over falsely hiding a genuine responsibility. Supersession is never
+   * inferred from title, task text, similarity, timing alone or cadence
+   * alone — only from the shared derivation's authoritative identity rules,
+   * which also protect separately accountable tracked work via the
+   * accountability guard.
+   */
+  recurringSourceIndexes?: RecurringSourceIndexes;
+}
+
+export function buildDailyBrief(
+  tasks: Task[],
+  now = new Date(),
+  options: BuildDailyBriefOptions = {},
+): DailyBrief {
+  // Derived only — never writes, never deletes, never mutates the caller's
+  // array. Superseded rows remain physically intact and reachable through the
+  // historical surfaces (History tab / done+archived lists), which read the
+  // task store directly rather than these operational buckets.
+  const currentTasks = withoutSupersededManifestations(
+    tasks,
+    collectSupersededManifestationIds(tasks, options.recurringSourceIndexes),
+  );
+
+  const activeTasks = currentTasks.filter((task) => task.archived_at == null);
   const waitingIds = new Set(
     activeTasks.filter((task) => isWaitingTask(task)).map((task) => task.id),
   );
@@ -46,6 +96,7 @@ export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
     .sort((a, b) => getDoneSortValue(b) - getDoneSortValue(a));
 
   return {
+    currentTasks,
     needsAttention,
     waitingOnOthers,
     later,
