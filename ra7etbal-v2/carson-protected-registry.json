@@ -167,6 +167,12 @@
         ],
         "supersession": {
           "contract": "Option A (owner-authorized 2026-09-28, migration 20260929). When a proof review (uncertain_proof / substitute_review / correction_limit) is claimed for the SAME task UUID by the same owner, any open/answered/delivering no_response row for that task becomes status 'superseded' in the same statement. The historical row (owner answer, delivery evidence) is preserved; the proof review becomes the single current review; superseded rows never occupy the one-open-task-review slot, are never actionable (no Ask again / Keep waiting / retry), and are never claimed for delivery. Identity boundary is the task UUID only (never person, phone, text, timing, or model inference). A re-ask already accepted by Meta before proof wins is reported as sent_then_superseded, never as prevented.",
+          "race_guards": [
+            "Sweep-insert-first race: when a proof claim receives the sweep's just-committed no_response row, api/_escalation-notify.js:notifyOwnerOfTaskReview retries the claim exactly once for the same task UUID; the retry supersedes the handoff (real-Postgres S11b).",
+            "A no_response owner notification re-reads the decision right before the Meta send and sends nothing unless it is still 'open' (fails closed on a read error).",
+            "A delivery claim that returns delivery_status 'superseded' is reported as not_sent_no_longer_current, never in_progress.",
+            "Residual, documented: a check-then-send window of one HTTP send remains for both the owner notification and the Ask again re-ask. Outcomes stay truthful (sent_then_superseded; the handoff message was true when sent) and there is never a second send."
+          ],
           "migration": "supabase/migrations/20260929_no_response_superseded_by_proof.sql",
           "rollback": "supabase/migrations/20260929_no_response_superseded_by_proof.rollback.sql (blocked while any superseded row exists)",
           "real_postgres_workflow": ".github/workflows/no-response-supersession-verification.yml",

@@ -2,6 +2,14 @@
 -- Restores the pre-change CHECK, index and RPC exactly. Refuses to run while
 -- any 'superseded' row exists: re-activating a superseded silence row could
 -- collide with the proof review that replaced it. That is an owner decision.
+--
+-- One transaction: the table lock blocks new writes (so no superseded row can
+-- appear between the guard and the DDL), and a blocked guard leaves nothing
+-- half-applied.
+
+BEGIN;
+
+LOCK TABLE public.staff_escalation_owner_decisions IN SHARE ROW EXCLUSIVE MODE;
 
 DO $guard$
 BEGIN
@@ -73,3 +81,5 @@ BEGIN
   RETURN v_row;
 END;
 $function$;
+
+COMMIT;

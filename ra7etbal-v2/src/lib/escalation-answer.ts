@@ -89,7 +89,7 @@ export type NoResponseChoice = "ask_again" | "keep_waiting";
  *                                replied, or newer proof for this task arrived
  *                                first, so nothing was sent.
  *   sent_then_superseded       — the re-ask was accepted by WhatsApp, and newer
- *                                proof for this task arrived right after.
+ *                                proof for this task arrived around the same time.
  */
 export type NoResponseResultStatus =
   | "kept_waiting"

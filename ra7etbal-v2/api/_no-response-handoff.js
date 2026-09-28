@@ -461,6 +461,11 @@ export async function executeNoResponseChoice({
   if (claimRes.error) return { kind: 'rpc_error', error: claimRes.error };
   const claim = Array.isArray(claimRes.data) ? claimRes.data[0] : claimRes.data;
   if (!claim?.claimed) {
+    // Newer same-task proof superseded the decision after the answer was
+    // saved: nothing was sent and nothing will be — never "in progress".
+    if (claim?.delivery_status === 'superseded') {
+      return { kind: 'success', status: 'not_sent_no_longer_current', choice: 'ask_again', reason: 'superseded' };
+    }
     return {
       kind: 'success',
       status: claim?.delivery_status === 'delivered_to_staff' ? 'delivered' : 'in_progress',

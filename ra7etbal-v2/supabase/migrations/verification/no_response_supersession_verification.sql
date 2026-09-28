@@ -25,6 +25,11 @@
  *       stale lease can no longer complete, and it can never be re-claimed
  *   S11 genuinely concurrent proof claim vs no_response sweep claim (two real
  *       connections) converge on exactly one current decision: the proof
+ *   S11b the reverse ordering: the sweep's no_response INSERT is still
+ *       uncommitted when the proof claim runs. The RPC alone hands the proof
+ *       caller the sweep's row; the ONE same-task retry that
+ *       notifyOwnerOfTaskReview performs (api/_escalation-notify.js) then
+ *       supersedes it and makes the proof the single current review
  *   S12 existing behaviour without no_response is unchanged
  *
  * PASS lines are RAISE NOTICE; any failure RAISE EXCEPTIONs with
@@ -54,7 +59,8 @@ INSERT INTO public.tasks (id, user_id, description, status, assigned_to) VALUES
   ('c1200000-0000-4000-8000-00000000000d', 'c1000000-0000-4000-8000-000000000001', 'task D', 'pending', 'Christopher'),
   ('c1200000-0000-4000-8000-00000000000e', 'c1000000-0000-4000-8000-000000000001', 'task E', 'pending', 'Christopher'),
   ('c1200000-0000-4000-8000-00000000000f', 'c1000000-0000-4000-8000-000000000001', 'task F', 'pending', 'Christopher'),
-  ('c1200000-0000-4000-8000-000000000010', 'c1000000-0000-4000-8000-000000000001', 'task G', 'pending', 'Christopher')
+  ('c1200000-0000-4000-8000-000000000010', 'c1000000-0000-4000-8000-000000000001', 'task G', 'pending', 'Christopher'),
+  ('c1200000-0000-4000-8000-000000000011', 'c1000000-0000-4000-8000-000000000001', 'task H', 'pending', 'Christopher')
 ON CONFLICT DO NOTHING;
 
 -- ── Schema contract ────────────────────────────────────────────────────────
@@ -309,6 +315,61 @@ BEGIN
     RAISE EXCEPTION 'FAIL S11: the race created a second no_response row';
   END IF;
   RAISE NOTICE 'PASS: S11 — concurrent proof vs sweep converge on exactly one current decision (the proof); no second no_response';
+END $$;
+
+-- ── S11b: sweep INSERT uncommitted first, proof claim races it ─────────────
+DO $$
+DECLARE
+  u uuid := 'c1000000-0000-4000-8000-000000000001';
+  t uuid := 'c1200000-0000-4000-8000-000000000011';
+  cs text := 'host=localhost port=' || current_setting('port') || ' dbname=' || current_database() || ' user=' || current_user;
+  v_first text;
+  v_retry public.staff_escalation_owner_decisions;
+  v_rows text;
+  v_active int;
+BEGIN
+  -- Sweep: claims no_response inside an open, uncommitted transaction.
+  PERFORM dblink_connect('s11b_sweep', cs);
+  PERFORM dblink_exec('s11b_sweep', 'BEGIN');
+  PERFORM * FROM dblink('s11b_sweep', format(
+    'SELECT (public.claim_task_escalation_owner_decision(%L::uuid, %L::uuid, %L, NULL)).id::text', t, u, 'no_response'))
+    AS x(id text);
+
+  -- Proof: claims uncertain_proof concurrently; must wait on the sweep's row.
+  PERFORM dblink_connect('s11b_proof', cs);
+  PERFORM dblink_send_query('s11b_proof', format(
+    'SELECT (public.claim_task_escalation_owner_decision(%L::uuid, %L::uuid, %L, NULL)).review_type', t, u, 'uncertain_proof'));
+  PERFORM pg_sleep(0.3);
+  IF dblink_is_busy('s11b_proof') = 0 THEN
+    RAISE EXCEPTION 'FAIL S11b: the proof claim did not wait on the uncommitted sweep insert — the race was not exercised';
+  END IF;
+  PERFORM dblink_exec('s11b_sweep', 'COMMIT');
+  SELECT r INTO v_first FROM dblink_get_result('s11b_proof', false) AS x(r text);
+  PERFORM * FROM dblink_get_result('s11b_proof', false) AS x(r text);
+  PERFORM dblink_disconnect('s11b_sweep');
+  PERFORM dblink_disconnect('s11b_proof');
+
+  -- Documented RPC behaviour in this ordering: the proof caller gets the
+  -- sweep's row back. This is exactly what the application retry keys on.
+  IF v_first IS DISTINCT FROM 'no_response' THEN
+    RAISE EXCEPTION 'FAIL S11b: expected the racing proof claim to receive the sweep row, got %', v_first;
+  END IF;
+
+  -- The application's one same-task retry.
+  v_retry := public.claim_task_escalation_owner_decision(t, u, 'uncertain_proof', NULL);
+  IF v_retry.review_type <> 'uncertain_proof' OR v_retry.status <> 'open' THEN
+    RAISE EXCEPTION 'FAIL S11b: the retry must return the proof review, got %/%', v_retry.review_type, v_retry.status;
+  END IF;
+
+  SELECT count(*) INTO v_active FROM public.staff_escalation_owner_decisions
+   WHERE task_id = t AND staff_message_id IS NULL
+     AND status NOT IN ('delivered_to_staff', 'failed', 'superseded');
+  SELECT string_agg(review_type || ':' || status, ',' ORDER BY review_type) INTO v_rows
+    FROM public.staff_escalation_owner_decisions WHERE task_id = t;
+  IF v_active <> 1 OR v_rows <> 'no_response:superseded,uncertain_proof:open' THEN
+    RAISE EXCEPTION 'FAIL S11b: expected exactly one current review (the proof) plus superseded history, got % (active=%)', v_rows, v_active;
+  END IF;
+  RAISE NOTICE 'PASS: S11b — sweep-insert-first race: after the one same-task retry the proof is the single current review; the handoff is kept as superseded history';
 END $$;
 
 -- ── S12: behaviour without any no_response row is unchanged ─────────────────

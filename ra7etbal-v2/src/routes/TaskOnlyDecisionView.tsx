@@ -70,7 +70,7 @@ export function resultText(result: NoResponseResultStatus, name: string): string
     case "not_sent_no_longer_current":
       return `Nothing was sent — this task no longer needs a nudge (it was finished, ${name} replied, or newer proof arrived).`;
     case "sent_then_superseded":
-      return `Carson's message to ${name} was sent, and newer proof for this task arrived right after. That proof is now the current review.`;
+      return `Carson's message to ${name} was sent. Newer proof for this task arrived around the same time, and that proof is now the current review.`;
   }
 }
 

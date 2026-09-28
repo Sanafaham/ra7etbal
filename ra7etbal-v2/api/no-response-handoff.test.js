@@ -830,6 +830,25 @@ describe('supersession by same-task proof (Option A)', () => {
     expect(db.staff_escalation_owner_decisions.find((d) => d.id === row.id).status).toBe('superseded');
   });
 
+  it('13b. proof supersedes after the answer is saved but before the delivery claim → "not sent", never "in progress"', async () => {
+    const { row } = freshTaskWithDecision();
+    const sendImpl = okSend();
+    const racing = vi.fn(async (url, init) => {
+      if (String(url).includes('claim_escalation_answer_delivery')) proofClaim('task-fresh');
+      return fetchImpl(url, init);
+    });
+    const out = await executeNoResponseChoice({
+      supabaseUrl: URL_BASE, serviceKey: KEY, userId: OWNER, decisionRow: { ...row }, choice: 'ask_again',
+      fetchImpl: racing, sendImpl, env: { WHATSAPP_ACCESS_TOKEN: 't', WHATSAPP_PHONE_NUMBER_ID: 'pn' },
+    });
+    expect(out).toEqual({ kind: 'success', status: 'not_sent_no_longer_current', choice: 'ask_again', reason: 'superseded' });
+    expect(sendImpl).not.toHaveBeenCalled();
+    expect(deliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
+    expect(db.staff_escalation_owner_decisions.find((d) => d.id === row.id)).toMatchObject({
+      status: 'superseded', owner_reply_text: 'Ask again',
+    });
+  });
+
   it('14. send accepted, then proof wins → send reported as sent (not prevented), evidence kept, no second send', async () => {
     const { row } = freshTaskWithDecision();
     const sendImpl = vi.fn(async () => {

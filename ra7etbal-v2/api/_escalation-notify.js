@@ -49,6 +49,10 @@ import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone, sen
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { NO_RESPONSE_REVIEW_TYPE, buildNoResponseOwnerMessage, buildNoResponseDeepLink } from './_no-response-handoff.js';
 
+// Review types whose same-task claim supersedes a no_response handoff
+// (mirrors 20260929_no_response_superseded_by_proof.sql).
+const PROOF_REVIEW_TYPES = new Set(['uncertain_proof', 'substitute_review', 'correction_limit']);
+
 const OWNER_DECISION_REPLY_TEMPLATE_NAME = 'ra7etbal_direct_operational_message';
 const LEASE_SECONDS = 120;
 
@@ -426,6 +430,33 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     return { attempted: false, status: 'failed', reason: 'no_decision_row' };
   }
 
+  // Option A (20260929): a same-task proof claim supersedes a no_response
+  // handoff. If the sweep's no_response INSERT was still uncommitted when
+  // this proof claim ran, the RPC's supersede UPDATE could not see it and its
+  // own INSERT lost the unique-index race, so it returned the sweep's row.
+  // That row is committed now: one more claim supersedes it and inserts the
+  // proof review (proven against real Postgres). Same task UUID, same owner —
+  // no other identity is used. Exactly one retry; anything else fails loudly
+  // via the mismatch guard below.
+  if (PROOF_REVIEW_TYPES.has(reviewType) && decision.review_type === NO_RESPONSE_REVIEW_TYPE) {
+    try {
+      decision = await rpc(supabaseUrl, serviceKey, fetchImpl, 'claim_task_escalation_owner_decision', {
+        p_task_id: taskId,
+        p_user_id: userId,
+        p_review_type: reviewType,
+        p_person_id: personId,
+      });
+    } catch (err) {
+      console.error('[escalation-notify] claim_task_escalation_owner_decision retry failed', {
+        taskId, reviewType, error: err?.message || String(err),
+      });
+      return { attempted: false, status: 'failed', reason: 'claim_rpc_failed' };
+    }
+    if (!decision?.id) {
+      return { attempted: false, status: 'failed', reason: 'no_decision_row' };
+    }
+  }
+
   // Slice 1: the task-only-open unique index allows ONE active task-only
   // decision per task, and the claim RPC returns it whatever its type. Never
   // let a no_response handoff swallow a proof review (reported as "already
@@ -523,6 +554,25 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     review_type: reviewType,
     owner_phone_number_id: phoneNumberId,
   };
+  // Option A: newer same-task proof may have superseded this no_response
+  // handoff after it was claimed. Re-read the decision right before the
+  // irreversible send; anything but 'open' means the "hasn't responded"
+  // message is no longer true, so nothing is sent. Fails closed on a read
+  // error. Proof review types are unaffected.
+  if (reviewType === NO_RESPONSE_REVIEW_TYPE) {
+    const preSendStatus = await readDecisionStatus(supabaseUrl, serviceKey, fetchImpl, decision.id, userId);
+    if (preSendStatus !== 'open') {
+      const reason = preSendStatus === null ? 'pre_send_state_unavailable' : `decision_${preSendStatus}`;
+      await failTaskReviewNotificationLease(
+        supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, reason,
+      );
+      return {
+        attempted: false, status: 'failed', reason,
+        escalationId: decision.id, deepLinkToken: decision.deep_link_token,
+      };
+    }
+  }
+
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl,
     serviceKey,
@@ -696,6 +746,22 @@ async function markTaskReviewNotificationForReconciliation(
     console.warn('[escalation-notify] task-review notification reconciliation marker failed', {
       decisionId, error: err?.message || String(err),
     });
+  }
+}
+
+/** Current status of one decision row, or null when it can't be read. */
+async function readDecisionStatus(supabaseUrl, serviceKey, fetchImpl, decisionId, userId) {
+  try {
+    const response = await fetchImpl(
+      `${supabaseUrl}/rest/v1/staff_escalation_owner_decisions?id=eq.${encodeURIComponent(decisionId)}` +
+        `&user_id=eq.${encodeURIComponent(userId)}&select=status`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json().catch(() => null);
+    return Array.isArray(rows) && typeof rows[0]?.status === 'string' ? rows[0].status : null;
+  } catch {
+    return null;
   }
 }
 
