@@ -3,13 +3,16 @@
 -- any 'superseded' row exists: re-activating a superseded silence row could
 -- collide with the proof review that replaced it. That is an owner decision.
 --
--- One transaction: the table lock blocks new writes (so no superseded row can
--- appear between the guard and the DDL), and a blocked guard leaves nothing
--- half-applied.
+-- One transaction: the table lock is taken up front at the strength the DDL
+-- needs (no lock upgrade, so no deadlock with a concurrent row-locking RPC),
+-- no superseded row can appear between the guard and the DDL, and a blocked
+-- guard leaves nothing half-applied. lock_timeout makes a busy table fail
+-- fast instead of queueing app traffic behind the rollback.
 
 BEGIN;
 
-LOCK TABLE public.staff_escalation_owner_decisions IN SHARE ROW EXCLUSIVE MODE;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE public.staff_escalation_owner_decisions IN ACCESS EXCLUSIVE MODE;
 
 DO $guard$
 BEGIN
