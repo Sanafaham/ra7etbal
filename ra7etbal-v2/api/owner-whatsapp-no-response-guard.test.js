@@ -38,7 +38,7 @@ vi.mock('./_carson-agent-turn.js', () => ({
   runOwnerConversationalTurn: mocks.ownerConversationalTurn,
 }));
 
-const { handleInboundOwnerMessage, NO_RESPONSE_WHATSAPP_REPLY_TEXT } = await import('./_owner-whatsapp-routing.js');
+const { handleInboundOwnerMessage, NO_RESPONSE_WHATSAPP_REPLY_TEXT, NO_RESPONSE_SUPERSEDED_REPLY_TEXT } = await import('./_owner-whatsapp-routing.js');
 
 const SUPABASE = 'https://example.supabase.co';
 const KEY = 'service-key';
@@ -84,7 +84,7 @@ beforeEach(() => {
   mocks.updateCommand.mockResolvedValue({});
 });
 
-function stubQuotedNoResponse(fetchMock) {
+function stubQuotedNoResponse(fetchMock, decision = NO_RESPONSE_DECISION) {
   fetchMock
     .mockResolvedValueOnce(response([{ user_id: 'user-1' }]))
     .mockResolvedValueOnce(response([owner]))
@@ -93,7 +93,7 @@ function stubQuotedNoResponse(fetchMock) {
       recipient_phone: owner.phone,
       delivery_status: 'delivered',
     }]))
-    .mockResolvedValueOnce(response([NO_RESPONSE_DECISION]));
+    .mockResolvedValueOnce(response([decision]));
 }
 
 describe('owner WhatsApp reply to a no_response handoff', () => {
@@ -125,5 +125,30 @@ describe('owner WhatsApp reply to a no_response handoff', () => {
   it('the pointer text makes no claim that anything happened', () => {
     expect(NO_RESPONSE_WHATSAPP_REPLY_TEXT).toMatch(/haven't acted on that reply and nothing was sent/);
     expect(NO_RESPONSE_WHATSAPP_REPLY_TEXT).toMatch(/Ask again or Keep waiting/);
+  });
+
+  it('a SUPERSEDED handoff: never resolves or sends to staff; tells the owner the question no longer applies', async () => {
+    const fetchMock = vi.fn();
+    stubQuotedNoResponse(fetchMock, { ...NO_RESPONSE_DECISION, status: 'superseded' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleInboundOwnerMessage({ supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Ask again' }) });
+
+    expect(result).toMatchObject({ isOwner: true, handled: true, route: 'no_response_handoff' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    const sent = JSON.stringify(mocks.sendMetaMessage.mock.calls[0][0]);
+    expect(sent).toContain(owner.phone.replace('+', ''));
+    expect(sent).toContain('no longer applies');
+    expect(sent).not.toContain('Ask again or Keep waiting');
+    const rpcNames = mocks.callRpcSingle.mock.calls.map((c) => c[2]);
+    expect(rpcNames).not.toContain('answer_escalation_owner_decision');
+    expect(rpcNames).not.toContain('claim_escalation_answer_delivery');
+  });
+
+  it('the superseded text never claims a send, a completion, or an owner answer', () => {
+    expect(NO_RESPONSE_SUPERSEDED_REPLY_TEXT).toMatch(/nothing was sent/);
+    expect(NO_RESPONSE_SUPERSEDED_REPLY_TEXT).not.toMatch(/done|completed|confirmed|cancel/i);
   });
 });

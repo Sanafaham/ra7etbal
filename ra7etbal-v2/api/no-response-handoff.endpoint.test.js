@@ -54,6 +54,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   sendMetaMessageMock.mockClear();
+  Object.values(deliveryMocks).forEach((m) => m.mockClear());
 });
 
 describe('PATCH /api/task-confirm — no_response decision', () => {
@@ -93,6 +94,23 @@ describe('PATCH /api/task-confirm — no_response decision', () => {
     }));
   });
 
+  it.each(['ask_again', 'keep_waiting'])(
+    'a SUPERSEDED decision (real executor) answers 409 for %s: no RPC, no send, nothing written',
+    async (choice) => {
+      const actual = await vi.importActual('./_no-response-handoff.js');
+      execMock.mockImplementation(actual.executeNoResponseChoice);
+      const fetchMock = stubLookup({ ...NR_ROW, status: 'superseded' });
+      const res = createRes();
+      await handler(patchReq({ deepLinkToken: 'tok-nr', decision: choice }), res);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ reason: 'superseded' }));
+      // Only auth + token lookup were fetched: no answer RPC, no claim, no send.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sendMetaMessageMock).not.toHaveBeenCalled();
+      expect(deliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
+    },
+  );
+
   it('an invalid choice answers 400', async () => {
     stubLookup();
     execMock.mockResolvedValue({ kind: 'validation_error', message: 'Choose Ask again or Keep waiting.' });
@@ -122,23 +140,121 @@ describe('PATCH /api/task-confirm — no_response decision', () => {
   });
 });
 
+/**
+ * URL-routed fetch fake for notifyOwnerOfTaskReview. `claims` is the queue of
+ * rows claim_task_escalation_owner_decision returns, in call order.
+ */
+function notifyFetch({ claims, decisionStatus = 'open', statusReadOk = true }) {
+  const queue = [...claims];
+  return vi.fn(async (url) => {
+    const u = String(url);
+    if (u.includes('select=name,role,phone')) return jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]);
+    if (u.includes('/rest/v1/people')) return jsonResponse([{ id: 'person-1', name: 'Christopher' }]);
+    if (u.includes('claim_task_escalation_owner_decision')) return jsonResponse(queue.shift() ?? null);
+    if (u.includes('claim_task_review_owner_notification')) {
+      return jsonResponse({ claimed: true, claim_token: 'n-1', notification_status: 'sending' });
+    }
+    if (u.includes('fail_task_review_owner_notification')) return jsonResponse({});
+    if (u.includes('/rest/v1/staff_escalation_owner_decisions')) {
+      return statusReadOk ? jsonResponse([{ status: decisionStatus }]) : jsonResponse({ message: 'boom' }, 500);
+    }
+    return jsonResponse({});
+  });
+}
+const DEPS = (fetchMock) => ({ supabaseUrl: 'https://example.supabase.co', serviceKey: 'service-key', fetchImpl: fetchMock });
+const claimCalls = (fetchMock) =>
+  fetchMock.mock.calls.filter(([u]) => String(u).includes('claim_task_escalation_owner_decision'));
+
 describe('notifyOwnerOfTaskReview — one task-only slot per task', () => {
   it.each([
     ['uncertain_proof', 'no_response'],
     ['substitute_review', 'no_response'],
-    ['no_response', 'substitute_review'],
-  ])('a %s request never reuses an active %s row: fails loudly, sends nothing', async (requested, held) => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }]))
-      .mockResolvedValueOnce(jsonResponse({ ...NR_ROW, review_type: held, status: 'answered', owner_notified_at: 'x' }));
+  ])('a %s request that still gets a %s row after its one retry fails loudly and sends nothing', async (requested, held) => {
+    const held_row = { ...NR_ROW, review_type: held, status: 'answered', owner_notified_at: 'x' };
+    const fetchMock = notifyFetch({ claims: [held_row, held_row] });
     vi.stubGlobal('fetch', fetchMock);
     const result = await notifyOwnerOfTaskReview(
       { taskId: 'task-1', userId: 'user-1', reviewType: requested, taskDescription: 'x', assignedTo: 'Christopher' },
-      { supabaseUrl: 'https://example.supabase.co', serviceKey: 'service-key', fetchImpl: fetchMock },
+      DEPS(fetchMock),
     );
     expect(result).toMatchObject({ status: 'failed', reason: 'task_slot_held_by_other_review' });
+    expect(claimCalls(fetchMock)).toHaveLength(2);
     expect(sendMetaMessageMock).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes('claim_task_review_owner_notification'))).toBe(false);
+  });
+
+  it('a no_response request never retries and never reuses an active substitute_review row', async () => {
+    const fetchMock = notifyFetch({ claims: [{ ...NR_ROW, review_type: 'substitute_review', status: 'answered' }] });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: 'task-1', userId: 'user-1', reviewType: 'no_response', taskDescription: 'x', assignedTo: 'Christopher' },
+      DEPS(fetchMock),
+    );
+    expect(result).toMatchObject({ status: 'failed', reason: 'task_slot_held_by_other_review' });
+    expect(claimCalls(fetchMock)).toHaveLength(1);
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['uncertain_proof', 'substitute_review'])(
+    'insert-first race: a %s claim that got the sweep\'s just-committed no_response row retries once, for the SAME task, and the proof becomes current',
+    async (requested) => {
+      const proofRow = { ...NR_ROW, id: 'decision-proof', review_type: requested, status: 'open', deep_link_token: 'tok-proof' };
+      const fetchMock = notifyFetch({ claims: [{ ...NR_ROW, status: 'open' }, proofRow] });
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await notifyOwnerOfTaskReview(
+        { taskId: 'task-1', userId: 'user-1', reviewType: requested, taskDescription: 'x', assignedTo: 'Christopher' },
+        DEPS(fetchMock),
+      );
+      const calls = claimCalls(fetchMock).map(([, init]) => JSON.parse(init.body));
+      expect(calls).toHaveLength(2);
+      // Identity boundary: both claims are for the same task UUID and owner.
+      for (const body of calls) expect(body).toMatchObject({ p_task_id: 'task-1', p_user_id: 'user-1', p_review_type: requested });
+      expect(result.escalationId).toBe('decision-proof');
+      const leaseCall = fetchMock.mock.calls.find(([u]) => String(u).includes('claim_task_review_owner_notification'));
+      expect(JSON.parse(leaseCall[1].body)).toMatchObject({ p_id: 'decision-proof' });
+    },
+  );
+});
+
+describe('notifyOwnerOfTaskReview — no_response notification re-checks the decision before sending', () => {
+  it.each([
+    ['superseded', 'decision_superseded'],
+    ['answered', 'decision_answered'],
+  ])('decision became %s after the lease: nothing is sent, the lease is released as %s', async (status, reason) => {
+    const fetchMock = notifyFetch({ claims: [{ ...NR_ROW, owner_notified_at: null }], decisionStatus: status });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: 'task-1', userId: 'user-1', reviewType: 'no_response', taskDescription: 'x', assignedTo: 'Christopher' },
+      DEPS(fetchMock),
+    );
+    expect(result).toMatchObject({ status: 'failed', reason });
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(deliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
+    const failCall = fetchMock.mock.calls.find(([u]) => String(u).includes('fail_task_review_owner_notification'));
+    expect(JSON.parse(failCall[1].body)).toMatchObject({ p_id: 'decision-nr', p_claim_token: 'n-1', p_error: reason });
+  });
+
+  it('an unreadable decision fails closed: nothing is sent', async () => {
+    const fetchMock = notifyFetch({ claims: [{ ...NR_ROW, owner_notified_at: null }], statusReadOk: false });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: 'task-1', userId: 'user-1', reviewType: 'no_response', taskDescription: 'x', assignedTo: 'Christopher' },
+      DEPS(fetchMock),
+    );
+    expect(result).toMatchObject({ status: 'failed', reason: 'pre_send_state_unavailable' });
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('proof review notifications never do the no_response status read', async () => {
+    const proofRow = { ...NR_ROW, id: 'decision-proof', review_type: 'uncertain_proof' };
+    const fetchMock = notifyFetch({ claims: [proofRow] });
+    vi.stubGlobal('fetch', fetchMock);
+    await notifyOwnerOfTaskReview(
+      { taskId: 'task-1', userId: 'user-1', reviewType: 'uncertain_proof', taskDescription: 'x', assignedTo: 'Christopher' },
+      DEPS(fetchMock),
+    );
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/rest/v1/staff_escalation_owner_decisions?'))).toBe(false);
+    expect(claimCalls(fetchMock)).toHaveLength(1);
   });
 });
 
@@ -150,6 +266,7 @@ describe('notifyOwnerOfTaskReview — no_response owner message', () => {
       .mockResolvedValueOnce(jsonResponse(decision)) // claim_task_escalation_owner_decision
       .mockResolvedValueOnce(jsonResponse({ decision_id: 'decision-nr', claimed: true, claim_token: 'n-1', notification_status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ status: 'open' }])) // pre-send decision status re-read
       .mockResolvedValueOnce(jsonResponse(decision)); // complete notification lease
     vi.stubGlobal('fetch', fetchMock);
 

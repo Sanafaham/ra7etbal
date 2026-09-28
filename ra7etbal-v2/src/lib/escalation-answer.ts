@@ -85,8 +85,11 @@ export type NoResponseChoice = "ask_again" | "keep_waiting";
  *   sent_unconfirmed           — Meta accepted, our bookkeeping did not record it.
  *   in_progress                — a send for this decision is already underway.
  *   saved_unreachable          — choice saved; assignee not reachable, nothing sent.
- *   not_sent_no_longer_current — choice saved; the task finished or the assignee
- *                                replied first, so nothing was sent.
+ *   not_sent_no_longer_current — choice saved; the task finished, the assignee
+ *                                replied, or newer proof for this task arrived
+ *                                first, so nothing was sent.
+ *   sent_then_superseded       — the re-ask was accepted by WhatsApp, and newer
+ *                                proof for this task arrived around the same time.
  */
 export type NoResponseResultStatus =
   | "kept_waiting"
@@ -94,7 +97,8 @@ export type NoResponseResultStatus =
   | "sent_unconfirmed"
   | "in_progress"
   | "saved_unreachable"
-  | "not_sent_no_longer_current";
+  | "not_sent_no_longer_current"
+  | "sent_then_superseded";
 
 export interface NoResponseChoiceResult {
   success: boolean;

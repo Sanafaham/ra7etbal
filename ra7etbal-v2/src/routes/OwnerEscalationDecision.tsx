@@ -81,7 +81,7 @@ export interface OwnerEscalationDecisionViewProps {
 function statusNoticeKind(status: OwnerEscalationDetail["status"]): "info" | "success" | "error" {
   if (status === "delivered_to_staff") return "success";
   if (status === "failed") return "error";
-  return "info";
+  return "info"; // includes "superseded" (historical, non-actionable)
 }
 
 function statusNoticeText(status: OwnerEscalationDetail["status"], staffName: string): string {
@@ -95,6 +95,8 @@ function statusNoticeText(status: OwnerEscalationDetail["status"], staffName: st
       return `Your answer was saved, but ${staffName} hasn't been notified yet.`;
     case "delivered_to_staff":
       return "You already responded to this request.";
+    case "superseded":
+      return "Newer information replaced this request, so there is nothing to decide here.";
   }
 }
 
