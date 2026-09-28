@@ -89,6 +89,7 @@
         "api/_escalation-notify.js:resolveAssigneePersonId",
         "api/_no-response-handoff.js",
         "src/routes/TaskOnlyDecisionView.tsx",
+        "src/lib/escalation-answer.ts",
         "api/_staff-decision-message.js",
         "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
       ],
