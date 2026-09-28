@@ -67,6 +67,7 @@ function matches(row, key, expr) {
   if (expr === 'not.is.null') return v != null;
   if (expr.startsWith('gte.')) return v != null && Date.parse(v) >= Date.parse(decodeURIComponent(expr.slice(4)));
   if (expr.startsWith('lte.')) return v != null && Date.parse(v) <= Date.parse(decodeURIComponent(expr.slice(4)));
+  if (expr.startsWith('in.(')) return decodeURIComponent(expr.slice(4, -1)).split(',').includes(String(v));
   if (expr.startsWith('ilike.')) return String(v || '').toLowerCase() === decodeURIComponent(expr.slice(6)).toLowerCase();
   throw new Error(`unsupported filter ${key}=${expr}`);
 }
@@ -75,7 +76,7 @@ function applyQuery(rows, search) {
   const params = new URLSearchParams(search);
   let out = rows.slice();
   for (const [key, value] of params.entries()) {
-    if (['select', 'order', 'limit'].includes(key)) continue;
+    if (['select', 'order', 'limit', 'offset'].includes(key)) continue;
     if (key === 'or') {
       const inner = value.replace(/^\(|\)$/g, '').split(',');
       out = out.filter((row) => inner.some((clause) => {
@@ -87,7 +88,8 @@ function applyQuery(rows, search) {
     out = out.filter((row) => matches(row, key, value));
   }
   const limit = Number(params.get('limit') || 1000);
-  return out.slice(0, limit);
+  const offset = Number(params.get('offset') || 0);
+  return out.slice(offset, offset + limit);
 }
 
 const ACTIVE = (d) => !['delivered_to_staff', 'failed'].includes(d.status);
@@ -382,6 +384,24 @@ describe('sweep stage', () => {
     expect(sent).toHaveLength(1);
   });
 
+  it('handed-off tasks that stay pending never starve a newer stall (41770f40 shape)', async () => {
+    // 130 older post-cutover tasks already handed off (kept waiting) — more
+    // than one scan page and far more than one evaluation window.
+    for (let i = 0; i < 130; i += 1) {
+      const t = stalledTask({ id: `old-${String(i).padStart(3, '0')}`, escalated_at: new Date(DEPLOY_AT.getTime() + 60_000 + i).toISOString() });
+      db.tasks.push(t);
+      db.staff_escalation_owner_decisions.push({
+        id: `d-${i}`, user_id: OWNER, task_id: t.id, staff_message_id: null, review_type: 'no_response',
+        status: 'answered', owner_reply_text: 'Keep waiting', owner_notification_status: 'sent', owner_notified_at: 'x',
+      });
+    }
+    db.tasks.push(stalledTask({ id: 'newest', escalated_at: new Date(DEPLOY_AT.getTime() + HOUR).toISOString() }));
+    const { notify, sent } = makeNotify();
+    const stats = await runNoResponseHandoffs({ supabaseUrl: URL_BASE, serviceKey: KEY, now: NOW_AFTER_4H, env: ENV_ON, fetchImpl, notify });
+    expect(sent).toEqual(['newest']);
+    expect(stats).toMatchObject({ scanned: 131, alreadyHandedOff: 130, checked: 1, notified: 1, saturated: false });
+  });
+
   it('the sweep never messages staff and never writes to tasks', async () => {
     db.tasks = [stalledTask()];
     const { notify } = makeNotify();
@@ -616,6 +636,15 @@ describe('ASK AGAIN', () => {
     const sendImpl = okSend();
     const out = await exec(row, 'ask_again', { sendImpl });
     expect(out.status).toBe('saved_unreachable');
+    expect(sendImpl).not.toHaveBeenCalled();
+    expect(db.staff_escalation_owner_decisions[0].status).toBe('failed');
+  });
+
+  it('no delivery audit row means no send (fail closed, retryable)', async () => {
+    const { row } = freshTaskWithDecision();
+    deliveryMocks.beginWhatsappDelivery.mockResolvedValueOnce(null);
+    const sendImpl = okSend();
+    expect((await exec(row, 'ask_again', { sendImpl })).kind).toBe('send_error');
     expect(sendImpl).not.toHaveBeenCalled();
     expect(db.staff_escalation_owner_decisions[0].status).toBe('failed');
   });

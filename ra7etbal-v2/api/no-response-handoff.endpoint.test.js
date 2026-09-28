@@ -122,6 +122,26 @@ describe('PATCH /api/task-confirm — no_response decision', () => {
   });
 });
 
+describe('notifyOwnerOfTaskReview — one task-only slot per task', () => {
+  it.each([
+    ['uncertain_proof', 'no_response'],
+    ['substitute_review', 'no_response'],
+    ['no_response', 'substitute_review'],
+  ])('a %s request never reuses an active %s row: fails loudly, sends nothing', async (requested, held) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...NR_ROW, review_type: held, status: 'answered', owner_notified_at: 'x' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: 'task-1', userId: 'user-1', reviewType: requested, taskDescription: 'x', assignedTo: 'Christopher' },
+      { supabaseUrl: 'https://example.supabase.co', serviceKey: 'service-key', fetchImpl: fetchMock },
+    );
+    expect(result).toMatchObject({ status: 'failed', reason: 'task_slot_held_by_other_review' });
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('claim_task_review_owner_notification'))).toBe(false);
+  });
+});
+
 describe('notifyOwnerOfTaskReview — no_response owner message', () => {
   it('claims a no_response decision and sends the truthful handoff with its decision link', async () => {
     const decision = { ...NR_ROW, owner_notified_at: null };

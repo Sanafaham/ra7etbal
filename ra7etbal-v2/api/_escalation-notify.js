@@ -426,6 +426,18 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     return { attempted: false, status: 'failed', reason: 'no_decision_row' };
   }
 
+  // Slice 1: the task-only-open unique index allows ONE active task-only
+  // decision per task, and the claim RPC returns it whatever its type. Never
+  // let a no_response handoff swallow a proof review (reported as "already
+  // sent") or carry another review's text — fail loudly instead.
+  if (decision.review_type && decision.review_type !== reviewType &&
+      (decision.review_type === NO_RESPONSE_REVIEW_TYPE || reviewType === NO_RESPONSE_REVIEW_TYPE)) {
+    console.error('[escalation-notify] task-only decision slot held by a different review type', {
+      taskId, requestedReviewType: reviewType, heldReviewType: decision.review_type, decisionId: decision.id,
+    });
+    return { attempted: false, status: 'failed', reason: 'task_slot_held_by_other_review', escalationId: decision.id };
+  }
+
   let notificationClaim;
   try {
     notificationClaim = await rpc(

@@ -51,7 +51,11 @@ export const NO_RESPONSE_REVIEW_TYPE = 'no_response';
 /** OWNER PRODUCT DECISION (2026-09-27) — see file header. */
 export const NO_RESPONSE_HANDOFF_DELAY_MS = 4 * 60 * 60 * 1000;
 export const NO_RESPONSE_CUTOVER_ENV = 'NO_RESPONSE_HANDOFF_CUTOVER_AT';
+/** Max tasks whose reply evidence is read (and may be notified) per run. */
 export const NO_RESPONSE_MAX_TASKS_PER_RUN = 20;
+/** Candidate scan is paged so already-handled tasks can never starve newer ones. */
+export const NO_RESPONSE_SCAN_PAGE_SIZE = 100;
+export const NO_RESPONSE_MAX_SCAN_ROWS = 1000;
 
 export const NO_RESPONSE_CHOICES = Object.freeze({
   ask_again: 'Ask again',
@@ -152,13 +156,17 @@ export function evaluateNoResponseHandoff({ task, evidence, cutover, now }) {
 
   const decisions = Array.isArray(evidence?.decisions) ? evidence.decisions : [];
   if (decisions.length === 0) return { eligible: true, reason: null, retryNotification: false };
-  const retryable = decisions.length === 1 &&
+  return isRetryableNotification(decisions)
+    ? { eligible: true, reason: null, retryNotification: true }
+    : { eligible: false, reason: 'no_response_handoff_exists' };
+}
+
+/** One open no_response decision whose owner notification never went out. */
+export function isRetryableNotification(decisions) {
+  return decisions.length === 1 &&
     decisions[0].status === 'open' &&
     (decisions[0].owner_notification_status == null || decisions[0].owner_notification_status === 'failed') &&
     !decisions[0].owner_notified_at;
-  return retryable
-    ? { eligible: true, reason: null, retryNotification: true }
-    : { eligible: false, reason: 'no_response_handoff_exists' };
 }
 
 // ── Postgres reads (service role) ────────────────────────────────────────────
@@ -193,19 +201,24 @@ export async function fetchNoResponseTask({ supabaseUrl, serviceKey, fetchImpl =
  * caller fails closed (no handoff, no send) instead of treating "could not
  * read replies" as "no replies".
  */
-export async function fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl = fetch, task }) {
+export async function fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl = fetch, task, decisions: prefetchedDecisions }) {
   const userQ = `user_id=eq.${encodeURIComponent(task.user_id)}`;
+  const personPath = task.assigned_person_id
+    ? `people?id=eq.${encodeURIComponent(task.assigned_person_id)}&${userQ}&select=id,name,phone,whatsapp_opted_in&limit=2`
+    : task.assigned_to
+      ? `people?${userQ}&name=ilike.${encodeURIComponent(String(task.assigned_to).trim())}&select=id,name,phone,whatsapp_opted_in&limit=2`
+      : null;
 
-  let person = null;
-  if (task.assigned_person_id) {
-    const rows = await restGet(fetchImpl, supabaseUrl, serviceKey,
-      `people?id=eq.${encodeURIComponent(task.assigned_person_id)}&${userQ}&select=id,name,phone,whatsapp_opted_in&limit=2`);
-    person = rows.length === 1 ? rows[0] : null;
-  } else if (task.assigned_to) {
-    const rows = await restGet(fetchImpl, supabaseUrl, serviceKey,
-      `people?${userQ}&name=ilike.${encodeURIComponent(String(task.assigned_to).trim())}&select=id,name,phone,whatsapp_opted_in&limit=2`);
-    person = rows.length === 1 ? rows[0] : null;
-  }
+  // Independent reads run in parallel; any failure rejects (fail closed).
+  const [personRows, decisions] = await Promise.all([
+    personPath ? restGet(fetchImpl, supabaseUrl, serviceKey, personPath) : Promise.resolve([]),
+    Array.isArray(prefetchedDecisions)
+      ? Promise.resolve(prefetchedDecisions)
+      : restGet(fetchImpl, supabaseUrl, serviceKey,
+        `staff_escalation_owner_decisions?task_id=eq.${encodeURIComponent(task.id)}&${userQ}` +
+          `&review_type=eq.${NO_RESPONSE_REVIEW_TYPE}&select=id,task_id,status,owner_notification_status,owner_notified_at&limit=5`),
+  ]);
+  const person = personRows.length === 1 ? personRows[0] : null;
 
   let staffReplyFound = false;
   let contactReplyFound = false;
@@ -213,17 +226,15 @@ export async function fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchIm
     const since = encodeURIComponent(task.created_at);
     const staffOr = [`person_id.eq.${person.id}`];
     if (person.phone) staffOr.push(`staff_phone.eq.${encodeURIComponent(person.phone)}`);
-    const staffRows = await restGet(fetchImpl, supabaseUrl, serviceKey,
-      `staff_messages?${userQ}&received_at=gte.${since}&or=(${staffOr.join(',')})&select=id&limit=1`);
+    const [staffRows, contactRows] = await Promise.all([
+      restGet(fetchImpl, supabaseUrl, serviceKey,
+        `staff_messages?${userQ}&received_at=gte.${since}&or=(${staffOr.join(',')})&select=id&limit=1`),
+      restGet(fetchImpl, supabaseUrl, serviceKey,
+        `personal_contact_replies?${userQ}&person_id=eq.${encodeURIComponent(person.id)}&created_at=gte.${since}&select=id&limit=1`),
+    ]);
     staffReplyFound = staffRows.length > 0;
-    const contactRows = await restGet(fetchImpl, supabaseUrl, serviceKey,
-      `personal_contact_replies?${userQ}&person_id=eq.${encodeURIComponent(person.id)}&created_at=gte.${since}&select=id&limit=1`);
     contactReplyFound = contactRows.length > 0;
   }
-
-  const decisions = await restGet(fetchImpl, supabaseUrl, serviceKey,
-    `staff_escalation_owner_decisions?task_id=eq.${encodeURIComponent(task.id)}&${userQ}` +
-      `&review_type=eq.${NO_RESPONSE_REVIEW_TYPE}&select=id,status,owner_notification_status,owner_notified_at&limit=5`);
 
   return { person, staffReplyFound, contactReplyFound, decisions };
 }
@@ -240,18 +251,53 @@ export async function runNoResponseHandoffs({ supabaseUrl, serviceKey, now = new
   if (!cutover) return { enabled: false, checked: 0, notified: 0 };
 
   const latestEscalation = new Date(now.getTime() - NO_RESPONSE_HANDOFF_DELAY_MS).toISOString();
-  const tasks = await restGet(fetchImpl, supabaseUrl, serviceKey,
-    `tasks?status=eq.pending&archived_at=is.null&dismissed_at=is.null&confirmed_at=is.null` +
-      `&assigned_to=not.is.null&followup_sent_at=not.is.null` +
-      `&escalated_at=gte.${encodeURIComponent(cutover.toISOString())}` +
-      `&escalated_at=lte.${encodeURIComponent(latestEscalation)}` +
-      `&select=${NO_RESPONSE_TASK_COLUMNS}&order=escalated_at.asc&limit=${NO_RESPONSE_MAX_TASKS_PER_RUN}`);
+  const stats = {
+    enabled: true, cutover: cutover.toISOString(), scanned: 0, alreadyHandedOff: 0,
+    checked: 0, notified: 0, saturated: false, skipped: [],
+  };
 
-  const stats = { enabled: true, cutover: cutover.toISOString(), checked: tasks.length, notified: 0, skipped: [] };
-  for (const task of tasks) {
+  // Page through ALL post-cutover candidates. Tasks that already have a
+  // no_response decision stay pending (Keep waiting, delivered Ask again), so
+  // a single oldest-first window would fill with them and starve newer
+  // stalls — the 41770f40 shape. They are dropped per page with one batched
+  // decision read before any per-task evidence is fetched.
+  const candidates = [];
+  for (let offset = 0; ; offset += NO_RESPONSE_SCAN_PAGE_SIZE) {
+    if (offset >= NO_RESPONSE_MAX_SCAN_ROWS) {
+      stats.saturated = true;
+      console.error('[no-response] candidate scan saturated — newer stalls may be starved', { scanned: stats.scanned });
+      break;
+    }
+    const page = await restGet(fetchImpl, supabaseUrl, serviceKey,
+      `tasks?status=eq.pending&archived_at=is.null&dismissed_at=is.null&confirmed_at=is.null` +
+        `&assigned_to=not.is.null&followup_sent_at=not.is.null` +
+        `&escalated_at=gte.${encodeURIComponent(cutover.toISOString())}` +
+        `&escalated_at=lte.${encodeURIComponent(latestEscalation)}` +
+        `&select=${NO_RESPONSE_TASK_COLUMNS}&order=escalated_at.asc,id.asc` +
+        `&limit=${NO_RESPONSE_SCAN_PAGE_SIZE}&offset=${offset}`);
+    stats.scanned += page.length;
+    if (page.length > 0) {
+      const decisionRows = await restGet(fetchImpl, supabaseUrl, serviceKey,
+        `staff_escalation_owner_decisions?task_id=in.(${page.map((t) => encodeURIComponent(t.id)).join(',')})` +
+          `&review_type=eq.${NO_RESPONSE_REVIEW_TYPE}` +
+          `&select=id,task_id,status,owner_notification_status,owner_notified_at`);
+      for (const task of page) {
+        const decisions = decisionRows.filter((d) => d.task_id === task.id);
+        if (decisions.length > 0 && !isRetryableNotification(decisions)) {
+          stats.alreadyHandedOff += 1;
+          continue;
+        }
+        candidates.push({ task, decisions });
+      }
+    }
+    if (page.length < NO_RESPONSE_SCAN_PAGE_SIZE) break;
+  }
+
+  for (const { task, decisions } of candidates.slice(0, NO_RESPONSE_MAX_TASKS_PER_RUN)) {
+    stats.checked += 1;
     let evidence;
     try {
-      evidence = await fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl, task });
+      evidence = await fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl, task, decisions });
     } catch (err) {
       stats.skipped.push({ taskId: task.id, reason: 'evidence_read_failed' });
       console.error('[no-response] evidence read failed (fail closed)', { taskId: task.id, error: err?.message });
@@ -271,8 +317,15 @@ export async function runNoResponseHandoffs({ supabaseUrl, serviceKey, now = new
       reviewNote: null,
       proofImagePath: null,
     }).catch((err) => ({ status: 'failed', reason: err?.message || String(err) }));
-    console.log('[no-response] owner handoff', { taskId: task.id, status: result?.status, reason: result?.reason || null });
+    console.log('[no-response] owner handoff', {
+      taskId: task.id, retryNotification: verdict.retryNotification, status: result?.status, reason: result?.reason || null,
+    });
     if (result?.status === 'sent') stats.notified += 1;
+  }
+  if (candidates.length > NO_RESPONSE_MAX_TASKS_PER_RUN) {
+    console.warn('[no-response] more candidates than one run evaluates; the rest wait for the next run', {
+      candidates: candidates.length, perRun: NO_RESPONSE_MAX_TASKS_PER_RUN,
+    });
   }
   return stats;
 }
@@ -424,6 +477,11 @@ export async function executeNoResponseChoice({
     supabaseUrl, serviceKey, taskId: state.task.id, personId: person.id, sourceType: 'followup',
     recipientPhone: normalizedPhone, recipientName: state.task.assigned_to, templateName, metadata: deliveryMetadata,
   }).catch(() => null);
+  if (!deliveryId) {
+    // Same rule as notifyOwnerOfTaskReview: never send without an audit row.
+    await fail('delivery_record_unavailable');
+    return { kind: 'send_error' };
+  }
 
   let sendResult;
   try {
@@ -433,24 +491,18 @@ export async function executeNoResponseChoice({
       payload: buildDirectMessagePayload({ to: normalizedPhone, ownerName: 'Carson', message, templateName, templateLanguage }),
     });
   } catch (err) {
-    if (deliveryId) {
-      await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'network', reason: err?.message || String(err), templateName }).catch(() => {});
-    }
+    await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'network', reason: err?.message || String(err), templateName }).catch(() => {});
     await fail(err?.message || 'network_error');
     return { kind: 'send_error' };
   }
   if (!sendResult?.ok) {
     const failure = getMetaFailure(sendResult);
-    if (deliveryId) {
-      await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName }).catch(() => {});
-    }
+    await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName }).catch(() => {});
     await fail(failure.reason || 'meta_rejected');
     return { kind: 'send_error' };
   }
 
-  if (deliveryId) {
-    await markWhatsappDeliveryAccepted({ supabaseUrl, serviceKey, deliveryId, metaMessageId: sendResult.messageId, templateName, metadata: deliveryMetadata }).catch(() => {});
-  }
+  await markWhatsappDeliveryAccepted({ supabaseUrl, serviceKey, deliveryId, metaMessageId: sendResult.messageId, templateName, metadata: deliveryMetadata }).catch(() => {});
   const complete = await rpc(fetchImpl, supabaseUrl, serviceKey, 'complete_escalation_answer_delivery', {
     p_id: row.id, p_user_id: userId, p_claim_token: claim.claim_token, p_transport_message_id: sendResult.messageId,
   });

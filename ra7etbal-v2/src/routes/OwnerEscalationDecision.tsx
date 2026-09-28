@@ -397,8 +397,11 @@ export default function OwnerEscalationDecision({ token }: OwnerEscalationDecisi
     setTaskOnlyPhase("idle");
     if (!outcome.success) {
       setTaskOnlyError(outcome.error || "Could not save your choice. Please try again.");
-      // The server found the task finished or replied to — reload the truth.
-      if (outcome.noLongerCurrent) setReloadKey((k) => k + 1);
+      // Any failure may have changed server state (e.g. "Ask again" saved but
+      // the send failed → status 'failed'). Reload the truth so stale
+      // Ask again / Keep waiting buttons can never be offered again; the
+      // server always executes the first saved answer.
+      setReloadKey((k) => k + 1);
       return;
     }
     setTaskOnlyResult(outcome.status ?? null);
