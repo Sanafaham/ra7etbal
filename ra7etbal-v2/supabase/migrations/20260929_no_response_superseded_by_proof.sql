@@ -1,4 +1,5 @@
--- PROPOSAL ONLY — NOT APPLIED. Requires owner authorization (schema change).
+-- Owner-authorized 2026-09-28 ("AUTHORIZED — APPLY THE SUPERSEDED DATABASE
+-- CORRECTION AND COMPLETE OPTION A"). Identity boundary: the task UUID only.
 --
 -- Option A: newer authoritative same-task proof supersedes an older
 -- no_response silence handoff, without deleting or faking anything.

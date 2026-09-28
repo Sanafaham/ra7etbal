@@ -92,12 +92,24 @@ function applyQuery(rows, search) {
   return out.slice(offset, offset + limit);
 }
 
-const ACTIVE = (d) => !['delivered_to_staff', 'failed'].includes(d.status);
+// Mirrors 20260929: superseded rows no longer occupy the one-open slot.
+const ACTIVE = (d) => !['delivered_to_staff', 'failed', 'superseded'].includes(d.status);
+const PROOF_TYPES = ['uncertain_proof', 'substitute_review', 'correction_limit'];
 
 function rpc(db, name, args) {
   db.rpcCalls.push({ name, args });
   const decisions = db.staff_escalation_owner_decisions;
   if (name === 'claim_task_escalation_owner_decision') {
+    // Mirrors 20260929: a proof claim for the SAME task supersedes an active
+    // no_response row first (identity = task_id + user_id only).
+    if (PROOF_TYPES.includes(args.p_review_type)) {
+      for (const d of decisions) {
+        if (d.task_id === args.p_task_id && d.user_id === args.p_user_id && !d.staff_message_id &&
+            d.review_type === 'no_response' && ['open', 'answered', 'delivering'].includes(d.status)) {
+          d.status = 'superseded';
+        }
+      }
+    }
     const existing = decisions.find((d) => d.task_id === args.p_task_id && !d.staff_message_id && ACTIVE(d));
     if (existing) return existing;
     const row = {
@@ -133,14 +145,14 @@ function rpc(db, name, args) {
   }
   if (name === 'complete_escalation_answer_delivery') {
     const row = decisions.find((d) => d.id === args.p_id);
-    if (row.lease !== args.p_claim_token) return { __error: 'lease_lost' };
+    if (row.status !== 'delivering' || row.lease !== args.p_claim_token) return { __error: 'stale_delivery_claim' };
     row.status = 'delivered_to_staff';
     row.delivery_transport_message_id = args.p_transport_message_id;
     return { ...row };
   }
   if (name === 'fail_escalation_answer_delivery') {
     const row = decisions.find((d) => d.id === args.p_id);
-    if (row.lease === args.p_claim_token) row.status = 'failed';
+    if (row.status === 'delivering' && row.lease === args.p_claim_token) row.status = 'failed';
     return { ...row };
   }
   throw new Error(`unexpected rpc ${name}`);
@@ -734,5 +746,131 @@ describe('migration scope', () => {
     expect(body).not.toMatch(/'staff_escalation', 'no_response'/);
     expect(body).not.toMatch(/'no_response'::text/);
     expect(body).not.toMatch(/DELETE FROM/i);
+  });
+});
+
+// ── Option A: newer same-task proof supersedes the silence handoff ─────────
+
+describe('supersession by same-task proof (Option A)', () => {
+  const okSend = () => vi.fn(async () => ({ ok: true, messageId: 'wamid.reask' }));
+  const proofClaim = (taskId) => rpc(db, 'claim_task_escalation_owner_decision', {
+    p_task_id: taskId, p_user_id: OWNER, p_review_type: 'uncertain_proof',
+  });
+
+  it('1/5/6/7. same-task proof supersedes the open handoff, keeps it, and becomes the one current review', () => {
+    const { row } = freshTaskWithDecision();
+    const proof = proofClaim('task-fresh');
+    const rows = db.staff_escalation_owner_decisions;
+    expect(rows).toHaveLength(2);
+    expect(rows.find((d) => d.id === row.id)).toMatchObject({ review_type: 'no_response', status: 'superseded', owner_reply_text: null });
+    expect(rows.filter((d) => d.task_id === 'task-fresh' && ACTIVE(d))).toEqual([proof]);
+    expect(proofClaim('task-fresh').id).toBe(proof.id); // 8. replay: no duplicate
+    expect(db.staff_escalation_owner_decisions).toHaveLength(2);
+  });
+
+  it('3. proof for a DIFFERENT task of the same person never supersedes', () => {
+    const { row } = freshTaskWithDecision();
+    db.tasks.push(stalledTask({ id: 'task-other' }));
+    proofClaim('task-other');
+    expect(db.staff_escalation_owner_decisions.find((d) => d.id === row.id).status).toBe('open');
+  });
+
+  it('4. unrelated staff evidence (a staff message from the same person) never supersedes', () => {
+    const { row } = freshTaskWithDecision();
+    db.staff_messages.push({ id: 'sm-x', user_id: OWNER, person_id: 'person-chris', received_at: NOW_AFTER_4H.toISOString() });
+    rpc(db, 'claim_task_escalation_owner_decision', { p_task_id: 'task-fresh', p_user_id: OWNER, p_review_type: 'staff_escalation' });
+    expect(db.staff_escalation_owner_decisions.find((d) => d.id === row.id).status).toBe('open');
+  });
+
+  it('11/12. a superseded deep link can neither Ask again nor Keep waiting — nothing written or sent', async () => {
+    const { row } = freshTaskWithDecision();
+    proofClaim('task-fresh');
+    const superseded = db.staff_escalation_owner_decisions.find((d) => d.id === row.id);
+    db.rpcCalls = [];
+    const sendImpl = okSend();
+    for (const choice of ['ask_again', 'keep_waiting', undefined]) {
+      expect(await exec(superseded, choice, { sendImpl })).toEqual({ kind: 'not_current', reason: 'superseded' });
+    }
+    expect(db.rpcCalls).toHaveLength(0);
+    expect(sendImpl).not.toHaveBeenCalled();
+    expect(superseded.status).toBe('superseded');
+  });
+
+  it('15. owner answers while proof lands first: the stale answer is refused as not current', async () => {
+    const { row } = freshTaskWithDecision();
+    const racing = vi.fn(async (url, init) => {
+      if (String(url).includes('answer_escalation_owner_decision')) proofClaim('task-fresh');
+      return fetchImpl(url, init);
+    });
+    const out = await executeNoResponseChoice({
+      supabaseUrl: URL_BASE, serviceKey: KEY, userId: OWNER, decisionRow: { ...row }, choice: 'keep_waiting',
+      fetchImpl: racing, env: {},
+    });
+    expect(out).toEqual({ kind: 'not_current', reason: 'superseded' });
+    const rows = db.staff_escalation_owner_decisions.filter((d) => d.task_id === 'task-fresh');
+    expect(rows.filter(ACTIVE)).toHaveLength(1);
+    expect(rows.find((d) => d.id === row.id).owner_reply_text).toBeNull();
+  });
+
+  it('13. proof wins after the lease but before the external send → zero staff re-ask', async () => {
+    const { row } = freshTaskWithDecision();
+    const sendImpl = okSend();
+    const racing = vi.fn(async (url, init) => {
+      const res = await fetchImpl(url, init);
+      if (String(url).includes('claim_escalation_answer_delivery')) proofClaim('task-fresh');
+      return res;
+    });
+    const out = await executeNoResponseChoice({
+      supabaseUrl: URL_BASE, serviceKey: KEY, userId: OWNER, decisionRow: { ...row }, choice: 'ask_again',
+      fetchImpl: racing, sendImpl, env: { WHATSAPP_ACCESS_TOKEN: 't', WHATSAPP_PHONE_NUMBER_ID: 'pn' },
+    });
+    expect(out).toMatchObject({ kind: 'success', status: 'not_sent_no_longer_current' });
+    expect(sendImpl).not.toHaveBeenCalled();
+    expect(deliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
+    expect(db.staff_escalation_owner_decisions.find((d) => d.id === row.id).status).toBe('superseded');
+  });
+
+  it('14. send accepted, then proof wins → send reported as sent (not prevented), evidence kept, no second send', async () => {
+    const { row } = freshTaskWithDecision();
+    const sendImpl = vi.fn(async () => {
+      proofClaim('task-fresh'); // proof lands right after Meta accepted
+      return { ok: true, messageId: 'wamid.accepted' };
+    });
+    const out = await exec(row, 'ask_again', { sendImpl });
+    expect(out).toMatchObject({ kind: 'success', status: 'sent_then_superseded', transportMessageId: 'wamid.accepted' });
+    expect(sendImpl).toHaveBeenCalledTimes(1);
+    expect(deliveryMocks.markWhatsappDeliveryAccepted).toHaveBeenCalledWith(expect.objectContaining({ metaMessageId: 'wamid.accepted' }));
+    const stored = db.staff_escalation_owner_decisions.find((d) => d.id === row.id);
+    expect(stored).toMatchObject({ status: 'superseded', owner_reply_text: 'Ask again' });
+    // No retry path can send again.
+    const again = await exec(stored, 'ask_again', { sendImpl });
+    expect(again).toEqual({ kind: 'not_current', reason: 'superseded' });
+    expect(sendImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('10. a later sweep never recreates a handoff for a task whose handoff was superseded', () => {
+    const task = stalledTask();
+    const v = evaluateNoResponseHandoff({
+      task, cutover: DEPLOY_AT, now: NOW_AFTER_4H,
+      evidence: { person: person(), staffReplyFound: false, contactReplyFound: false,
+        decisions: [{ status: 'superseded', owner_notification_status: 'sent', owner_notified_at: 'x' }] },
+    });
+    expect(v).toEqual({ eligible: false, reason: 'no_response_handoff_exists' });
+  });
+
+  it('20. Keep waiting without any proof is unchanged', async () => {
+    const { row } = freshTaskWithDecision();
+    expect(await exec(row, 'keep_waiting')).toEqual({ kind: 'success', status: 'kept_waiting', choice: 'keep_waiting' });
+    expect(db.staff_escalation_owner_decisions[0].status).toBe('answered');
+  });
+
+  it('migration: supersession is scoped to proof types, same task and same owner', () => {
+    const sql = readFileSync(join(process.cwd(), 'supabase/migrations/20260929_no_response_superseded_by_proof.sql'), 'utf8');
+    const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+    expect(code).toMatch(/IF p_review_type IN \('uncertain_proof', 'substitute_review', 'correction_limit'\) THEN/);
+    expect(code).toMatch(/WHERE task_id = p_task_id\s+AND user_id = p_user_id\s+AND staff_message_id IS NULL\s+AND review_type = 'no_response'/);
+    expect(code).not.toMatch(/person_id\s*=|staff_phone|received_at/);
+    expect(code).not.toMatch(/DELETE FROM/i);
+    expect(code.match(/'superseded'/g).length).toBeGreaterThanOrEqual(5);
   });
 });

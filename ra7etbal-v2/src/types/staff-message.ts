@@ -58,7 +58,14 @@ export type OwnerEscalationDecisionStatus =
   | "answered"
   | "delivering"
   | "delivered_to_staff"
-  | "failed";
+  | "failed"
+  /**
+   * Slice 1 Option A: a task-only no_response handoff that newer
+   * authoritative evidence for the SAME task (proof submitted through that
+   * task's own link) replaced. Historical only — never actionable, never
+   * delivered, never failed, never answered by this transition.
+   */
+  | "superseded";
 
 /**
  * Phase C — the read-only detail shown on the secure owner-decision page

@@ -1,4 +1,4 @@
--- ROLLBACK of 20260929_no_response_superseded_by_proof.sql (PROPOSAL ONLY).
+-- ROLLBACK of 20260929_no_response_superseded_by_proof.sql
 -- Restores the pre-change CHECK, index and RPC exactly. Refuses to run while
 -- any 'superseded' row exists: re-activating a superseded silence row could
 -- collide with the proof review that replaced it. That is an owner decision.

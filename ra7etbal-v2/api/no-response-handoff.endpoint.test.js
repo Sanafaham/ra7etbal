@@ -93,6 +93,23 @@ describe('PATCH /api/task-confirm — no_response decision', () => {
     }));
   });
 
+  it.each(['ask_again', 'keep_waiting'])(
+    'a SUPERSEDED decision (real executor) answers 409 for %s: no RPC, no send, nothing written',
+    async (choice) => {
+      const actual = await vi.importActual('./_no-response-handoff.js');
+      execMock.mockImplementation(actual.executeNoResponseChoice);
+      const fetchMock = stubLookup({ ...NR_ROW, status: 'superseded' });
+      const res = createRes();
+      await handler(patchReq({ deepLinkToken: 'tok-nr', decision: choice }), res);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ reason: 'superseded' }));
+      // Only auth + token lookup were fetched: no answer RPC, no claim, no send.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sendMetaMessageMock).not.toHaveBeenCalled();
+      expect(deliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
+    },
+  );
+
   it('an invalid choice answers 400', async () => {
     stubLookup();
     execMock.mockResolvedValue({ kind: 'validation_error', message: 'Choose Ask again or Keep waiting.' });

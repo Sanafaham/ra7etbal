@@ -140,3 +140,35 @@ describe("12. other task-only review types are read-only here", () => {
     expect(html).not.toMatch(/Ask again|Keep waiting|Approve|Reject/);
   });
 });
+
+describe("Option A — a superseded no_response decision is history, never actionable", () => {
+  it.each([null, "ask_again", "keep_waiting"] as const)(
+    "superseded (earlier choice %s): no Ask again / Keep waiting / retry buttons",
+    (ownerChoice) => {
+      const d = detail({ status: "superseded", alreadyAnswered: ownerChoice !== null, ownerChoice });
+      const html = render({ detail: d });
+      expect(buttons(html)).toEqual([]);
+      expect(html).toContain("no longer applies");
+    },
+  );
+
+  it("superseded text preserves the earlier choice without claiming a send or a prevention", () => {
+    const t = answeredText(detail({ status: "superseded", ownerChoice: "ask_again" }));
+    expect(t).toMatch(/Newer information arrived for this task/);
+    expect(t).toMatch(/Your earlier choice \(Ask again\) is kept in history/);
+    expect(t).not.toMatch(/sent|prevented|done|completed|cancel/i);
+  });
+
+  it("superseded with a failed-looking history still offers no retry", () => {
+    const html = render({ detail: detail({ status: "superseded", ownerChoice: "ask_again", alreadyAnswered: true }) });
+    expect(html).not.toContain("Try sending again");
+  });
+
+  it("sent_then_superseded is truthful: the message was sent, the proof is now current", () => {
+    const t = resultText("sent_then_superseded", "Christopher");
+    expect(t).toMatch(/message to Christopher was sent/);
+    expect(t).toMatch(/proof is now the current review/);
+    expect(t).not.toMatch(/prevented|not sent|Nothing was sent/i);
+  });
+});
+

@@ -1,0 +1,148 @@
+name: no-response-supersession-verification
+
+# Slice 1 Option A — real-PostgreSQL proof that newer same-task proof
+# supersedes an older no_response silence handoff
+# (20260929_no_response_superseded_by_proof.sql), including a genuine
+# two-connection race, the rollback guard, rollback, and re-apply.
+#
+# Replays the exact, real, unmodified migrations that build the CURRENT
+# staff_escalation_owner_decisions schema and RPCs (same order as
+# carson-tier1-db-contracts.yml, plus the owner-reply, lease and 2026-09
+# migrations that job does not include), then applies the change under test.
+# Runs on every PR to main and skips its expensive steps when nothing in
+# this surface changed, so it always reports a real status.
+"on":
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: no-response-supersession-verification
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          PATTERN='^ra7etbal-v2/supabase/migrations/(2026072[0-8]_.*|20260801_.*|20260806_.*|20260812_.*|20260826_.*|2026092[789]_.*|verification/no_response_supersession_verification\.sql|verification/00_bootstrap_minimal_auth\.sql|verification/carson_tier1_bootstrap_extension\.sql)$|^\.github/workflows/no-response-supersession-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No relevant path changed — skipping the Postgres steps (genuine success)."
+          fi
+
+      - name: Wait for Postgres
+        if: steps.relevance.outputs.relevant == 'true'
+        run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Replay the current decisions schema (real, unmodified migrations)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          set -e
+          for f in \
+            verification/00_bootstrap_minimal_auth.sql \
+            20260613_routines.sql \
+            20260620_agent_automation_layer.sql \
+            20260622_whatsapp_health_state.sql \
+            verification/carson_tier1_bootstrap_extension.sql \
+            20260622_whatsapp_deliveries.sql \
+            20260710_quality_substitute_review.sql \
+            20260712_approve_alternative_message_first.sql \
+            20260720_create_staff_messages.sql \
+            20260724_staff_message_response_delivery.sql \
+            20260726_staff_escalation_owner_decisions.sql \
+            20260727_phase_d_escalation_answer_delivery_message_id.sql \
+            20260727_staff_escalation_owner_notification_lease.sql \
+            20260727_owner_whatsapp_reply_receipts.sql \
+            20260728_owner_whatsapp_safe_routing_slice_1.sql \
+            20260801_task_based_escalation_owner_decisions.sql \
+            20260806_task_review_owner_notification_lease.sql \
+            20260812_durable_person_id_communication_history.sql \
+            20260812_task_review_owner_decision_person_id.sql \
+            20260826_staff_escalation_proposed_photo.sql \
+            20260927_claim_task_escalation_allow_staff_escalation.sql \
+            20260928_escalation_review_type_no_response.sql ; do
+            echo "== $f"; psql -q -v ON_ERROR_STOP=1 -f "$MIGRATIONS/$f"
+          done
+
+      - name: Apply forward migration — no_response superseded by proof
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260929_no_response_superseded_by_proof.sql"
+
+      - name: Verify supersession contract (incl. two-connection race)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/no_response_supersession_verification.sql"
+
+      - name: Rollback must refuse while superseded rows exist
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "
+            INSERT INTO auth.users (id) VALUES ('c9000000-0000-4000-8000-000000000009') ON CONFLICT DO NOTHING;
+            INSERT INTO public.tasks (id, user_id, description, status)
+              VALUES ('c9100000-0000-4000-8000-000000000009', 'c9000000-0000-4000-8000-000000000009', 'guard', 'pending');
+            SELECT public.claim_task_escalation_owner_decision('c9100000-0000-4000-8000-000000000009', 'c9000000-0000-4000-8000-000000000009', 'no_response', NULL);
+            SELECT public.claim_task_escalation_owner_decision('c9100000-0000-4000-8000-000000000009', 'c9000000-0000-4000-8000-000000000009', 'uncertain_proof', NULL);"
+          if psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260929_no_response_superseded_by_proof.rollback.sql" > rb.log 2>&1; then
+            echo "FAIL: rollback ran while superseded rows existed"; exit 1
+          fi
+          grep -q rollback_blocked rb.log
+          test "$(psql -Atc "SELECT count(*) FROM public.staff_escalation_owner_decisions WHERE status = 'superseded'")" = "1"
+          psql -v ON_ERROR_STOP=1 -c "DELETE FROM public.staff_escalation_owner_decisions WHERE user_id = 'c9000000-0000-4000-8000-000000000009'"
+
+      - name: Roll back and verify the exact prior contract
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          set -e
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260929_no_response_superseded_by_proof.rollback.sql"
+          psql -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              IF (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'staff_escalation_owner_decisions_status_check') LIKE '%superseded%' THEN
+                RAISE EXCEPTION 'FAIL: rollback left superseded in the status CHECK'; END IF;
+              IF (SELECT indexdef FROM pg_indexes WHERE indexname = 'staff_escalation_owner_decisions_task_only_open_idx') LIKE '%superseded%' THEN
+                RAISE EXCEPTION 'FAIL: rollback left superseded in the unique index'; END IF;
+              IF (SELECT prosrc FROM pg_proc WHERE proname = 'claim_task_escalation_owner_decision') LIKE '%superseded%' THEN
+                RAISE EXCEPTION 'FAIL: rollback left supersession in the claim RPC'; END IF;
+              RAISE NOTICE 'PASS: rollback restored the prior CHECK, index and RPC';
+            END \$\$;"
+
+      - name: Reapply and reverify
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          set -e
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260929_no_response_superseded_by_proof.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/no_response_supersession_verification.sql"

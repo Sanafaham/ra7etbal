@@ -371,8 +371,15 @@ async function resolveOwnerName(fetchImpl, supabaseUrl, serviceKey, userId) {
  *   { kind: 'rpc_error', error }
  *   { kind: 'success', status, choice }        — status:
  *       'kept_waiting' | 'delivered' | 'in_progress' | 'saved_unreachable' |
- *       'sent_unconfirmed' | 'not_sent_no_longer_current'
+ *       'sent_unconfirmed' | 'not_sent_no_longer_current' |
+ *       'sent_then_superseded' (Meta accepted the re-ask, then newer same-task
+ *       proof superseded the decision before completion was recorded — the
+ *       send is real and its whatsapp_deliveries evidence is kept)
  *   { kind: 'send_error' } | { kind: 'config_error', message }
+ *
+ * A 'superseded' decision (newer same-task proof won; see
+ * 20260929_no_response_superseded_by_proof.sql) is never actionable:
+ * { kind: 'not_current', reason: 'superseded' }, nothing written or sent.
  */
 export async function executeNoResponseChoice({
   supabaseUrl, serviceKey, userId, decisionRow, choice, replyChannel = 'app', fetchImpl = fetch,
@@ -381,6 +388,15 @@ export async function executeNoResponseChoice({
   if (decisionRow?.review_type !== NO_RESPONSE_REVIEW_TYPE || decisionRow.staff_message_id || !decisionRow.task_id) {
     return { kind: 'validation_error', message: 'This decision is not a no-response handoff.' };
   }
+  if (decisionRow.status === 'superseded') {
+    return { kind: 'not_current', reason: 'superseded' };
+  }
+  const readRowStatus = async () => {
+    const rows = await restGet(fetchImpl, supabaseUrl, serviceKey,
+      `staff_escalation_owner_decisions?id=eq.${encodeURIComponent(decisionRow.id)}` +
+        `&user_id=eq.${encodeURIComponent(userId)}&select=status&limit=1`);
+    return rows[0]?.status || null;
+  };
   const readState = async () => {
     const task = await fetchNoResponseTask({ supabaseUrl, serviceKey, fetchImpl, taskId: decisionRow.task_id, userId });
     const evidence = task ? await fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl, task }) : null;
@@ -406,7 +422,13 @@ export async function executeNoResponseChoice({
       p_owner_reply_text: NO_RESPONSE_CHOICES[choice],
       p_owner_reply_channel: replyChannel,
     });
-    if (answer.error) return { kind: 'rpc_error', error: answer.error };
+    if (answer.error) {
+      // The answer RPC refuses a row that newer same-task proof superseded
+      // between our read and this write — report that truthfully.
+      const nowStatus = await readRowStatus().catch(() => null);
+      if (nowStatus === 'superseded') return { kind: 'not_current', reason: 'superseded' };
+      return { kind: 'rpc_error', error: answer.error };
+    }
     const answered = Array.isArray(answer.data) ? answer.data[0] : answer.data;
     row = { ...row, ...answered };
     persisted = persistedChoice(row.owner_reply_text);
@@ -472,6 +494,28 @@ export async function executeNoResponseChoice({
   });
   const templateName = (env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message').trim();
   const templateLanguage = (env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
+  // Last check before the irreversible external send: newer same-task proof
+  // (which supersedes this row, even while 'delivering'), a late completion
+  // or a late reply all win. Nothing is sent after this if any of them won.
+  let preSendStatus;
+  let preSendState;
+  try {
+    [preSendStatus, preSendState] = await Promise.all([readRowStatus(), readState()]);
+  } catch {
+    await fail('pre_send_state_unavailable');
+    return { kind: 'not_current', reason: 'state_unavailable' };
+  }
+  if (preSendStatus !== 'delivering') {
+    return {
+      kind: 'success', status: 'not_sent_no_longer_current', choice: 'ask_again',
+      reason: preSendStatus === 'superseded' ? 'superseded' : `decision_${preSendStatus}`,
+    };
+  }
+  if (preSendState.block) {
+    await fail(`not_sent_${preSendState.block}`);
+    return { kind: 'success', status: 'not_sent_no_longer_current', choice: 'ask_again', reason: preSendState.block };
+  }
+
   const deliveryMetadata = { escalation_id: row.id, task_id: state.task.id, review_type: NO_RESPONSE_REVIEW_TYPE, owner_choice: 'ask_again' };
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl, serviceKey, taskId: state.task.id, personId: person.id, sourceType: 'followup',
@@ -507,8 +551,19 @@ export async function executeNoResponseChoice({
     p_id: row.id, p_user_id: userId, p_claim_token: claim.claim_token, p_transport_message_id: sendResult.messageId,
   });
   if (complete.error) {
-    console.error('[no-response] re-ask sent but completion bookkeeping failed', { decisionId: row.id, error: complete.error });
-    return { kind: 'success', status: 'sent_unconfirmed', choice: 'ask_again', transportMessageId: sendResult.messageId };
+    // Meta already accepted the re-ask. If newer same-task proof superseded
+    // the decision in the meantime, say exactly that — the send happened and
+    // its whatsapp_deliveries row (with this WAMID) is the evidence.
+    const nowStatus = await readRowStatus().catch(() => null);
+    console.error('[no-response] re-ask sent but completion bookkeeping failed', {
+      decisionId: row.id, error: complete.error, decisionStatus: nowStatus,
+    });
+    return {
+      kind: 'success',
+      status: nowStatus === 'superseded' ? 'sent_then_superseded' : 'sent_unconfirmed',
+      choice: 'ask_again',
+      transportMessageId: sendResult.messageId,
+    };
   }
   return { kind: 'success', status: 'delivered', choice: 'ask_again', transportMessageId: sendResult.messageId };
 }

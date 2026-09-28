@@ -68,13 +68,27 @@ export function resultText(result: NoResponseResultStatus, name: string): string
     case "saved_unreachable":
       return `Your choice is saved, but Carson couldn't reach ${name} on WhatsApp, so nothing was sent.`;
     case "not_sent_no_longer_current":
-      return `Nothing was sent — this task no longer needs a nudge (it was finished, or ${name} replied).`;
+      return `Nothing was sent — this task no longer needs a nudge (it was finished, ${name} replied, or newer proof arrived).`;
+    case "sent_then_superseded":
+      return `Carson's message to ${name} was sent, and newer proof for this task arrived right after. That proof is now the current review.`;
   }
 }
 
 /** Truthful summary of an already-answered decision on first load. */
 export function answeredText(detail: TaskOnlyEscalationDetail): string {
   const name = who(detail);
+  if (detail.status === "superseded") {
+    // Newer same-task evidence (proof submitted through this task's own link)
+    // replaced this silence handoff. Never claims a send was prevented or
+    // happened; the owner's earlier choice, if any, stays in history.
+    const earlier =
+      detail.ownerChoice === "ask_again"
+        ? " Your earlier choice (Ask again) is kept in history."
+        : detail.ownerChoice === "keep_waiting"
+          ? " Your earlier choice (Keep waiting) is kept in history."
+          : "";
+    return `Newer information arrived for this task, so this question about ${name} no longer applies and there is nothing to decide here.${earlier}`;
+  }
   if (detail.ownerChoice === "keep_waiting") {
     return `You chose to keep waiting. Nothing was sent to ${name}.`;
   }

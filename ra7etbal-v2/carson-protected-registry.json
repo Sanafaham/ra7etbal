@@ -120,7 +120,8 @@
           "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql",
           "supabase/migrations/20260826_staff_escalation_proposed_photo.sql",
           "supabase/migrations/20260927_claim_task_escalation_allow_staff_escalation.sql",
-          "supabase/migrations/20260928_escalation_review_type_no_response.sql"
+          "supabase/migrations/20260928_escalation_review_type_no_response.sql",
+          "supabase/migrations/20260929_no_response_superseded_by_proof.sql"
         ],
         "data_repairs": [
           "supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"
@@ -163,7 +164,14 @@
         "migration": "supabase/migrations/20260928_escalation_review_type_no_response.sql",
         "open_lifecycle_work": [
           "Re-offer after Keep waiting (and after a delivered Ask again) is deliberately NOT implemented: one no_response handoff per task."
-        ]
+        ],
+        "supersession": {
+          "contract": "Option A (owner-authorized 2026-09-28, migration 20260929). When a proof review (uncertain_proof / substitute_review / correction_limit) is claimed for the SAME task UUID by the same owner, any open/answered/delivering no_response row for that task becomes status 'superseded' in the same statement. The historical row (owner answer, delivery evidence) is preserved; the proof review becomes the single current review; superseded rows never occupy the one-open-task-review slot, are never actionable (no Ask again / Keep waiting / retry), and are never claimed for delivery. Identity boundary is the task UUID only (never person, phone, text, timing, or model inference). A re-ask already accepted by Meta before proof wins is reported as sent_then_superseded, never as prevented.",
+          "migration": "supabase/migrations/20260929_no_response_superseded_by_proof.sql",
+          "rollback": "supabase/migrations/20260929_no_response_superseded_by_proof.rollback.sql (blocked while any superseded row exists)",
+          "real_postgres_workflow": ".github/workflows/no-response-supersession-verification.yml",
+          "lifecycle_status": "Code protection and DB contract complete; lifecycle capability UNVERIFIED in Production until controlled Canary 1. Slice 1 is NOT closed."
+        }
       },
       "protected_suite": true,
       "golden_journey_required": true,
@@ -180,7 +188,8 @@
         "supabase/migrations/verification/02_lifecycle_verification.sql",
         "supabase/migrations/verification/03_post_rollback_verification.sql",
         "supabase/migrations/verification/04_owner_notification_lease_verification.sql",
-        "supabase/migrations/verification/05_owner_notification_lease_post_rollback_verification.sql"
+        "supabase/migrations/verification/05_owner_notification_lease_post_rollback_verification.sql",
+        "supabase/migrations/verification/no_response_supersession_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "db_contract_workflows": [
