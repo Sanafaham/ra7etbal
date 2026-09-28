@@ -103,6 +103,7 @@ import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
+import { runNoResponseHandoffs } from './_no-response-handoff.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -232,6 +233,30 @@ export default async function handler(req, res) {
 
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
+
+  // Slice 1 — stalled tracked delegation → owner handoff ('no_response').
+  // Inert unless NO_RESPONSE_HANDOFF_CUTOVER_AT is set (see
+  // _no-response-handoff.js). Runs before the candidate fetch below because
+  // that path returns early when it finds nothing. Fail-isolated like the
+  // reconciliations above; it only ever notifies the owner — it never
+  // messages staff and never touches followup_sent_at / escalated_at.
+  const noResponseStats = await runNoResponseHandoffs({
+    supabaseUrl,
+    serviceKey,
+    now,
+    // Loaded lazily: only reached for an eligible post-cutover task, so the
+    // inert default path adds no module-graph or cold-start cost.
+    notify: async (input) => {
+      const { notifyOwnerOfTaskReview } = await import('./_escalation-notify.js');
+      return notifyOwnerOfTaskReview(input, { supabaseUrl, serviceKey });
+    },
+  }).catch((error) => {
+    console.error('[no-response] handoff stage failed (cron continues)', { error: error?.message || String(error) });
+    return null;
+  });
+  if (noResponseStats?.enabled) {
+    console.log('[no-response] handoff stage', noResponseStats);
+  }
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
 
   // Fetch pending tasks old enough to potentially need at least the follow-up.

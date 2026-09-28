@@ -47,6 +47,7 @@
 import { findOwnerPhone } from './task-confirm.js';
 import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone, sendProofImageMessage } from './send-whatsapp-task.js';
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
+import { NO_RESPONSE_REVIEW_TYPE, buildNoResponseOwnerMessage, buildNoResponseDeepLink } from './_no-response-handoff.js';
 
 const OWNER_DECISION_REPLY_TEMPLATE_NAME = 'ra7etbal_direct_operational_message';
 const LEASE_SECONDS = 120;
@@ -380,7 +381,7 @@ async function resolveAssigneePersonId(supabaseUrl, serviceKey, fetchImpl, userI
  * @param {object} input
  * @param {string} input.taskId
  * @param {string} input.userId
- * @param {string} input.reviewType  'uncertain_proof'|'substitute_review'|'correction_limit'
+ * @param {string} input.reviewType  'uncertain_proof'|'substitute_review'|'correction_limit'|'no_response'
  * @param {string|null} [input.taskDescription]
  * @param {string|null} [input.assignedTo]
  * @param {string|null} [input.reviewNote]  quality_review_note from the task
@@ -483,7 +484,16 @@ export async function notifyOwnerOfTaskReview(input, deps) {
 
   const templateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || OWNER_DECISION_REPLY_TEMPLATE_NAME).trim();
   const templateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
-  const message = buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote });
+  // Slice 1 'no_response': the owner chooses on the decision page (Ask again /
+  // Keep waiting), so this message carries its deep link. Every other review
+  // type keeps its existing reply-first wording unchanged.
+  const message = reviewType === NO_RESPONSE_REVIEW_TYPE
+    ? buildNoResponseOwnerMessage({
+        taskDescription,
+        assignedTo,
+        deepLinkUrl: decision.deep_link_token ? buildNoResponseDeepLink(decision.deep_link_token) : null,
+      })
+    : buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote });
   const payload = buildDirectMessagePayload({
     to: normalizedPhone,
     ownerName: 'Carson',

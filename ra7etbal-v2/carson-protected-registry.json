@@ -87,6 +87,8 @@
         "api/task-confirm.js:findAssigneePerson",
         "api/_escalation-notify.js:notifyOwnerOfTaskReview",
         "api/_escalation-notify.js:resolveAssigneePersonId",
+        "api/_no-response-handoff.js",
+        "src/routes/TaskOnlyDecisionView.tsx",
         "api/_staff-decision-message.js",
         "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
       ],
@@ -115,7 +117,9 @@
           "supabase/migrations/20260812_task_review_owner_decision_person_id.sql",
           "supabase/migrations/20260812_worker_notification_person_id.sql",
           "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql",
-          "supabase/migrations/20260826_staff_escalation_proposed_photo.sql"
+          "supabase/migrations/20260826_staff_escalation_proposed_photo.sql",
+          "supabase/migrations/20260927_claim_task_escalation_allow_staff_escalation.sql",
+          "supabase/migrations/20260928_escalation_review_type_no_response.sql"
         ],
         "data_repairs": [
           "supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"
@@ -138,8 +142,28 @@
         "api/photo-workflow-golden-contract.test.js",
         "api/whatsapp-webhook.test.js",
         "api/_staff-substitution-intent.test.js",
-        "api/_inbound-staff-evidence.test.js"
+        "api/_inbound-staff-evidence.test.js",
+        "api/no-response-handoff.test.js",
+        "api/no-response-handoff.endpoint.test.js",
+        "api/owner-whatsapp-no-response-guard.test.js",
+        "src/routes/TaskOnlyDecisionView.test.tsx",
+        "src/lib/staff-messages.task-only-deep-link.test.ts"
       ],
+      "slice1_no_response_handoff": {
+        "contract": "Chief-of-Staff Lifecycle Slice 1 (owner-authorized 2026-09-27). A tracked delegation that passed the existing follow-up and escalation, whose escalated_at is at or after NO_RESPONSE_HANDOFF_CUTOVER_AT and at least 4 hours old (OWNER PRODUCT DECISION, not derived from any existing timing), that is still pending/unarchived/undismissed/unconfirmed with no proof, no worker_reply and no staff_messages/personal_contact_replies row from the resolved assignee since creation, gets exactly one task-only review_type='no_response' decision and one owner notification carrying its decision link. The owner may only choose Ask again (one lease-protected re-ask to the assignee; task stays pending, confirmed_at untouched) or Keep waiting (status 'answered', no staff message; the row blocks recreation). Unset cutover = inert. Owner WhatsApp replies to a no_response handoff never execute anything.",
+        "entry_points": [
+          "api/process-delegation-escalations.js (sweep stage, before candidate fetch)",
+          "api/_no-response-handoff.js:runNoResponseHandoffs / executeNoResponseChoice",
+          "api/task-confirm.js:handleEscalationAnswer (no_response branch)",
+          "api/_owner-whatsapp-routing.js:handleInboundOwnerMessage (no_response guard)",
+          "src/lib/staff-messages.ts:getOwnerEscalationByToken (task-only resolution)",
+          "src/routes/TaskOnlyDecisionView.tsx"
+        ],
+        "migration": "supabase/migrations/20260928_escalation_review_type_no_response.sql",
+        "open_lifecycle_work": [
+          "Re-offer after Keep waiting (and after a delivered Ask again) is deliberately NOT implemented: one no_response handoff per task."
+        ]
+      },
       "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": [
