@@ -77,3 +77,31 @@ export interface OwnerEscalationDetail {
   escalationReason: string | null;
   receivedAt: string;
 }
+
+/**
+ * Slice 1 — a task-only owner decision (staff_message_id IS NULL), resolved
+ * through its task_id. Carries only real task data: no inbound text, no staff
+ * proposal, nothing implying the assignee replied. Staff-message-backed
+ * decisions keep using OwnerEscalationDetail unchanged.
+ */
+export interface TaskOnlyEscalationDetail {
+  kind: "task_only";
+  /** staff_escalation_owner_decisions.id */
+  id: string;
+  status: OwnerEscalationDecisionStatus;
+  createdAt: string;
+  /** status !== "open" — same meaning as OwnerEscalationDetail.alreadyAnswered. */
+  alreadyAnswered: boolean;
+  reviewType: string;
+  taskId: string;
+  /** null when the task row could not be read (never guessed). */
+  taskDescription: string | null;
+  assigneeName: string | null;
+  /**
+   * null only while the task is still pending and not archived, dismissed or
+   * confirmed. The server re-checks replies and proof before acting.
+   */
+  taskNotCurrentReason: "task_unavailable" | "completed" | "archived" | "dismissed" | "confirmed" | "not_pending" | null;
+  /** The owner's recorded choice on a no_response handoff, if any. */
+  ownerChoice: "ask_again" | "keep_waiting" | null;
+}

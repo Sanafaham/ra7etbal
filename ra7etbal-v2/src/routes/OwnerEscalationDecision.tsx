@@ -4,9 +4,16 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import type { AuthStatus } from "../stores/auth";
 import { getOwnerEscalationByToken } from "../lib/staff-messages";
-import { submitEscalationDecision, type EscalationDecision } from "../lib/escalation-answer";
+import {
+  submitEscalationDecision,
+  submitNoResponseChoice,
+  type EscalationDecision,
+  type NoResponseChoice,
+  type NoResponseResultStatus,
+} from "../lib/escalation-answer";
 import { formatEscalationReceivedAt } from "../components/tasks/StaffEscalationCard";
-import type { OwnerEscalationDetail } from "../types/staff-message";
+import type { OwnerEscalationDetail, TaskOnlyEscalationDetail } from "../types/staff-message";
+import { TaskOnlyDecisionView, type TaskOnlySubmitPhase } from "./TaskOnlyDecisionView";
 
 /**
  * Phase C/D — the secure owner-decision page reached via a
@@ -334,6 +341,12 @@ export interface OwnerEscalationDecisionProps {
 export default function OwnerEscalationDecision({ token }: OwnerEscalationDecisionProps) {
   const { status: authStatus } = useAuth();
   const [detail, setDetail] = useState<OwnerEscalationDetail | null>(null);
+  // Slice 1 — task-only decisions (no staff message) render a separate view.
+  const [taskOnlyDetail, setTaskOnlyDetail] = useState<TaskOnlyEscalationDetail | null>(null);
+  const [taskOnlyPhase, setTaskOnlyPhase] = useState<TaskOnlySubmitPhase>("idle");
+  const [taskOnlyError, setTaskOnlyError] = useState<string | null>(null);
+  const [taskOnlyResult, setTaskOnlyResult] = useState<NoResponseResultStatus | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -358,7 +371,13 @@ export default function OwnerEscalationDecision({ token }: OwnerEscalationDecisi
           setLoadState("not_found");
           return;
         }
-        setDetail(result);
+        if ("kind" in result) {
+          setTaskOnlyDetail(result);
+          setDetail(null);
+        } else {
+          setDetail(result);
+          setTaskOnlyDetail(null);
+        }
         setLoadState("ready");
       } catch (e) {
         if (cancelled) return;
@@ -369,7 +388,24 @@ export default function OwnerEscalationDecision({ token }: OwnerEscalationDecisi
     return () => {
       cancelled = true;
     };
-  }, [authStatus, token]);
+  }, [authStatus, token, reloadKey]);
+
+  async function submitTaskOnlyChoice(choice?: NoResponseChoice) {
+    setTaskOnlyPhase("sending");
+    setTaskOnlyError(null);
+    const outcome = await submitNoResponseChoice({ deepLinkToken: token, choice });
+    setTaskOnlyPhase("idle");
+    if (!outcome.success) {
+      setTaskOnlyError(outcome.error || "Could not save your choice. Please try again.");
+      // Any failure may have changed server state (e.g. "Ask again" saved but
+      // the send failed → status 'failed'). Reload the truth so stale
+      // Ask again / Keep waiting buttons can never be offered again; the
+      // server always executes the first saved answer.
+      setReloadKey((k) => k + 1);
+      return;
+    }
+    setTaskOnlyResult(outcome.status ?? null);
+  }
 
   function resetSubmissionUi() {
     setSubmitPhase("idle");
@@ -437,6 +473,25 @@ export default function OwnerEscalationDecision({ token }: OwnerEscalationDecisi
       // the truthful message for this one case.
       return current;
     });
+  }
+
+  if (loadState === "ready" && taskOnlyDetail && authStatus === "signed_in") {
+    return (
+      <TaskOnlyDecisionView
+        detail={taskOnlyDetail}
+        submitPhase={taskOnlyPhase}
+        submitError={taskOnlyError}
+        result={taskOnlyResult}
+        onChoose={(choice) => {
+          setTaskOnlyError(null);
+          if (choice === "ask_again") setTaskOnlyPhase("confirming_ask_again");
+          else void submitTaskOnlyChoice("keep_waiting");
+        }}
+        onConfirmAskAgain={() => void submitTaskOnlyChoice("ask_again")}
+        onCancel={() => setTaskOnlyPhase("idle")}
+        onRetryDelivery={() => void submitTaskOnlyChoice()}
+      />
+    );
   }
 
   return (

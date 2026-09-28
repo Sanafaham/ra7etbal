@@ -7,6 +7,10 @@ import { sendMetaMessage } from './send-whatsapp-task.js';
 import { persistAndExecuteOwnerCommand, recordOwnerInbound, updateCommand } from './_owner-command-executor.js';
 import { classifyOwnerWhatsAppIntent, isExecutionDomain } from './_carson-intent-classifier.js';
 import { runOwnerConversationalTurn } from './_carson-agent-turn.js';
+import { NO_RESPONSE_REVIEW_TYPE } from './_no-response-handoff.js';
+
+export const NO_RESPONSE_WHATSAPP_REPLY_TEXT =
+  "I haven't acted on that reply and nothing was sent. For this one, please open the link in my message and choose Ask again or Keep waiting.";
 
 const RECEIPT_LEASE_SECONDS = 120;
 
@@ -559,6 +563,48 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   const escalation = match.escalation;
+
+  // Slice 1 — a 'no_response' handoff is answered only on its decision page
+  // (Ask again / Keep waiting). A WhatsApp reply to it must never flow into
+  // the approve/reject/custom-instruction path below, and nothing is sent to
+  // staff from here. Fail closed with a truthful pointer to the link.
+  if (escalation?.review_type === NO_RESPONSE_REVIEW_TYPE) {
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === NO_RESPONSE_WHATSAPP_REPLY_TEXT
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: effectiveMsg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: NO_RESPONSE_WHATSAPP_REPLY_TEXT,
+        });
+    if (!ack.ok) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'no_response_handoff', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        execution_status: 'unsupported',
+        execution_error: 'no_response_reply_requires_decision_page',
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: NO_RESPONSE_WHATSAPP_REPLY_TEXT,
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'clarification_sent', escalationId: escalation.id,
+    });
+    return {
+      isOwner: true,
+      handled: completed,
+      route: 'no_response_handoff',
+      reason: completed ? 'decision_page_required' : 'receipt_complete_failed',
+    };
+  }
+
   const staffMessage = match.staffMessage || (
     escalation.staff_message_id
       ? await fetchStaffMessage({

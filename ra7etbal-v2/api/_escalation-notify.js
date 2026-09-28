@@ -47,6 +47,7 @@
 import { findOwnerPhone } from './task-confirm.js';
 import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone, sendProofImageMessage } from './send-whatsapp-task.js';
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
+import { NO_RESPONSE_REVIEW_TYPE, buildNoResponseOwnerMessage, buildNoResponseDeepLink } from './_no-response-handoff.js';
 
 const OWNER_DECISION_REPLY_TEMPLATE_NAME = 'ra7etbal_direct_operational_message';
 const LEASE_SECONDS = 120;
@@ -380,7 +381,7 @@ async function resolveAssigneePersonId(supabaseUrl, serviceKey, fetchImpl, userI
  * @param {object} input
  * @param {string} input.taskId
  * @param {string} input.userId
- * @param {string} input.reviewType  'uncertain_proof'|'substitute_review'|'correction_limit'
+ * @param {string} input.reviewType  'uncertain_proof'|'substitute_review'|'correction_limit'|'no_response'
  * @param {string|null} [input.taskDescription]
  * @param {string|null} [input.assignedTo]
  * @param {string|null} [input.reviewNote]  quality_review_note from the task
@@ -423,6 +424,18 @@ export async function notifyOwnerOfTaskReview(input, deps) {
 
   if (!decision?.id) {
     return { attempted: false, status: 'failed', reason: 'no_decision_row' };
+  }
+
+  // Slice 1: the task-only-open unique index allows ONE active task-only
+  // decision per task, and the claim RPC returns it whatever its type. Never
+  // let a no_response handoff swallow a proof review (reported as "already
+  // sent") or carry another review's text — fail loudly instead.
+  if (decision.review_type && decision.review_type !== reviewType &&
+      (decision.review_type === NO_RESPONSE_REVIEW_TYPE || reviewType === NO_RESPONSE_REVIEW_TYPE)) {
+    console.error('[escalation-notify] task-only decision slot held by a different review type', {
+      taskId, requestedReviewType: reviewType, heldReviewType: decision.review_type, decisionId: decision.id,
+    });
+    return { attempted: false, status: 'failed', reason: 'task_slot_held_by_other_review', escalationId: decision.id };
   }
 
   let notificationClaim;
@@ -483,7 +496,16 @@ export async function notifyOwnerOfTaskReview(input, deps) {
 
   const templateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || OWNER_DECISION_REPLY_TEMPLATE_NAME).trim();
   const templateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
-  const message = buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote });
+  // Slice 1 'no_response': the owner chooses on the decision page (Ask again /
+  // Keep waiting), so this message carries its deep link. Every other review
+  // type keeps its existing reply-first wording unchanged.
+  const message = reviewType === NO_RESPONSE_REVIEW_TYPE
+    ? buildNoResponseOwnerMessage({
+        taskDescription,
+        assignedTo,
+        deepLinkUrl: decision.deep_link_token ? buildNoResponseDeepLink(decision.deep_link_token) : null,
+      })
+    : buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote });
   const payload = buildDirectMessagePayload({
     to: normalizedPhone,
     ownerName: 'Carson',

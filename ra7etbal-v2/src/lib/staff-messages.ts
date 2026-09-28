@@ -3,6 +3,7 @@ import type {
   StaffMessage,
   OpenStaffEscalation,
   OwnerEscalationDetail,
+  TaskOnlyEscalationDetail,
 } from "../types/staff-message";
 
 /**
@@ -145,7 +146,7 @@ export async function listOpenStaffEscalationsForNeedsYou(): Promise<OpenStaffEs
 // ── Phase C: secure owner-decision page lookup by deep_link_token ──────────
 
 const ESCALATION_DETAIL_COLUMNS =
-  "id, status, created_at, staff_message:staff_messages(staff_name, inbound_text, escalation_reason, received_at)";
+  "id, status, created_at, staff_message_id, task_id, review_type, staff_message:staff_messages(staff_name, inbound_text, escalation_reason, received_at)";
 
 interface RawStaffMessageEmbed {
   staff_name: string;
@@ -158,7 +159,73 @@ interface RawEscalationDetailRow {
   id: string;
   status: OwnerEscalationDetail["status"];
   created_at: string;
+  staff_message_id?: string | null;
+  task_id?: string | null;
+  review_type?: string | null;
   staff_message: RawStaffMessageEmbed | RawStaffMessageEmbed[] | null;
+}
+
+interface RawDecisionTaskRow {
+  id: string;
+  description: string | null;
+  assigned_to: string | null;
+  status: string | null;
+  archived_at: string | null;
+  dismissed_at: string | null;
+  confirmed_at: string | null;
+}
+
+export function taskNotCurrentReason(
+  task: RawDecisionTaskRow | null,
+): TaskOnlyEscalationDetail["taskNotCurrentReason"] {
+  if (!task) return "task_unavailable";
+  if (task.status === "done") return "completed";
+  if (task.status !== "pending") return "not_pending";
+  if (task.archived_at) return "archived";
+  if (task.dismissed_at) return "dismissed";
+  if (task.confirmed_at) return "confirmed";
+  return null;
+}
+
+/**
+ * Task-only decision (staff_message_id IS NULL): resolve the REAL task via
+ * task_id under the owner's own RLS. Never fabricates inbound text, a staff
+ * proposal or a reply. A task the owner can no longer read resolves as
+ * non-actionable ("task_unavailable"), not as a guessed description.
+ */
+async function resolveTaskOnlyDetail(row: RawEscalationDetailRow): Promise<TaskOnlyEscalationDetail | null> {
+  if (!row.task_id) return null;
+  const { data: taskData, error: taskError } = await supabase
+    .from("tasks")
+    .select("id, description, assigned_to, status, archived_at, dismissed_at, confirmed_at")
+    .eq("id", row.task_id);
+  if (taskError) throw friendly(taskError);
+  const task = ((taskData ?? []) as RawDecisionTaskRow[])[0] ?? null;
+
+  let ownerChoice: TaskOnlyEscalationDetail["ownerChoice"] = null;
+  if (row.review_type === "no_response" && row.status !== "open") {
+    const { data: replyData, error: replyError } = await supabase
+      .from("staff_escalation_owner_decisions")
+      .select("owner_reply_text")
+      .eq("id", row.id);
+    if (replyError) throw friendly(replyError);
+    const reply = String(((replyData ?? []) as { owner_reply_text: string | null }[])[0]?.owner_reply_text ?? "").trim();
+    ownerChoice = reply === "Ask again" ? "ask_again" : reply === "Keep waiting" ? "keep_waiting" : null;
+  }
+
+  return {
+    kind: "task_only",
+    id: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+    alreadyAnswered: row.status !== "open",
+    reviewType: row.review_type ?? "unknown",
+    taskId: row.task_id,
+    taskDescription: task?.description ?? null,
+    assigneeName: task?.assigned_to ?? null,
+    taskNotCurrentReason: taskNotCurrentReason(task),
+    ownerChoice,
+  };
 }
 
 /**
@@ -176,7 +243,9 @@ interface RawEscalationDetailRow {
  * actually being signed in first; an anonymous caller would be rejected
  * by the table's GRANT (authenticated-only) before RLS is even evaluated.
  */
-export async function getOwnerEscalationByToken(token: string): Promise<OwnerEscalationDetail | null> {
+export async function getOwnerEscalationByToken(
+  token: string,
+): Promise<OwnerEscalationDetail | TaskOnlyEscalationDetail | null> {
   const { data, error } = await supabase
     .from("staff_escalation_owner_decisions")
     .select(ESCALATION_DETAIL_COLUMNS)
@@ -186,6 +255,10 @@ export async function getOwnerEscalationByToken(token: string): Promise<OwnerEsc
   const rows = (data ?? []) as unknown as RawEscalationDetailRow[];
   const row = rows[0];
   if (!row) return null;
+
+  if (!row.staff_message_id && row.task_id) {
+    return resolveTaskOnlyDetail(row);
+  }
 
   const staffMessage = Array.isArray(row.staff_message) ? row.staff_message[0] : row.staff_message;
   if (!staffMessage) return null;

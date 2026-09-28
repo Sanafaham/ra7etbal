@@ -58,6 +58,7 @@ import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText, isAut
 import { isLikelyPreActionSubstitutionRequest } from './_staff-substitution-intent.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { NO_RESPONSE_REVIEW_TYPE, executeNoResponseChoice } from './_no-response-handoff.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
 import { buildCanonicalStaffDecisionMessage } from './_staff-decision-message.js';
 import {
@@ -1295,7 +1296,7 @@ async function handleEscalationAnswer(req, res) {
     const lookupRes = await fetch(
       supabaseUrl + '/rest/v1/staff_escalation_owner_decisions?deep_link_token=eq.' +
         encodeURIComponent(deepLinkToken) +
-        '&select=id,user_id,staff_message_id,status,owner_reply_text',
+        '&select=id,user_id,staff_message_id,task_id,review_type,status,owner_reply_text,deep_link_token',
       { headers },
     );
     const lookupRows = await lookupRes.json().catch(() => []);
@@ -1305,6 +1306,26 @@ async function handleEscalationAnswer(req, res) {
     const existing = lookupRows[0];
     if (existing.user_id !== userId) {
       return invalidLinkResponse();
+    }
+
+    // Slice 1 — task-only 'no_response' handoff. Only Ask again / Keep
+    // waiting exist here; the approve/reject/custom path below never runs
+    // for it (it has no staff message and nothing was proposed).
+    if (existing.review_type === NO_RESPONSE_REVIEW_TYPE && !existing.staff_message_id) {
+      const outcome = await executeNoResponseChoice({
+        supabaseUrl, serviceKey, userId, decisionRow: existing, choice: decision, replyChannel: 'app',
+      });
+      if (outcome.kind === 'validation_error') return res.status(400).json({ error: outcome.message });
+      if (outcome.kind === 'not_current') {
+        return res.status(409).json({
+          error: 'This task is no longer waiting on a reply, so nothing was changed or sent.',
+          reason: outcome.reason,
+        });
+      }
+      if (outcome.kind === 'rpc_error') return respondRpcError(res, outcome.error);
+      if (outcome.kind === 'config_error') return res.status(500).json({ error: outcome.message });
+      if (outcome.kind === 'send_error') return res.status(502).json({ error: 'Could not send the message. Please retry.' });
+      return res.status(200).json({ success: true, status: outcome.status, choice: outcome.choice });
     }
 
     // 2. Fetch the linked staff_messages row once, up front — needed both
