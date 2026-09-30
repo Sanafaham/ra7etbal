@@ -319,7 +319,7 @@
       "content_boundary": {
         "contract": "A tracked delegation's recipient content is only the owner's own words for the recipient's work. The single existing C-02 model call names that span; groundRecipientInstruction accepts it only when it is a contiguous piece of the owner's text that does not still address the recipient. Owner → Carson management language (track this, follow up, report back) never becomes tasks.description or staff WhatsApp content. If the span cannot be grounded or the call fails/times out, sendDelegation creates nothing, sends nothing and records a failure (never success). Clear My Head / Text Carson carry the same rule in the existing Sonnet extraction prompt (RULE 2B).",
         "origin": "Production canary 2026-09-29, task 965f5963 (historical evidence preserved unmodified).",
-        "live_evidence": "scripts/staff-instruction-live-evidence.ts (requires ANTHROPIC_API_KEY; not yet run — see PR)",
+        "live_evidence": "scripts/staff-instruction-live-evidence.ts, run by .github/workflows/carson-live-model-evidence.yml when the label run-live-model-evidence is added to a PR (dedicated secret ANTHROPIC_EVIDENCE_KEY). Not yet run.",
         "known_limits": [
           "Grounding proves the span is the owner's own contiguous words; whether it excludes owner → Carson language is the model's judgment — live evidence via scripts/staff-instruction-live-evidence.ts is required before relying on it.",
           "Legacy send_delegation fallback (neither fast path matched): grounding source is the model's own message/task, and a model-composed message/note can still reach the staff message via the personal-note path.",

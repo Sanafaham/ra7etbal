@@ -50,9 +50,13 @@ const CASES: Array<[string, string, Expected]> = [
   ["Tell Loulya I would like her to call me.", "Loulya", { kind: "communication" }],
 ];
 
-async function callModel(utterance: string, recipient: string): Promise<string> {
+/** Per-call ceiling; a slower answer counts as an ERRORED run, never dropped. */
+const CALL_TIMEOUT_MS = 30_000;
+
+async function callModel(utterance: string, recipient: string): Promise<{ text: string; stopReason?: string }> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     headers: {
       "content-type": "application/json",
       "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
@@ -64,9 +68,10 @@ async function callModel(utterance: string, recipient: string): Promise<string> 
       messages: [{ role: "user", content: buildClassificationPrompt(utterance, recipient) }],
     }),
   });
-  const body = (await res.json()) as { content?: Array<{ text?: string }>; error?: unknown };
-  if (!res.ok || body.error) throw new Error(`model call failed: ${res.status} ${JSON.stringify(body.error ?? "")}`);
-  return body.content?.[0]?.text ?? "";
+  const body = (await res.json()) as { content?: Array<{ text?: string }>; error?: { type?: string }; stop_reason?: string };
+  // Only the provider's error type is reported — never request headers or the key.
+  if (!res.ok || body.error) throw new Error(`model call failed: HTTP ${res.status} ${body.error?.type ?? ""}`.trim());
+  return { text: body.content?.[0]?.text ?? "", stopReason: body.stop_reason };
 }
 
 function normalize(text: string): string {
@@ -79,35 +84,60 @@ async function main() {
     process.exit(2);
   }
   const runsFlag = process.argv.indexOf("--runs");
-  const runs = runsFlag > -1 ? Number(process.argv[runsFlag + 1]) || 3 : 3;
-  let failures = 0;
-  let total = 0;
+  // Minimum 3 independent runs per phrase (the owner's pass standard).
+  const runs = Math.max(3, runsFlag > -1 ? Number(process.argv[runsFlag + 1]) || 3 : 3);
+  // Every attempted run is in the denominator: model errors/timeouts and
+  // malformed answers are counted and fail the gate, never skipped.
+  let attempted = 0;
+  let completed = 0;
+  let correct = 0;
+  let malformed = 0;
+  let errored = 0;
   for (const [utterance, recipient, expected] of CASES) {
     for (let run = 1; run <= runs; run += 1) {
-      total += 1;
+      attempted += 1;
       let outcome: string;
       if (isReportedThirdPartyDesire(utterance)) {
-        outcome = "communication (deterministic)";
+        completed += 1;
+        outcome = "communication (deterministic, no model call)";
       } else {
-        const raw = await callModel(utterance, recipient);
-        const parsed = parseStaffInstructionAnswer(raw);
-        if (parsed.failed) outcome = `UNSAFE unparseable: ${JSON.stringify(raw)}`;
-        else if (parsed.classification === "communication") outcome = "communication";
-        else {
-          const grounded = groundRecipientInstruction(parsed.recipientSpan, utterance, recipient);
-          outcome = grounded ? `delegation: ${grounded}` : `UNSAFE ungrounded: ${JSON.stringify(parsed.recipientSpan)}`;
+        let answer: { text: string; stopReason?: string } | null = null;
+        try {
+          answer = await callModel(utterance, recipient);
+        } catch (error) {
+          errored += 1;
+          outcome = `ERROR ${(error as Error).name === "TimeoutError" ? "timeout" : (error as Error).message}`;
+        }
+        if (answer) {
+          completed += 1;
+          const parsed = answer.stopReason === "max_tokens" ? null : parseStaffInstructionAnswer(answer.text);
+          if (!parsed || parsed.failed) {
+            malformed += 1;
+            outcome = `MALFORMED ${JSON.stringify(answer.text)}`;
+          } else if (parsed.classification === "communication") {
+            outcome = "communication";
+          } else {
+            const grounded = groundRecipientInstruction(parsed.recipientSpan, utterance, recipient);
+            outcome = grounded
+              ? `delegation: ${grounded}`
+              : `UNGROUNDED model span ${JSON.stringify(parsed.recipientSpan)}`;
+          }
         }
       }
       const ok =
         expected.kind === "communication"
-          ? outcome.startsWith("communication")
-          : outcome.startsWith("delegation: ") && normalize(outcome.slice(12)) === normalize(expected.recipient);
-      if (!ok) failures += 1;
-      console.log(`${ok ? "PASS" : "FAIL"} [${run}/${runs}] ${JSON.stringify(utterance)} → ${outcome}`);
+          ? outcome!.startsWith("communication")
+          : outcome!.startsWith("delegation: ") && normalize(outcome!.slice(12)) === normalize(expected.recipient);
+      if (ok) correct += 1;
+      console.log(`${ok ? "PASS" : "FAIL"} [${run}/${runs}] ${JSON.stringify(utterance)} → ${outcome!}`);
     }
   }
-  console.log(`\n${total - failures}/${total} matched (${STAFF_INSTRUCTION_MODEL}).`);
-  process.exit(failures === 0 ? 0 : 1);
+  console.log(
+    `\nattempted=${attempted} completed=${completed} correct=${correct} malformed=${malformed} errored=${errored} (${STAFF_INSTRUCTION_MODEL})`,
+  );
+  const pass = attempted > 0 && correct === attempted;
+  console.log(pass ? "LIVE-MODEL GATE: PASS" : "LIVE-MODEL GATE: FAIL");
+  process.exit(pass ? 0 : 1);
 }
 
 void main();
