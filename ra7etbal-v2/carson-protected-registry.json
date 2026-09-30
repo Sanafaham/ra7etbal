@@ -271,7 +271,8 @@
         "src/lib/direct-messages.ts:createAndSendDirectMessage",
         "src/lib/direct-message-reply-intent.ts",
         "api/_staff-comms-engine.js",
-        "src/lib/staff-messages.ts"
+        "src/lib/staff-messages.ts",
+        "src/lib/ai/extract-prompt.ts:buildExtractionPrompt"
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
@@ -299,7 +300,8 @@
         "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts",
         "api/_staff-comms-engine.test.js",
         "api/staff-message-response-delivery.test.js",
-        "src/lib/staff-messages.test.ts"
+        "src/lib/staff-messages.test.ts",
+        "src/lib/ai/extract-prompt.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
