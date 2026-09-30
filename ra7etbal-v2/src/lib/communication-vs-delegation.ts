@@ -136,9 +136,9 @@ DELEGATION: the person is being directly instructed to complete, produce, or ver
 
 Answer on the first line with exactly one word: COMMUNICATION or DELEGATION.
 
-If DELEGATION, first decide who the owner gave each action to.
-- Every action the owner asks ${who} to do belongs to ${who}. That includes several actions joined together ("ask ${who} to do A and B" gives ${who} both A and B), actions that involve telling, calling or informing someone else, and passing back to the owner something ${who} will find out.
-- An action belongs to Carson only when it is about overseeing this assignment rather than doing part of it: tracking or monitoring it, following up on ${who}, waiting for ${who} to confirm, or reminding or updating the owner. Such an action usually speaks about ${who} or the task from the outside (for example "track this", "until he confirms").
+If DELEGATION, decide silently who the owner gave each action to (do not write this reasoning out).
+- Every action the owner asks ${who} to do belongs to ${who}. That includes several actions joined together ("ask ${who} to do A and B" gives ${who} both A and B), actions that involve telling, calling or informing someone else, and passing back to the owner something ${who} will find out. Work that merely sounds like oversight is still ${who}'s when ${who} does it (for example "follow up with the butcher", "track the grocery delivery", "make sure the oven is off").
+- An action belongs to Carson only when it is about overseeing this assignment rather than doing part of it: tracking or monitoring it, following up on ${who}, waiting for ${who} to confirm, or reminding or updating the owner. Such an action usually speaks about ${who} or the task from the outside (for example "track this", "until he confirms"). This stays Carson's even when it is joined to ${who}'s actions with "and".
 
 Then add two lines:
 CARSON: the owner's exact words for any actions that belong to Carson, or NONE.
@@ -169,10 +169,11 @@ export function parseStaffInstructionAnswer(text: string): StaffInstructionInter
     return { classification: "communication", recipientSpan: null, failed: false };
   }
   if (verdict !== "DELEGATION") return FAILED_INTERPRETATION;
-  const recipient = text.match(/RECIPIENT\s*:[ \t]*([^\r\n]*)/i)?.[1]?.trim();
-  // UNCLEAR is the model's own "cannot tell who owns an action" → no span, so
-  // the caller fails closed instead of sending a possibly incomplete instruction.
-  if (!recipient || /^unclear\W*$/i.test(recipient)) {
+  const recipient = text.match(/^[^A-Za-z\r\n]*(?:DELEGATION[^A-Za-z\r\n]*)?RECIPIENT\s*:[ \t]*([^\r\n]*)/im)?.[1]?.trim();
+  // UNCLEAR is the model's own "cannot tell who owns an action" and NONE is
+  // the CARSON line's sentinel → no span, so the caller fails closed instead
+  // of sending a possibly incomplete instruction.
+  if (!recipient || /^(unclear|none)\W*$/i.test(recipient)) {
     return { classification: "delegation", recipientSpan: null, failed: false };
   }
   return { classification: "delegation", recipientSpan: recipient, failed: false };

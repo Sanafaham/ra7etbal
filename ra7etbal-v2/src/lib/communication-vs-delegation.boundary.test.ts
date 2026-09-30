@@ -285,7 +285,7 @@ describe("structured answer with a CARSON line and the UNCLEAR fail-closed answe
     );
   });
 
-  it.each(["UNCLEAR", "unclear.", "Unclear"])(
+  it.each(["UNCLEAR", "unclear.", "Unclear", "NONE"])(
     "RECIPIENT: %s → nothing is sent (recipient_instruction_not_grounded)",
     async (answer) => {
       getSessionMock.mockResolvedValue({ data: { session: { access_token: "jwt" } } });
@@ -306,5 +306,20 @@ describe("structured answer with a CARSON line and the UNCLEAR fail-closed answe
     await interpretStaffInstruction("Ask Christopher to check the pool pump.", { recipientName: "Christopher" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(200);
+  });
+
+  it("only a line that starts with RECIPIENT: is read (a CARSON line mentioning it is ignored)", async () => {
+    const { parseStaffInstructionAnswer } = await import("./communication-vs-delegation");
+    expect(
+      parseStaffInstructionAnswer("DELEGATION\nCARSON: tell the recipient: track this\nRECIPIENT: prepare lunch").recipientSpan,
+    ).toBe("prepare lunch");
+  });
+
+  it("the prompt keeps oversight Carson's even when joined with \"and\", and keeps recipient work that sounds like oversight", async () => {
+    const { buildClassificationPrompt } = await import("./communication-vs-delegation");
+    const prompt = buildClassificationPrompt("Ask Christopher to prepare lunch and track this until he confirms it.", "Christopher");
+    expect(prompt).toMatch(/This stays Carson's even when it is joined to Christopher's actions with "and"\./);
+    expect(prompt).toMatch(/Work that merely sounds like oversight is still Christopher's when Christopher does it/);
+    expect(prompt).toMatch(/do not write this reasoning out/);
   });
 });
