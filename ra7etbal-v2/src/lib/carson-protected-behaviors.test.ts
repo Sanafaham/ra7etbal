@@ -48,6 +48,19 @@
  * always consulted now, with its input changed from the isolated task
  * fragment to the full raw owner utterance (`rawInstruction`) — see
  * sendDelegation in ElevenLabsAgentWidget.tsx.
+ *
+ * C-02 OWNER RULING (2026-09-30, authoritative — see "C-02 — Accountability
+ * determines routing" in RA7ETBAL_STATE.md): routing is decided by one
+ * question — after truthful delivery, does Carson still own follow-through
+ * on the requested outcome? Grammar, Ask vs Tell, and relationship alone do
+ * not decide it. A request for STAFF to call, contact, message or otherwise
+ * personally respond to Sana is TRACKED ("Ask/Tell Grace to call me", "…now",
+ * "…from the office"). A personal/family wish relayed with no retained
+ * custody is DIRECT ("Tell Loulya I would like her to call me."). Presence
+ * the owner witnesses herself stays DIRECT ("Ask Christopher to meet me
+ * outside."). The expectations below that historically said the owner-
+ * response family is communication (PR #49/#50) were reconciled to this
+ * ruling; the history is kept in RA7ETBAL_STATE.md, not rewritten.
  */
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -98,27 +111,19 @@ import type { Person } from "../types/person";
 // communication-vs-delegation.ts's module doc for why that approach failed.
 const KNOWN_COMMUNICATION_TASK_TEXTS = new Set(
   [
-    // Owner-target communication — confirmed production regressions (PR #49-53).
-    "call me",
-    "call me now.",
-    "call me now",
-    "contact me.",
-    "contact me",
-    "text me when you arrive",
-    "message me when you arrive",
+    // Presence the owner witnesses herself — confirmed production
+    // regressions (PR #49-53). The owner-response family that used to be
+    // listed here ("call me", "contact me", "text me when you arrive", …)
+    // is TRACKED for staff under the C-02 owner ruling (2026-09-30) and was
+    // moved to STAFF_OWNER_RESPONSE_TASK_TEXTS below.
     "wait for me.",
     "wait for me in the kitchen. i'm on my way.",
     "wait for me in the kitchen.",
-    "let me know when you arrive",
-    "give me a call",
-    "give us a ring",
     "wait in the kitchen for me.",
     "wait by the car for me.",
-    "call me from the office.",
     "wait until 8.",
     "wait outside for me",
     "wait inside for us",
-    "call me.",
     // Third-party direct communication — no owner-target marker at all.
     // Confirmed production incident (2026-08-16): "Christopher, come to the
     // kitchen now." was misclassified as delegation because the old
@@ -132,6 +137,25 @@ const KNOWN_COMMUNICATION_TASK_TEXTS = new Set(
     "i'm running late.",
   ].map((text) => text.toLowerCase()),
 );
+
+// C-02 owner ruling (2026-09-30): a staff member asked to call, contact,
+// message or otherwise personally respond to Sana owes an action Carson
+// keeps custody of — TRACKED. Historically (PR #49/#50) these were
+// communication; see RA7ETBAL_STATE.md for that superseded history.
+const STAFF_OWNER_RESPONSE_TASK_TEXTS = [
+  "call me",
+  "call me now.",
+  "call me now",
+  "call me.",
+  "call me from the office.",
+  "contact me.",
+  "contact me",
+  "text me when you arrive",
+  "message me when you arrive",
+  "let me know when you arrive",
+  "give me a call",
+  "give us a ring",
+];
 
 async function fakeClassify(text: string): Promise<StaffInstructionClassification> {
   return KNOWN_COMMUNICATION_TASK_TEXTS.has(text.trim().toLowerCase())
@@ -197,24 +221,13 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
 
 describe("isCommunicationStyleTaskText — the one shared classifier", () => {
   it.each([
-    "call me",
-    "call me now.",
-    "call me now",
-    "contact me.",
-    "contact me",
-    "text me when you arrive",
-    "message me when you arrive",
     "wait for me.",
     "wait for me in the kitchen. I'm on my way.",
-    "let me know when you arrive",
-    "give me a call",
-    "give us a ring",
     // Production regression (post-PR #49): a location/time qualifier
     // inserted BETWEEN "wait" and "for me/us" bypassed the classifier,
     // since the original pattern required them adjacent.
     "wait in the kitchen for me.",
     "wait by the car for me.",
-    "call me from the office.",
     "wait until 8.",
     // CodeRabbit finding on PR #50 (2nd round): "outside"/"inside" are
     // adverbs that can stand alone before "for me/us" — unlike "in"/"at"/
@@ -236,6 +249,12 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     "i'm running late.",
   ])("%s -> communication (does not create a tracked task)", async (text) => {
     expect(await classify(text)).toBe(true);
+  });
+
+  // C-02 owner ruling (2026-09-30): staff asked to personally respond to
+  // Sana (call, contact, message, let her know) is tracked work.
+  it.each(STAFF_OWNER_RESPONSE_TASK_TEXTS)("%s -> tracked delegated work for staff (C-02 owner ruling 2026-09-30)", async (text) => {
+    expect(await classify(text)).toBe(false);
   });
 
   it.each([
@@ -297,12 +316,14 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
 // ── 2. Confirmed production regressions — exact evidence, permanently locked ──
 
 describe("Regression: confirmed production evidence must never reproduce", () => {
-  it("'Ask Grace to call me now.' task text is communication, not trackable work", async () => {
-    expect(await classify("call me now.")).toBe(true);
+  // HISTORICAL: PR #49 recorded this phrase as communication. Superseded by
+  // the C-02 owner ruling (2026-09-30): staff owner-response is tracked.
+  it("'Ask Grace to call me now.' task text is tracked work (C-02 owner ruling 2026-09-30; historically communication, PR #49)", async () => {
+    expect(await classify("call me now.")).toBe(false);
   });
 
-  it("'Ask Suresh to call me.' task text is communication, not trackable work", async () => {
-    expect(await classify("call me.")).toBe(true);
+  it("'Ask Suresh to call me.' task text is tracked work (C-02 owner ruling 2026-09-30; historically communication, PR #49)", async () => {
+    expect(await classify("call me.")).toBe(false);
   });
 
   it("'Tell Ghulam to wait for me.' task text is communication, not trackable work", async () => {
@@ -326,8 +347,8 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
     expect(await classify("wait by the car for me.")).toBe(true);
   });
 
-  it("'Ask Grace to call me from the office.' task text is communication, not trackable work", async () => {
-    expect(await classify("call me from the office.")).toBe(true);
+  it("'Ask Grace to call me from the office.' task text is tracked work (C-02 owner ruling 2026-09-30; historically communication, PR #50)", async () => {
+    expect(await classify("call me from the office.")).toBe(false);
   });
 
   it("'Tell Nasira to wait until 8.' task text is communication, not trackable work", async () => {
@@ -395,10 +416,10 @@ describe("Type to Carson — fast-path routing", () => {
     expect(parsed?.recipientName).toBe("Ghulam");
   });
 
-  it("C-02 (2026-09-07): 'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex; the classifier's opinion on the isolated fragment alone is still communication-style (proving the fragment is genuinely ambiguous) — sendDelegation now resolves this correctly by giving the classifier the full utterance instead, not by skipping it (see the 'C-02 — authoritative routing contract' describe block below for the actual end-to-end proof)", async () => {
+  it("C-02 (2026-09-07, reconciled 2026-09-30): 'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex, and the task text is tracked work under the C-02 owner ruling (historically the isolated fragment was treated as communication; the full-utterance proof is in the 'C-02 — authoritative routing contract' block below)", async () => {
     const parsed = parseDelegationFastPath("Ask Grace to call me now.", people);
     expect(parsed).toEqual({ personName: "Grace", taskText: "call me now." });
-    expect(await classify(parsed!.taskText)).toBe(true);
+    expect(await classify(parsed!.taskText)).toBe(false);
   });
 
   it("'Ask Ghulam to bring the car out.' is matched by the delegation fast path and is not communication-style", async () => {
@@ -474,6 +495,9 @@ const AUTHORITATIVE_ROUTING_TRUTH: Record<string, "communication" | "delegation"
   "ask christopher to prepare dinner at 7.": "delegation",
   "ask grace to call me.": "delegation",
   "ask grace to call me now.": "delegation",
+  // C-02 owner ruling (2026-09-30): Ask vs Tell does not change the result.
+  "tell grace to call me.": "delegation",
+  "ask grace to call me from the office.": "delegation",
   "tell grace to arrange the guest room.": "delegation",
   "have christopher buy milk.": "delegation",
   "ask ghulam to bring the car out.": "delegation",
@@ -517,6 +541,31 @@ describe("C-02 — authoritative routing contract, proven at the actual routing-
       { name: "Christopher", task: "bring the car around at 6." },
       { rawInstruction: "Ask Christopher to bring the car around at 6." },
     );
+  });
+
+  it.each([
+    ["Tell Grace to call me.", "Grace", "call me."],
+    ["Ask Grace to call me from the office.", "Grace", "call me from the office."],
+  ])("C-02 owner ruling (2026-09-30): '%s' is not intercepted as a direct message, reaches sendDelegation with the full utterance, and resolves to the tracked lifecycle", async (utterance, name, task) => {
+    expect(parseSimpleDirectMessage(utterance, people)).toBeNull();
+    const sendDelegationFn = vi
+      .fn()
+      .mockImplementation(async (params: { name: string; task: string }, internal: { rawInstruction: string }) => {
+        const isCommunication = await isCommunicationStyleTaskText(internal.rawInstruction, classifyFullUtterance);
+        return isCommunication
+          ? `I sent ${params.name} the message.`
+          : `Done. I asked ${params.name} to ${params.task.replace(/\.$/, "")}.`;
+      });
+
+    const result = await executeDelegationFastPath(
+      utterance,
+      { people, userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result).toMatchObject({ handled: true, status: "sent", personName: name, taskText: task });
+    expect(sendDelegationFn).toHaveBeenCalledWith({ name, task }, { rawInstruction: utterance });
+    expect(await sendDelegationFn.mock.results[0].value).toBe(`Done. I asked ${name} to ${task.replace(/\.$/, "")}.`);
   });
 
   it("TEST 2 — equivalent tracked staff work: 'Ask Christopher to prepare dinner at 7.' also resolves to the tracked lifecycle via the classifier, not a bypass", async () => {
@@ -706,6 +755,8 @@ describe("C-02 gap closure — the legacy send_delegation clientTool is now stru
   it("isReportedThirdPartyDesire does not false-positive on any authoritative tracked example", () => {
     for (const text of [
       "Ask Grace to call me.",
+      "Tell Grace to call me.",
+      "Ask Grace to call me from the office.",
       "Ask Christopher to bring the car around at 6.",
       "Ask Christopher to prepare dinner.",
       "Tell Grace to arrange the guest room.",
@@ -1449,7 +1500,7 @@ describe("Content boundary — C-02 routing is unchanged by recipient interpreta
     "Ask Christopher to prepare lunch for me and track this until he confirms it.",
   ];
   const THIRD_PARTY_DESIRE = ["Tell Loulya I would like her to call me.", "tell her I'd like her to call me"];
-  const corpus = [...KNOWN_COMMUNICATION_TASK_TEXTS, ...DELEGATION_SAMPLES, ...THIRD_PARTY_DESIRE];
+  const corpus = [...KNOWN_COMMUNICATION_TASK_TEXTS, ...STAFF_OWNER_RESPONSE_TASK_TEXTS, ...DELEGATION_SAMPLES, ...THIRD_PARTY_DESIRE];
 
   // Same judgment as fakeClassify, answered in the interpretation shape;
   // for delegation the whole text is offered as the (grounded) span.
