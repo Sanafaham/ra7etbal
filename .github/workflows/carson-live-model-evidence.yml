@@ -44,7 +44,7 @@ jobs:
       github.event.label.name == 'run-live-model-evidence' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ra7etbal-v2
@@ -79,4 +79,4 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY }}
           VITE_SUPABASE_URL: http://127.0.0.1:9
           VITE_SUPABASE_ANON_KEY: evidence-placeholder
-        run: npx vite-node scripts/staff-instruction-live-evidence.ts -- --runs 3
+        run: npx --no-install vite-node scripts/staff-instruction-live-evidence.ts -- --runs 3
