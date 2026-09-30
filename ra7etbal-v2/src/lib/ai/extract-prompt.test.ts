@@ -64,3 +64,31 @@ describe("buildExtractionPrompt — exact brand/product/model text preservation"
     expect(prompt).toMatch(/Never invent time words\./);
   });
 });
+
+describe("RULE 2B — owner → assistant management language is not the recipient's task (C-01 parity with sendDelegation)", () => {
+  const prompt = buildExtractionPrompt("Ask Christopher to prepare lunch for me and track this until he confirms it.", [], "Sana");
+
+  it("tells the extraction model to leave the owner's instructions to the assistant out of recipient content", () => {
+    expect(prompt).toMatch(/RULE 2B — INSTRUCTIONS TO YOU ARE NOT THE RECIPIENT'S TASK/);
+    expect(prompt).toMatch(/Leave those words out of description, personalNote and\s+suggestedMessage/);
+    expect(prompt).toMatch(/Do not create a separate item for them\./);
+  });
+
+  it("keeps the same words when they are the recipient's own work", () => {
+    expect(prompt).toMatch(/follow up with the butcher/);
+    expect(prompt).toMatch(/track\s+the grocery delivery/);
+  });
+
+  it("carries the Production canary worked example with the owner's name", () => {
+    expect(prompt).toMatch(/description: "Prepare lunch for Sana"/);
+  });
+
+  it("sits after RULE 2 and before RULE 3, leaving both intact", () => {
+    const r2 = prompt.indexOf("RULE 2 — PERSONAL NOTE INSIDE A DELEGATION");
+    const r2b = prompt.indexOf("RULE 2B —");
+    const r3 = prompt.indexOf("RULE 3 — INFORMATIONAL MESSAGE");
+    expect(r2).toBeGreaterThan(-1);
+    expect(r2b).toBeGreaterThan(r2);
+    expect(r3).toBeGreaterThan(r2b);
+  });
+});

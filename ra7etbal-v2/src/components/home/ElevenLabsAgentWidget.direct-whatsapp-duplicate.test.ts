@@ -104,7 +104,7 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
 
   it("the communication-reroute sub-block intentionally uses the direct WhatsApp duplicate guard, not the delegation cooldown", () => {
     const rerouteBlock = blockBetween(
-      "if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {",
+      'if (staffInstruction.kind === "communication") {',
       "// 3. Cooldown.",
     );
 

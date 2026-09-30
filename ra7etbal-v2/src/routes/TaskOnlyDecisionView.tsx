@@ -20,6 +20,17 @@ import type { TaskOnlyEscalationDetail } from "../types/staff-message";
  * Pure and hook-free so every state is testable via renderToStaticMarkup.
  */
 
+/**
+ * Shared by both decision choices so neither is visually preferred. Opaque
+ * card surface, strong border and full-contrast ivory text read as clearly
+ * interactive on the dark theme; min-h-12 keeps a comfortable touch target.
+ */
+export const DECISION_BUTTON_CLASS =
+  "min-h-12 w-full rounded-full border border-border-strong bg-card px-5 text-[15px] font-semibold text-ink active:bg-sand";
+/** The explicit "yes, send it" step after Ask again (a confirmation, not a choice between options). */
+export const CONFIRM_BUTTON_CLASS =
+  "min-h-12 w-full rounded-full border border-gold bg-gold px-5 text-[15px] font-semibold text-espresso active:opacity-90";
+
 export type TaskOnlySubmitPhase = "idle" | "confirming_ask_again" | "sending";
 
 export interface TaskOnlyDecisionViewProps {
@@ -122,9 +133,15 @@ export function TaskOnlyDecisionView({
     <div className="mx-auto max-w-lg px-5 py-10">
       <h1 className="text-[22px] font-semibold text-ink">Owner decision</h1>
       <div className="mt-6 space-y-4">
-        <article className="rounded-2xl border border-border bg-white/85 p-4 shadow-sm">
-          <p className="text-sm font-medium text-ink">{detail.assigneeName ?? "Unassigned"}</p>
-          <p className="mt-2 text-sm text-ink">{detail.taskDescription ?? "Task details are unavailable."}</p>
+        {/* Responsibility: opaque card surface with ivory text (the old
+            bg-white/85 rendered near-white text on a near-white card). */}
+        <article className="rounded-2xl border border-border-strong bg-card p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gold">
+            {detail.assigneeName ?? "Unassigned"}
+          </p>
+          <p className="mt-2 break-words text-base leading-relaxed text-ink">
+            {detail.taskDescription ?? "Task details are unavailable."}
+          </p>
         </article>
 
         {result ? (
@@ -136,9 +153,11 @@ export function TaskOnlyDecisionView({
         ) : notCurrent ? (
           <AuthNotice kind="info">{notCurrent}</AuthNotice>
         ) : (
-          <AuthNotice kind="info">
+          // Why Carson is asking — plain, full-contrast text rather than a
+          // tinted notice box, so it reads as the lead-in to the decision.
+          <p role="status" className="px-1 text-[15px] leading-relaxed text-ink">
             {`Carson asked you because ${name} hadn't replied after the follow-up. What should Carson do?`}
-          </AuthNotice>
+          </p>
         )}
 
         {!result && detail.status !== "open" && notCurrent && isNoResponse && (
@@ -148,20 +167,22 @@ export function TaskOnlyDecisionView({
         {submitError && <AuthNotice kind="error">{submitError}</AuthNotice>}
 
         {canChoose && (
-          <div className="rounded-2xl border border-border bg-white/60 p-4 space-y-3">
+          <div className="space-y-3">
+            {/* Two equal, legitimate choices: identical styling, so neither
+                looks preferred, preselected or disabled. */}
             {submitPhase === "idle" && (
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => onChoose("ask_again")}
-                  className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-white"
+                  className={DECISION_BUTTON_CLASS}
                 >
                   Ask again
                 </button>
                 <button
                   type="button"
                   onClick={() => onChoose("keep_waiting")}
-                  className="rounded-full border border-border px-4 py-2 text-sm font-medium text-ink"
+                  className={DECISION_BUTTON_CLASS}
                 >
                   Keep waiting
                 </button>
@@ -172,18 +193,18 @@ export function TaskOnlyDecisionView({
                 <p className="text-sm text-ink">
                   {`Carson will send ${name} one message asking again about this task. Send it?`}
                 </p>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={onConfirmAskAgain}
-                    className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-white"
+                    className={CONFIRM_BUTTON_CLASS}
                   >
                     Send
                   </button>
                   <button
                     type="button"
                     onClick={onCancel}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-ink"
+                    className={DECISION_BUTTON_CLASS}
                   >
                     Cancel
                   </button>
@@ -200,7 +221,7 @@ export function TaskOnlyDecisionView({
         )}
 
         {canRetry && (
-          <div className="rounded-2xl border border-dashed border-border bg-white/40 p-4 space-y-2">
+          <div className="space-y-2">
             {submitPhase === "sending" ? (
               <div className="flex items-center gap-2 text-sm text-ink">
                 <Spinner size={16} label="Sending" />
@@ -210,7 +231,7 @@ export function TaskOnlyDecisionView({
               <button
                 type="button"
                 onClick={onRetryDelivery}
-                className="rounded-full bg-sage px-4 py-2 text-sm font-medium text-white"
+                className={DECISION_BUTTON_CLASS}
               >
                 Try sending again
               </button>

@@ -1,0 +1,82 @@
+name: carson-live-model-evidence
+
+# Bounded live-model evidence gate for the tracked-delegation content
+# boundary (PR #422, Production canary 965f5963). Runs the EXISTING
+# ra7etbal-v2/scripts/staff-instruction-live-evidence.ts, which imports the
+# real production prompt, parser and deterministic grounding from
+# src/lib/communication-vs-delegation.ts — nothing is copied here.
+#
+# TRIGGER — deliberate and manual only. It runs when someone with write
+# access adds the label `run-live-model-evidence` to a pull request from
+# this repository. Pushes, opened/synchronize events and any other label
+# never run the job, so no model calls are spent automatically.
+# (workflow_dispatch was not used: GitHub only offers it for workflows that
+# already exist on the default branch, which would require merging first.)
+# To run again: remove the label and add it again.
+#
+# ISOLATION — no Supabase, no Ra7etBal session, no WhatsApp, no deploy,
+# no database or app state. The only secret is ANTHROPIC_EVIDENCE_KEY, a
+# dedicated key for this gate, passed to one step as an environment
+# variable. It is never echoed, written to a file or uploaded; GitHub also
+# masks it in logs. The two VITE_SUPABASE_* values are inert placeholders
+# that only satisfy the client module's import-time check; nothing connects
+# to them.
+#
+# RESULT — the script prints every run (PASS/FAIL with the grounded
+# recipient text), counts every attempted call including malformed answers,
+# timeouts and errors, and exits non-zero unless every run is correct. That
+# exit code fails this job.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: carson-live-model-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  live-model-evidence:
+    if: >-
+      github.event.label.name == 'run-live-model-evidence' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+
+      - run: npm ci
+
+      - name: Show the exact commit under evidence
+        run: git rev-parse HEAD
+
+      - name: Check the dedicated evidence secret is configured
+        env:
+          HAS_EVIDENCE_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY != '' }}
+        run: |
+          if [ "$HAS_EVIDENCE_KEY" != "true" ]; then
+            echo "::error::Repository secret ANTHROPIC_EVIDENCE_KEY is not set. No live evidence was produced."
+            exit 1
+          fi
+
+      - name: Run live-model evidence (3 independent runs per phrase)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY }}
+          VITE_SUPABASE_URL: http://127.0.0.1:9
+          VITE_SUPABASE_ANON_KEY: evidence-placeholder
+        run: npx --no-install vite-node scripts/staff-instruction-live-evidence.ts -- --runs 3

@@ -172,3 +172,84 @@ describe("Option A — a superseded no_response decision is history, never actio
   });
 });
 
+
+// ── Real-device readability (Production canary, 2026-09-29 iPhone) ──────────
+// The task card rendered near-white text (text-ink #F3EEE6) on bg-white/85,
+// and a pale bg-white/60 action container made Keep waiting look disabled.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIRM_BUTTON_CLASS, DECISION_BUTTON_CLASS } from "./TaskOnlyDecisionView";
+
+const THEME = readFileSync(join(__dirname, "../styles/globals.css"), "utf-8");
+function token(name: string): string {
+  const match = THEME.match(new RegExp(`--color-${name}:\\s*(#[0-9A-Fa-f]{6})`));
+  if (!match) throw new Error(`missing token ${name}`);
+  return match[1];
+}
+function luminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+const buttonTags = (html: string) => [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)];
+
+describe("owner decision page — readability and equal choices", () => {
+  it("no pale translucent white surfaces remain on the page", () => {
+    for (const html of [render(), render({ submitPhase: "confirming_ask_again" }), render({ detail: detail({ status: "failed", ownerChoice: "ask_again" }) })]) {
+      expect(html).not.toMatch(/bg-white\//);
+    }
+  });
+
+  it("the task card is an opaque card surface with full-contrast text (WCAG AAA ≥ 7:1)", () => {
+    const html = render();
+    expect(html).toMatch(/<article class="[^"]*bg-card[^"]*"/);
+    expect(contrast(token("ink"), token("card"))).toBeGreaterThanOrEqual(7);
+    expect(contrast(token("gold"), token("card"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("the explanation is plain full-contrast text on the page background (≥ 7:1)", () => {
+    const html = render();
+    expect(html).toContain("text-ink");
+    expect(html).toContain("hadn&#x27;t replied after the follow-up. What should Carson do?");
+    expect(contrast(token("ink"), token("cream"))).toBeGreaterThanOrEqual(7);
+  });
+
+  it("Ask again and Keep waiting share identical styling — neither preferred, preselected or disabled", () => {
+    const tags = buttonTags(render());
+    expect(tags.map((t) => t[2].trim())).toEqual(["Ask again", "Keep waiting"]);
+    for (const [, attrs] of tags) {
+      expect(attrs).toContain(`class="${DECISION_BUTTON_CLASS}"`);
+      expect(attrs).not.toMatch(/disabled|aria-pressed|aria-selected|aria-checked/);
+    }
+    expect(DECISION_BUTTON_CLASS).toMatch(/min-h-12/); // ≥ 48px touch target
+    expect(DECISION_BUTTON_CLASS).not.toMatch(/opacity|text-stone|text-sand/);
+    expect(contrast(token("ink"), token("card"))).toBeGreaterThanOrEqual(7);
+    expect(contrast(token("border-strong"), token("cream"))).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it("the Send confirmation step is readable (espresso on gold ≥ 7:1)", () => {
+    const tags = buttonTags(render({ submitPhase: "confirming_ask_again" }));
+    expect(tags.map((t) => t[2].trim())).toEqual(["Send", "Cancel"]);
+    expect(tags[0][1]).toContain(`class="${CONFIRM_BUTTON_CLASS}"`);
+    expect(contrast(token("espresso"), token("gold"))).toBeGreaterThanOrEqual(7);
+  });
+
+  it("long task text wraps instead of overflowing on a phone", () => {
+    const long = "prepare lunch for me ".repeat(20) + "supercalifragilisticexpialidocious".repeat(4);
+    const html = render({ detail: detail({ taskDescription: long }) });
+    expect(html).toMatch(/<p class="[^"]*break-words[^"]*">prepare lunch/);
+  });
+
+  it("terminal / non-actionable states still render with no choice buttons", () => {
+    expect(buttonTags(render({ detail: detail({ status: "answered", ownerChoice: "keep_waiting", alreadyAnswered: true }) }))).toHaveLength(0);
+    expect(buttonTags(render({ detail: detail({ status: "superseded" }) }))).toHaveLength(0);
+    expect(buttonTags(render({ detail: detail({ taskNotCurrentReason: "completed" }) }))).toHaveLength(0);
+    expect(buttonTags(render({ result: "kept_waiting" }))).toHaveLength(0);
+  });
+});
