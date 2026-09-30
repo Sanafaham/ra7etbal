@@ -265,13 +265,14 @@
         "src/components/home/ElevenLabsAgentWidget.tsx:sendDelegation (communication reroute)"
       ],
       "files_functions": [
-        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText / classifyStaffInstructionViaModel",
+        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText / classifyStaffInstructionViaModel / interpretStaffInstruction / groundRecipientInstruction",
         "src/lib/anthropic-client.ts:callAnthropicProxy (shared, authenticated Anthropic proxy client)",
         "src/lib/direct-message-fast-path.ts:parseSimpleDirectMessage / executeDirectMessageFastPath",
         "src/lib/direct-messages.ts:createAndSendDirectMessage",
         "src/lib/direct-message-reply-intent.ts",
         "api/_staff-comms-engine.js",
-        "src/lib/staff-messages.ts"
+        "src/lib/staff-messages.ts",
+        "src/lib/ai/extract-prompt.ts:buildExtractionPrompt (RULE 2B)"
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
@@ -292,6 +293,7 @@
       "focused_tests": [
         "src/lib/carson-protected-behaviors.test.ts",
         "src/lib/communication-vs-delegation.model.test.ts",
+        "src/lib/communication-vs-delegation.boundary.test.ts",
         "src/lib/direct-message-fast-path.test.ts",
         "src/lib/direct-message-reply-intent.test.ts",
         "src/lib/direct-messages.test.ts",
@@ -299,7 +301,8 @@
         "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts",
         "api/_staff-comms-engine.test.js",
         "api/staff-message-response-delivery.test.js",
-        "src/lib/staff-messages.test.ts"
+        "src/lib/staff-messages.test.ts",
+        "src/lib/ai/extract-prompt.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -312,7 +315,12 @@
       "unresolved": [
         "classifyStaffInstructionViaModel's own judgment accuracy is not, and cannot be, proven by a mocked unit test — carson-protected-behaviors.test.ts and this capability's focused tests validate the WIRING (that the correct classification leads to the correct code path) via an injected deterministic classifier, not the real model's semantic accuracy for arbitrary novel phrasing. Real-world accuracy must be validated by production observation, not CI.",
         "On any classification failure (network error, non-OK proxy response, unparseable/ambiguous model output), the classifier fails safe to 'delegation' — a real plain communication could occasionally be over-tracked as a task during a failure window. This is a deliberate trade-off (visible/correctable over-tracking is safer than silently dropping real delegated work) but is a live-traffic-dependent cost, not a zero-cost fix."
-      ]
+      ],
+      "content_boundary": {
+        "contract": "A tracked delegation's recipient content is only the owner's own words for the recipient's work. The single existing C-02 model call names that span; groundRecipientInstruction accepts it only when it is a contiguous piece of the owner's text that does not still address the recipient. Owner → Carson management language (track this, follow up, report back) never becomes tasks.description or staff WhatsApp content. If the span cannot be grounded or the call fails/times out, sendDelegation creates nothing, sends nothing and records a failure (never success). Clear My Head / Text Carson carry the same rule in the existing Sonnet extraction prompt (RULE 2B).",
+        "origin": "Production canary 2026-09-29, task 965f5963 (historical evidence preserved unmodified).",
+        "live_evidence": "scripts/staff-instruction-live-evidence.ts (requires ANTHROPIC_API_KEY; not yet run — see PR)"
+      }
     },
     {
       "id": "automation_execution_confirmation",

@@ -97,7 +97,7 @@ import {
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
-import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
+import { interpretStaffInstruction } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -2103,7 +2103,7 @@ export default function ElevenLabsAgentWidget({
         return "I did not receive a person name. Ask the user who to delegate to.";
       }
 
-      const taskText = extractTaskParam(params).trim();
+      let taskText = extractTaskParam(params).trim();
       if (!taskText || taskText.length < 4) {
         return "The task description is too vague. Ask the user what exactly they should do.";
       }
@@ -2365,7 +2365,33 @@ export default function ElevenLabsAgentWidget({
       // parseSimpleDirectMessage/executeDirectMessageFastPath instead. See
       // carson-protected-behaviors.test.ts for the full authoritative
       // routing-outcome test matrix (mandatory CI gate).
-      if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {
+      // Content boundary (2026-09-30, Production canary 965f5963): the same
+      // single C-02 model call also names which of the owner's own words are
+      // the recipient's work, so owner → Carson management language ("track
+      // this until he confirms it") never becomes staff content. The span is
+      // grounded deterministically in the owner's text; if that cannot be
+      // established, nothing is created or sent (fail closed, no success).
+      const staffInstruction = await interpretStaffInstruction(
+        internal?.rawInstruction ?? message ?? taskText,
+        { recipientName: person.name },
+      );
+      if (staffInstruction.kind === "unsafe") {
+        console.warn("[send_delegation_content_boundary_unsafe]", {
+          recipientName: person.name,
+          reason: staffInstruction.reason,
+        });
+        const resultText =
+          `I didn't send anything to ${person.name}. I couldn't tell exactly which part of that was for ` +
+          `${person.name} and which part was for me. What should I ask ${person.name} to do?`;
+        recordCanonicalConsequentialResult({
+          toolName: "send_delegation",
+          kind: "clarification",
+          resultText,
+          outcome: "failure",
+        });
+        return resultText;
+      }
+      if (staffInstruction.kind === "communication") {
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }
@@ -2429,6 +2455,11 @@ export default function ElevenLabsAgentWidget({
           return `I couldn't send ${person.name} the message. Please try again.`;
         }
       }
+
+      // Tracked delegation from here on: the task, the staff WhatsApp, the
+      // cooldown key and Carson's confirmation all use only the grounded
+      // recipient instruction, never the owner's management language.
+      taskText = staffInstruction.recipientInstruction;
 
       // 3. Cooldown. Fuzzy-matched by person + task (not person alone, so a
       // Daily Brief can legitimately send Christopher both dinner prep and

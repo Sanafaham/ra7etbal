@@ -325,6 +325,26 @@ personalNote pronoun rules (owner → recipient perspective):
 Always set personalNote to null when no note is present.
 
 ================================================================
+RULE 2B — INSTRUCTIONS TO YOU ARE NOT THE RECIPIENT'S TASK
+================================================================
+
+Sometimes the user also tells YOU (the assistant) how to manage the
+task — for example to track it, follow up on it, or report back to the
+user ("track this until he confirms it", "track this for me: ask Grace
+to…"). A delegation is already tracked and followed up, so:
+
+  - Leave those words out of description, personalNote and
+    suggestedMessage. The recipient only receives their own work.
+  - Do not create a separate item for them.
+
+Keep such words only when they are part of the recipient's own work
+("ask Christopher to follow up with the butcher", "ask Grace to track
+the grocery delivery", "ask Ghulam to make sure the gate is locked").
+
+  "Ask Christopher to prepare lunch for me and track this until he confirms it."
+    → ONE delegation, description: "Prepare lunch for ${ownerRef}"
+
+================================================================
 RULE 3 — INFORMATIONAL MESSAGE, NO CONFIRMATION LOOP
 ================================================================
 

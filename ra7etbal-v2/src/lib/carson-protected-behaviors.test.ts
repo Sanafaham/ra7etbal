@@ -1037,13 +1037,14 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "const person = matches[0];",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)");
+    expect(block).toContain("await interpretStaffInstruction(");
+    expect(block).toContain("internal?.rawInstruction ?? message ?? taskText,");
     expect(block).toContain("createAndSendDirectMessage(");
   });
 
   it("the communication-guard block never calls createAndSendDelegation — no task is created for a reroute", () => {
     const block = blockBetween(
-      "if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {",
+      'if (staffInstruction.kind === "communication") {',
       "// 3. Cooldown.",
     );
     expect(block).not.toContain("createAndSendDelegation(");
@@ -1054,7 +1055,8 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "const person = matches[0];",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)");
+    expect(block).toContain("await interpretStaffInstruction(");
+    expect(block).toContain("internal?.rawInstruction ?? message ?? taskText,");
     // No unconditional-bypass flag survives from PR #398.
     expect(block).not.toContain("viaDeterministicFastPath");
   });
@@ -1156,7 +1158,7 @@ describe("Direct-message send path never generates a confirmation link", () => {
 describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
   it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
     const block = blockBetween(
-      "if (await isCommunicationStyleTaskText(internal?.rawInstruction ?? message ?? taskText)) {",
+      'if (staffInstruction.kind === "communication") {',
       "// 3. Cooldown.",
     );
     expect(block).toContain("const successText = `I sent ${person.name} the message.`;");
@@ -1427,5 +1429,67 @@ describe("Owner-reference normalization at the shared direct-message delivery bo
 
     expect(createMessageFnA).toHaveBeenCalledWith(expect.objectContaining({ content: "call Sana now." }));
     expect(createMessageFnB).toHaveBeenCalledWith(expect.objectContaining({ content: "call Sana now." }));
+  });
+});
+
+// ── Content boundary (2026-09-30, Production canary 965f5963) ────────────────
+//       The one C-02 model call now also names which of the owner's own words
+//       are the recipient's work. Routing (communication vs tracked
+//       delegation) must be exactly what isCommunicationStyleTaskText decides
+//       for the same classification, and an ungrounded or failed
+//       interpretation must never create or send anything.
+
+describe("Content boundary — C-02 routing is unchanged by recipient interpretation", () => {
+  const DELEGATION_SAMPLES = [
+    "clean the kitchen.",
+    "Ask Christopher to bring the car around at 6.",
+    "Ask Grace to call me.",
+    "Ask Christopher to make the pizza.",
+    "prepare dinner for 8 people",
+    "Ask Christopher to prepare lunch for me and track this until he confirms it.",
+  ];
+  const THIRD_PARTY_DESIRE = ["Tell Loulya I would like her to call me.", "tell her I'd like her to call me"];
+  const corpus = [...KNOWN_COMMUNICATION_TASK_TEXTS, ...DELEGATION_SAMPLES, ...THIRD_PARTY_DESIRE];
+
+  // Same judgment as fakeClassify, answered in the interpretation shape;
+  // for delegation the whole text is offered as the (grounded) span.
+  async function fakeInterpret(text: string) {
+    const classification = await fakeClassify(text);
+    return { classification, recipientSpan: classification === "delegation" ? text : null, failed: false };
+  }
+
+  it.each(corpus)("%j routes identically through interpretStaffInstruction", async (text) => {
+    const { interpretStaffInstruction } = await import("./communication-vs-delegation");
+    const decision = await interpretStaffInstruction(text, { interpretFn: fakeInterpret });
+    expect(decision.kind === "communication").toBe(await classify(text));
+    expect(decision.kind).not.toBe("unsafe");
+  });
+
+  it("sendDelegation checks the unsafe decision first and returns before anything is created or sent, recording a failure (never success)", () => {
+    const block = blockBetween(
+      'if (staffInstruction.kind === "unsafe") {',
+      'if (staffInstruction.kind === "communication") {',
+    );
+    expect(block).toContain('outcome: "failure"');
+    expect(block).toContain("return resultText;");
+    expect(block).not.toContain("createAndSendDelegation(");
+    expect(block).not.toContain("createAndSendDirectMessage(");
+    expect(block).not.toContain("sendContextualUpdate(");
+    expect(block).not.toMatch(/Done\.|I asked|\bsent\b/);
+  });
+
+  it("the tracked branch uses only the grounded recipient instruction for the task, the send and the confirmation", () => {
+    const tracked = blockBetween("// 3. Cooldown.", "return successText;");
+    const beforeCooldown = blockBetween('if (staffInstruction.kind === "communication") {', "// 3. Cooldown.");
+    expect(beforeCooldown).toContain("taskText = staffInstruction.recipientInstruction;");
+    expect(tracked).toContain("createAndSendDelegation(");
+    expect(tracked).toContain("taskText,");
+  });
+
+  it("there is exactly one interpretation call site, inside the one shared sendDelegation (voice, typed and legacy all converge there)", () => {
+    const calls = WIDGET_SOURCE.match(/await interpretStaffInstruction\(/g) ?? [];
+    expect(calls).toHaveLength(1);
+    const sendDelegationBlock = blockBetween("const sendDelegation = useCallback(", "const sendDelegationCompat = useCallback(");
+    expect(sendDelegationBlock).toContain("await interpretStaffInstruction(");
   });
 });
