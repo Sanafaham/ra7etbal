@@ -1038,7 +1038,7 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "// 3. Cooldown.",
     );
     expect(block).toContain("await interpretStaffInstruction(");
-    expect(block).toContain("internal?.rawInstruction ?? message ?? taskText,");
+    expect(block).toContain("internal?.rawInstruction?.trim() || message?.trim() || taskText,");
     expect(block).toContain("createAndSendDirectMessage(");
   });
 
@@ -1056,7 +1056,7 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
       "// 3. Cooldown.",
     );
     expect(block).toContain("await interpretStaffInstruction(");
-    expect(block).toContain("internal?.rawInstruction ?? message ?? taskText,");
+    expect(block).toContain("internal?.rawInstruction?.trim() || message?.trim() || taskText,");
     // No unconditional-bypass flag survives from PR #398.
     expect(block).not.toContain("viaDeterministicFastPath");
   });
@@ -1491,5 +1491,19 @@ describe("Content boundary — C-02 routing is unchanged by recipient interpreta
     expect(calls).toHaveLength(1);
     const sendDelegationBlock = blockBetween("const sendDelegation = useCallback(", "const sendDelegationCompat = useCallback(");
     expect(sendDelegationBlock).toContain("await interpretStaffInstruction(");
+  });
+});
+
+describe("Content boundary — legacy send_delegation without a message still reaches the task text", () => {
+  it("the interpretation source uses || so an empty extracted message ('' from extractMessageParam) falls through to taskText", () => {
+    const block = blockBetween("const person = matches[0];", "// 3. Cooldown.");
+    expect(block).toContain("internal?.rawInstruction?.trim() || message?.trim() || taskText,");
+    expect(block).not.toContain("internal?.rawInstruction ?? message ?? taskText");
+  });
+
+  it("an unavailable interpretation says so truthfully instead of blaming the owner's wording", () => {
+    const block = blockBetween('if (staffInstruction.kind === "unsafe") {', 'if (staffInstruction.kind === "communication") {');
+    expect(block).toContain('staffInstruction.reason === "interpretation_unavailable"');
+    expect(block).toContain("I couldn't check that instruction just now.");
   });
 });

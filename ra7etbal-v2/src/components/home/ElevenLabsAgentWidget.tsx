@@ -2371,8 +2371,10 @@ export default function ElevenLabsAgentWidget({
       // this until he confirms it") never becomes staff content. The span is
       // grounded deterministically in the owner's text; if that cannot be
       // established, nothing is created or sent (fail closed, no success).
+      // `||`, not `??`: extractMessageParam returns "" when the legacy tool
+      // call has no message, and an empty source must fall through to taskText.
       const staffInstruction = await interpretStaffInstruction(
-        internal?.rawInstruction ?? message ?? taskText,
+        internal?.rawInstruction?.trim() || message?.trim() || taskText,
         { recipientName: person.name },
       );
       if (staffInstruction.kind === "unsafe") {
@@ -2381,8 +2383,10 @@ export default function ElevenLabsAgentWidget({
           reason: staffInstruction.reason,
         });
         const resultText =
-          `I didn't send anything to ${person.name}. I couldn't tell exactly which part of that was for ` +
-          `${person.name} and which part was for me. What should I ask ${person.name} to do?`;
+          staffInstruction.reason === "interpretation_unavailable"
+            ? `I didn't send anything to ${person.name}. I couldn't check that instruction just now. Please try again in a moment.`
+            : `I didn't send anything to ${person.name}. I couldn't tell exactly which part of that was for ` +
+              `${person.name} and which part was for me. What should I ask ${person.name} to do?`;
         recordCanonicalConsequentialResult({
           toolName: "send_delegation",
           kind: "clarification",

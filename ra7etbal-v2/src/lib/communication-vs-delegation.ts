@@ -155,18 +155,15 @@ const FAILED_INTERPRETATION: StaffInstructionInterpretation = {
 
 /** Parses the model's answer: first line the classification, then an optional RECIPIENT: line. */
 export function parseStaffInstructionAnswer(text: string): StaffInstructionInterpretation {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const verdict = lines[0]?.toUpperCase();
+  // The verdict is the first word of the answer, ignoring markdown or
+  // trailing punctuation ("**DELEGATION**", "DELEGATION.").
+  const verdict = text.trim().match(/^[^A-Za-z]*([A-Za-z]+)/)?.[1]?.toUpperCase();
   if (verdict === "COMMUNICATION") {
     return { classification: "communication", recipientSpan: null, failed: false };
   }
   if (verdict !== "DELEGATION") return FAILED_INTERPRETATION;
-  const recipientLine = lines.slice(1).find((line) => /^RECIPIENT\s*:/i.test(line));
-  const recipientSpan = recipientLine ? recipientLine.replace(/^RECIPIENT\s*:\s*/i, "") : null;
-  return { classification: "delegation", recipientSpan, failed: false };
+  const recipient = text.match(/RECIPIENT\s*:[ \t]*([^\r\n]*)/i)?.[1]?.trim();
+  return { classification: "delegation", recipientSpan: recipient || null, failed: false };
 }
 
 /**
@@ -199,8 +196,11 @@ export async function interpretStaffInstructionViaModel(
     const body = (await res.json()) as {
       content?: Array<{ type?: string; text?: string }>;
       error?: unknown;
+      stop_reason?: string;
     };
     if (body.error) return FAILED_INTERPRETATION;
+    // A cut-off answer could still ground as a partial instruction.
+    if (body.stop_reason === "max_tokens") return FAILED_INTERPRETATION;
 
     return parseStaffInstructionAnswer(body.content?.[0]?.text ?? "");
   } catch {
@@ -248,6 +248,8 @@ export function groundRecipientInstruction(
   const candidate = normalizeForGrounding(span)
     .replace(/^["']+|["']+$/g, "")
     .replace(/[\s.,;:!?]+$/g, "")
+    // "to prepare lunch" → "prepare lunch": the leftover of "ask X to".
+    .replace(/^to\s+/i, "")
     .trim();
   if (candidate.length < 3 || !/[a-z]/i.test(candidate)) return null;
 
@@ -257,7 +259,7 @@ export function groundRecipientInstruction(
   const grounded = owner.slice(index, index + candidate.length);
 
   const name = recipientName?.trim();
-  if (name && new RegExp(`\\b${escapeRegExp(name)}\\b`, "i").test(grounded)) return null;
+  if (name && new RegExp(`(?<![\\w])${escapeRegExp(name)}(?![\\w])`, "i").test(grounded)) return null;
   return grounded;
 }
 

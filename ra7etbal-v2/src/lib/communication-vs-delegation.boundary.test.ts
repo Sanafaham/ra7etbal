@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * the owner's own contiguous words. Anything else is unsafe: nothing is sent.
  * These tests inject the model's answer; they prove the grounding and
  * fail-closed wiring, not the live model's judgment (see
- * scripts/staff-instruction-live-evidence.mjs for that evidence).
+ * scripts/staff-instruction-live-evidence.ts for that evidence).
  */
 
 const { getSessionMock } = vi.hoisted(() => ({ getSessionMock: vi.fn() }));
@@ -201,5 +201,39 @@ describe("groundRecipientInstruction — pure grounding", () => {
   });
   it("treats regex metacharacters in names literally", () => {
     expect(groundRecipientInstruction("clean the car", "ask J.R. to clean the car", "J.R.")).toBe("clean the car");
+  });
+});
+
+describe("review fixes (PR #422)", () => {
+  it.each([
+    ["DELEGATION.\nRECIPIENT: prepare lunch", "prepare lunch"],
+    ["**DELEGATION**\nRECIPIENT: prepare lunch", "prepare lunch"],
+    ["DELEGATION RECIPIENT: prepare lunch", "prepare lunch"],
+  ])("tolerates a decorated verdict %j", async (answer, span) => {
+    const { parseStaffInstructionAnswer } = await import("./communication-vs-delegation");
+    expect(parseStaffInstructionAnswer(answer)).toEqual({ classification: "delegation", recipientSpan: span, failed: false });
+  });
+
+  it("a cut-off answer (stop_reason max_tokens) fails closed instead of grounding a partial instruction", async () => {
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: "jwt" } } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ stop_reason: "max_tokens", content: [{ type: "text", text: "DELEGATION\nRECIPIENT: prepare lunch and then" }] }),
+      }),
+    );
+    expect((await interpretStaffInstruction("Ask Christopher to prepare lunch and then set the table.", { recipientName: "Christopher" })).kind).toBe("unsafe");
+  });
+
+  it("drops the leftover 'to' of 'ask X to' so Carson never says 'asked X to to …'", async () => {
+    expect(await decide("Ask Christopher to prepare lunch for me.", "to prepare lunch for me")).toEqual({
+      kind: "delegation",
+      recipientInstruction: "prepare lunch for me",
+    });
+  });
+
+  it("recipient names ending in punctuation are still detected (fail closed)", () => {
+    expect(groundRecipientInstruction("ask J.R. to clean the car", "ask J.R. to clean the car", "J.R.")).toBeNull();
   });
 });
