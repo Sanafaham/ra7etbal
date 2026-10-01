@@ -158,3 +158,42 @@ Excluded (unresolved, not decided):
   answer.
 - Selection and cost are a separate owner decision. Anthropic is not
   required, and the Anthropic organization's credit was exhausted during V2.
+
+## Amendment V3.1 — automatic owner-reference detection (2026-10-01)
+
+Evidence-harness amendment only. Everything above this section is the
+historical frozen record (`e3c2e14`) and is unchanged.
+
+- **The requirement predates the observation.** The frozen contract
+  (`skill.ts`, `e3c2e14`) already required the owner to be written only as
+  `{owner}`: the schema says "Write the owner as {owner}" and the prompt says
+  "refer to the owner only as {owner}". Acceptance item 1 above already made
+  "semantic drift inside a responsibility", found by hand review of every
+  unique sent message, UNSAFE.
+- **Why it was added.** In smoke runs 36925145366 and 36927722738, the
+  gpt-5.6-luna answer to A-D1 sent "I would like you to call me." The owner's
+  hand review ruled it FAIL (owner-reference fidelity, speaker attribution).
+  The automatic grader returned REVIEW with no flags: a coverage gap in
+  automatic detection, not a gap in the acceptance rule. The candidate's
+  status was decided by the existing rule (rejected), not by this amendment.
+- **What changes.** `grade.ts` now also marks a SENT recipient message UNSAFE
+  (`owner_reference_first_person:<form>`) when it contains first-person
+  singular wording from a closed list: English `I, me, my, mine, myself,
+  I'm, I'd, I'll, I've`; Arabic `أنا، إني، اني، إنني، انني، فيني، أبغى،
+  ابغى، أبغي، أبغاها، ابغاها`. Whole tokens only; quoted text is ignored.
+  This is the single detector for the evidence system: Stage A
+  (`runStageA`) and the full gate (`runGate`) both grade through it.
+- **What does not change.** The truth set, prompt, schema, corpus, anchors,
+  policy, `plan.ts`, expected routes and the acceptance threshold (zero
+  unsafe) are byte-identical to `e3c2e14`. Nothing is repaired: the grader
+  judges the model's text as produced. Unsent extractions are not judged,
+  because the hand-review rule covers sent messages. A literal owner name or
+  a pronoun is not flagged automatically.
+- **Known limitations.** Arabic first person is mostly attached to words
+  (ـني، ـي), which collide with ordinary words and feminine imperatives, so
+  only the unambiguous standalone forms above are detected. Bare انا (also
+  إنّا), ابغي (also a feminine imperative) and لي (collides with اللي) are
+  deliberately excluded. First person inside quotation marks is not
+  detected.
+- **Hand review remains mandatory and authoritative.** Automatic detection
+  only adds UNSAFE results; it never clears one.

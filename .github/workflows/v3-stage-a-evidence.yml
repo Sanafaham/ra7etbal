@@ -92,6 +92,9 @@ jobs:
       - name: Show the exact commit under evidence
         run: git rev-parse HEAD
 
+      # grade.ts and GATE_SPEC.md carry the V3.1 owner-reference amendment
+      # (see GATE_SPEC.md) and are covered by the deterministic tests below;
+      # every other frozen V3 file must stay byte-identical to FROZEN_V3_SHA.
       - name: Frozen V3 files are unchanged from the frozen commit
         run: |
           git diff --exit-code "$FROZEN_V3_SHA" HEAD -- \
@@ -100,12 +103,10 @@ jobs:
             scripts/second-brain-consequential-v3-evidence/policy.ts \
             scripts/second-brain-consequential-v3-evidence/plan.ts \
             scripts/second-brain-consequential-v3-evidence/corpus.ts \
-            scripts/second-brain-consequential-v3-evidence/grade.ts \
             scripts/second-brain-consequential-v3-evidence/run.ts \
             scripts/second-brain-consequential-v3-evidence/policy.test.ts \
             scripts/second-brain-consequential-v3-evidence/plan.test.ts \
-            scripts/second-brain-consequential-v3-evidence/corpus.test.ts \
-            scripts/second-brain-consequential-v3-evidence/GATE_SPEC.md
+            scripts/second-brain-consequential-v3-evidence/corpus.test.ts
 
       - name: V3 and Stage-A deterministic tests (no model calls)
         run: npx --no-install vitest run scripts/second-brain-consequential-v3-evidence/
