@@ -7,7 +7,7 @@ import { runGate, type ModelClient, type RunRecord } from "../run";
 import type { buildSkillRequest, CarsonInstruction, V3Extraction } from "../skill";
 import { STAGE_A_GROUPS, STAGE_A_IDS, STAGE_A_RUNS_PER_CASE, stageACases, stageAJobs } from "./cases";
 import { parseMaxCalls, runStageA, type StageARecord } from "./runner";
-import { buildChatCompletionsBody, createOpenAIEvidenceClient } from "./openai-evidence-adapter";
+import { buildResponsesBody, createOpenAIEvidenceClient } from "./openai-evidence-adapter";
 import { OWNER_PEOPLE } from "../corpus";
 import { buildSkillRequest as buildRequest } from "../skill";
 import { vi } from "vitest";
@@ -177,7 +177,7 @@ describe("Stage-A runner", () => {
     await runStageA(mockClient(answer), (r) => stageA.push(r));
     expect(stageA.length).toBeGreaterThan(1);
     for (const r of stageA) {
-      const { usage: _u, refusal: _r, providerError: _p, ...core } = r;
+      const { usage: _u, refusal: _r, providerError: _p, responseStatus: _s, ...core } = r;
       expect(core).toEqual(frozen.find((f) => f.id === r.id && f.run === r.run));
     }
   });
@@ -217,8 +217,8 @@ describe("Owner call ceiling (one-call diagnostic)", () => {
   it("end to end through the real adapter (network mocked): one request, unchanged request body, even on success", async () => {
     const extraction = truthExtraction(stageACases()[0]);
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
-      model: MODEL, usage: { prompt_tokens: 1, completion_tokens: 1 },
-      choices: [{ message: { tool_calls: [{ type: "function", function: { name: "extract_owner_instruction", arguments: JSON.stringify(extraction) } }] } }],
+      status: "completed", error: null, model: MODEL, usage: { input_tokens: 1, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 } },
+      output: [{ type: "function_call", name: "extract_owner_instruction", arguments: JSON.stringify(extraction), status: "completed" }],
     }), { status: 200 }));
     const client = createOpenAIEvidenceClient({ model: MODEL, env: { OPENAI_EVIDENCE_KEY: "sk-test-only-local" }, fetchImpl });
     const s = await runStageA(client, () => {}, { maxCalls: 1 });
@@ -226,6 +226,7 @@ describe("Owner call ceiling (one-call diagnostic)", () => {
     expect(s).toMatchObject({ stopReason: "call_ceiling", completed: 1, verdict: "INCOMPLETE" });
     const sent = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
     const oT1 = buildRequest({ utterance: stageACases()[0].u, people: OWNER_PEOPLE.map(({ name, relationship }) => ({ name, relationship })) });
-    expect(sent).toEqual(buildChatCompletionsBody(MODEL, oT1));
+    expect((fetchImpl.mock.calls[0] as unknown as [string])[0]).toBe("https://api.openai.com/v1/responses");
+    expect(sent).toEqual(buildResponsesBody(MODEL, oT1));
   });
 });

@@ -16,14 +16,22 @@
  * frozen boundary (plan.ts): the producing model must start with the requested
  * model name.
  *
- * Output: one forced, strict function call carrying the frozen V3 TOOL_SCHEMA.
- * Each request is sent once, with no retry.
+ * Output: one forced, strict function call carrying the frozen V3 TOOL_SCHEMA,
+ * through the Responses API (POST /v1/responses) with reasoning effort fixed
+ * at "medium" (gpt-5.6-luna's documented default, stated explicitly). OpenAI
+ * rejects function tools with reasoning on /v1/chat/completions for this
+ * model (Stage-A diagnostic run 36909196714), so Chat Completions is not used.
+ * The frozen system prompt is sent as `instructions` and the frozen user text
+ * as the one user input. Each request is sent once, with no retry, and
+ * nothing is stored by OpenAI (store: false).
  */
 import type { ModelClient } from "../run";
 import type { buildSkillRequest } from "../skill";
 
 export const EVIDENCE_KEY_VAR = "OPENAI_EVIDENCE_KEY";
-export const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
+export const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+/** Fixed for the V3 experiment. Not a parameter. */
+export const REASONING_EFFORT = "medium";
 export const DEFAULT_TIMEOUT_MS = 60_000;
 export const MODEL_MISMATCH_ERROR = "auth:producing_model_mismatch";
 
@@ -54,7 +62,9 @@ export interface EvidenceResult {
   error?: string;
   providerError?: ProviderErrorDetail;
   ms: number;
-  usage?: { promptTokens: number | null; completionTokens: number | null };
+  usage?: { promptTokens: number | null; completionTokens: number | null; reasoningTokens: number | null };
+  /** The Responses API `status` of a 2xx response (expected "completed"). */
+  responseStatus?: string | null;
   refusal?: boolean;
 }
 
@@ -99,28 +109,51 @@ export function toStrictParameters(schema: JsonSchema): JsonSchema {
   return walk(schema) as JsonSchema;
 }
 
-export function buildChatCompletionsBody(model: string, request: SkillRequest) {
+export function buildResponsesBody(model: string, request: SkillRequest) {
   return {
     model,
-    messages: [
-      { role: "system", content: request.system },
-      { role: "user", content: request.user },
-    ],
+    instructions: request.system,
+    input: [{ role: "user", content: request.user }],
     tools: [
       {
         type: "function",
-        function: {
-          name: request.tool.name,
-          description: request.tool.description,
-          parameters: toStrictParameters(request.tool.input_schema as unknown as JsonSchema),
-          strict: true,
-        },
+        name: request.tool.name,
+        description: request.tool.description,
+        parameters: toStrictParameters(request.tool.input_schema as unknown as JsonSchema),
+        strict: true,
       },
     ],
-    tool_choice: { type: "function", function: { name: request.tool.name } },
+    tool_choice: { type: "function", name: request.tool.name },
     parallel_tool_calls: false,
+    reasoning: { effort: REASONING_EFFORT },
     store: false,
   };
+}
+
+/**
+ * Reads only the expected Responses API result. The extraction is the parsed
+ * `arguments` of exactly one completed `function_call` for the frozen tool,
+ * in a response whose status is "completed" and whose output holds nothing
+ * but reasoning items and that one call. Anything else gives a null
+ * extraction (or the unparsed string), which the frozen boundary marks
+ * MALFORMED. Nothing is ever repaired here.
+ */
+export function extractFromResponses(data: Record<string, unknown>, toolName: string): { extraction: unknown; refusal: boolean } {
+  const output = Array.isArray(data.output) ? (data.output as Array<Record<string, unknown>>) : null;
+  const refusal = !!output?.some(
+    (item) => item?.type === "message" && Array.isArray(item.content) && (item.content as Array<Record<string, unknown>>).some((c) => c?.type === "refusal"),
+  );
+  if (data.status !== "completed" || (data.error !== undefined && data.error !== null) || !output) return { extraction: null, refusal };
+  if (output.some((item) => !item || (item.type !== "reasoning" && item.type !== "function_call"))) return { extraction: null, refusal };
+  const calls = output.filter((item) => item.type === "function_call");
+  if (calls.length !== 1) return { extraction: null, refusal };
+  const call = calls[0];
+  if (call.name !== toolName || typeof call.arguments !== "string" || (call.status !== undefined && call.status !== "completed")) return { extraction: null, refusal };
+  try {
+    return { extraction: JSON.parse(call.arguments), refusal };
+  } catch {
+    return { extraction: call.arguments, refusal };
+  }
 }
 
 const KEY_SHAPE = /\b(sk|rk|ek)-[A-Za-z0-9_*\-]{6,}/g;
@@ -177,10 +210,10 @@ export function createOpenAIEvidenceClient(opts: OpenAIEvidenceClientOptions): O
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res: Response;
       try {
-        res = await fetchImpl(OPENAI_CHAT_COMPLETIONS_URL, {
+        res = await fetchImpl(OPENAI_RESPONSES_URL, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-          body: JSON.stringify(buildChatCompletionsBody(model, request)),
+          body: JSON.stringify(buildResponsesBody(model, request)),
           signal: controller.signal,
         });
       } catch (err) {
@@ -209,33 +242,20 @@ export function createOpenAIEvidenceClient(opts: OpenAIEvidenceClientOptions): O
       if (!data) return { error: "provider_bad_json", ms };
 
       const producingModel = typeof data.model === "string" ? data.model : undefined;
+      const responseStatus = typeof data.status === "string" ? data.status : null;
       const u = (data.usage ?? {}) as Record<string, unknown>;
+      const details = (u.output_tokens_details ?? {}) as Record<string, unknown>;
       const usage = {
-        promptTokens: typeof u.prompt_tokens === "number" ? u.prompt_tokens : null,
-        completionTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : null,
+        promptTokens: typeof u.input_tokens === "number" ? u.input_tokens : null,
+        completionTokens: typeof u.output_tokens === "number" ? u.output_tokens : null,
+        reasoningTokens: typeof details.reasoning_tokens === "number" ? details.reasoning_tokens : null,
       };
-
-      const message = ((data.choices as Array<Record<string, unknown>> | undefined)?.[0]?.message ?? {}) as Record<string, unknown>;
-      const refusal = typeof message.refusal === "string" && message.refusal.length > 0;
-      const calls = Array.isArray(message.tool_calls) ? (message.tool_calls as Array<Record<string, unknown>>) : [];
-      // Anything other than exactly one call to the frozen tool is left for the
-      // frozen boundary to mark MALFORMED. It is never repaired here.
-      let extraction: unknown = null;
-      if (calls.length === 1) {
-        const fn = (calls[0].function ?? {}) as Record<string, unknown>;
-        if (fn.name === request.tool.name && typeof fn.arguments === "string") {
-          try {
-            extraction = JSON.parse(fn.arguments);
-          } catch {
-            extraction = fn.arguments;
-          }
-        }
-      }
+      const { extraction, refusal } = extractFromResponses(data, request.tool.name);
 
       if (!producingModelMatches(model, producingModel)) {
-        return { producingModel, extraction, error: MODEL_MISMATCH_ERROR, ms, usage, refusal };
+        return { producingModel, extraction, error: MODEL_MISMATCH_ERROR, ms, usage, refusal, responseStatus };
       }
-      return { producingModel, extraction, ms, usage, refusal };
+      return { producingModel, extraction, ms, usage, refusal, responseStatus };
     },
   };
 }

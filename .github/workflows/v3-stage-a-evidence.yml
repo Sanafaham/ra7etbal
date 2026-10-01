@@ -3,7 +3,7 @@ name: v3-stage-a-evidence
 # EVIDENCE BRANCH ONLY (claude/second-brain-consequential-v3-stage-a). Not for
 # merge. Runs the V3 Stage-A falsification screen once: 26 frozen V3 cases ×
 # 3 runs = at most 78 calls to ONE named OpenAI model through
-# /v1/chat/completions. It stops at the first unsafe result, provider error or
+# /v1/responses (reasoning effort medium), capped by STAGE_A_MAX_CALLS. It stops at the first unsafe result, provider error or
 # producing-model mismatch. No retry, no fallback, no second model.
 #
 # TRIGGER — deliberate and manual only. It runs only when someone with write
@@ -17,7 +17,8 @@ name: v3-stage-a-evidence
 # candidate means a reviewed commit to this line, never a fallback.
 #
 # CREDENTIAL — the only secret this workflow references is OPENAI_EVIDENCE_KEY,
-# an evidence-only key restricted to /v1/chat/completions. It is passed to the
+# an evidence-only restricted key (Responses write, Chat completions request;
+# everything else off). It is passed to the
 # one step that needs it as an environment variable, never echoed, written to
 # a file or uploaded; GitHub also masks it in logs. No other secret is
 # referenced. No Supabase, WhatsApp, ElevenLabs, Vercel or Production access.

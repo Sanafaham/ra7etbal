@@ -101,8 +101,26 @@ Reruns after an `INCOMPLETE` start over from the beginning.
     `auth:producing_model_mismatch`, using the frozen boundary's own rule: the
     producing model must start with the requested name. Dated snapshots of the
     requested model are accepted.
-- **Structured output:** Chat Completions with one function tool, `strict: true`,
-  forced with `tool_choice`, `parallel_tool_calls: false` and `store: false`.
+- **Endpoint and reasoning:** Responses API (`POST /v1/responses`) with
+  `reasoning: { effort: "medium" }`, gpt-5.6-luna's documented default, stated
+  explicitly. OpenAI rejects function tools with reasoning on
+  `/v1/chat/completions` for this model (diagnostic run 36909196714:
+  `param: reasoning_effort`). Effort `none` would turn reasoning off and change
+  the experiment, so it is not used.
+- **Structured output:** request body is exactly `model`, `instructions` (the
+  frozen system prompt), `input` (one user message, the frozen user text),
+  `tools` (one function tool, `strict: true`), `tool_choice` forcing that
+  tool, `parallel_tool_calls: false`, `reasoning`, `store: false`.
+- **Reading the result:** the extraction is the parsed `arguments` of exactly
+  one completed `function_call` for the frozen tool. The response must have
+  `status: "completed"`, no `error`, and nothing in `output` except reasoning
+  items and that one call. Anything else (no call, two calls, wrong tool, a
+  text message, a refusal, an incomplete response, unparseable arguments) is
+  handed unchanged to the frozen boundary, which marks it MALFORMED.
+- **Evidence kept from a successful response:** the producing model (`model`),
+  the response `status`, and usage: `input_tokens`, `output_tokens` and
+  `output_tokens_details.reasoning_tokens` when OpenAI reports them (null
+  otherwise, never guessed).
   - The parameters are the frozen `TOOL_SCHEMA`. The only re-encoding is that
     the nullable `clarification` object becomes `anyOf [object, null]`, the
     strict-mode form. A test proves everything else is identical and that the

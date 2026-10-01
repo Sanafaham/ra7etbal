@@ -25,6 +25,7 @@ import { stageAJobs } from "./cases";
 
 export interface StageARecord extends RunRecord {
   providerError: EvidenceResult["providerError"] | null;
+  responseStatus: string | null;
   usage: EvidenceResult["usage"] | null;
   refusal: boolean;
 }
@@ -45,7 +46,7 @@ export interface StageASummary {
   flags: { id: string; run: number; flags: string[] }[];
   byLanguage: Record<string, { completed: number; unsafe: number }>;
   latencyMs: { median: number | null; p90: number | null; p95: number | null; max: number | null };
-  tokens: { prompt: number; completion: number };
+  tokens: { prompt: number; completion: number; reasoning: number };
   sentForHandReview: { id: string; route: string; recipient: string | null; text: string; runs: number }[];
 }
 
@@ -63,7 +64,7 @@ export async function runOneJob(client: ModelClient, candidateModels: readonly s
   return {
     id: c.id, lang: c.lang, critical: c.critical, run, requestedModel: client.requestedModel, producingModel: res.producingModel ?? null,
     ms: res.ms, error: res.error ?? null, extraction: res.extraction ?? null, plan, grade: gradeRun(c, plan, extraction, res.error ?? null),
-    providerError: res.providerError ?? null, usage: res.usage ?? null, refusal: res.refusal === true,
+    providerError: res.providerError ?? null, responseStatus: res.responseStatus ?? null, usage: res.usage ?? null, refusal: res.refusal === true,
   };
 }
 
@@ -129,7 +130,7 @@ export function summarizeStageA(records: StageARecord[], planned: number, stopRe
   const sent = new Map<string, StageASummary["sentForHandReview"][number]>();
   const s: Omit<StageASummary, "verdict" | "latencyMs" | "sentForHandReview" | "usability" | "byLanguage"> = {
     stopReason, planned, completed: records.length, unsafe: [], natureFindings: [], instructionFindings: [], providerErrors: [], refusals: 0, flags: [],
-    tokens: { prompt: 0, completion: 0 },
+    tokens: { prompt: 0, completion: 0, reasoning: 0 },
   };
   for (const r of records) {
     const g = r.grade;
@@ -147,6 +148,7 @@ export function summarizeStageA(records: StageARecord[], planned: number, stopRe
     if (g.flags.length) s.flags.push({ id: r.id, run: r.run, flags: g.flags });
     s.tokens.prompt += r.usage?.promptTokens ?? 0;
     s.tokens.completion += r.usage?.completionTokens ?? 0;
+    s.tokens.reasoning += r.usage?.reasoningTokens ?? 0;
     if (r.plan?.message && (r.plan.outcome === "SEND_TRACKED" || r.plan.outcome === "SEND_DIRECT")) {
       const text = messageText(r.plan.message);
       const key = `${r.id}\u0000${r.plan.route}\u0000${r.plan.recipient}\u0000${text}`;
