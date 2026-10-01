@@ -4,7 +4,7 @@
  * To be used only after separate owner authorization of a Stage-A run.
  *
  *   npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts -- \
- *     --model <candidate> --out <dir> --owner-authorized
+ *     --model <candidate> --out <dir> --owner-authorized [--max-calls <1-78>]
  *
  * Reads only OPENAI_EVIDENCE_KEY. Never prints it. This file is an entry
  * point only: nothing imports it, and it runs main() whenever it is executed.
@@ -15,7 +15,7 @@
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOpenAIEvidenceClient, type EvidenceEnv } from "./openai-evidence-adapter";
-import { runStageA } from "./runner";
+import { parseMaxCalls, runStageA } from "./runner";
 
 export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
   const arg = (name: string) => {
@@ -32,13 +32,14 @@ export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
     console.error("stage-a: --model and --out are required");
     return 2;
   }
+  const maxCalls = parseMaxCalls(arg("--max-calls"));
   const client = createOpenAIEvidenceClient({ model, env });
   mkdirSync(out, { recursive: true });
   const recordsPath = join(out, "stage-a-records.jsonl");
   writeFileSync(recordsPath, "");
-  const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`));
+  const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`), { maxCalls });
   writeFileSync(join(out, "stage-a-summary.json"), `${JSON.stringify({ requestedModel: model, ...summary }, null, 2)}\n`);
-  console.log(JSON.stringify({ requestedModel: model, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
+  console.log(JSON.stringify({ requestedModel: model, maxCalls, stopReason: summary.stopReason, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
   return summary.verdict === "ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED" ? 0 : summary.verdict === "FAIL_UNSAFE" ? 1 : 3;
 }
 

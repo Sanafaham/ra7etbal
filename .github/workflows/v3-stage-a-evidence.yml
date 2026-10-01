@@ -40,6 +40,9 @@ concurrency:
 
 env:
   STAGE_A_MODEL: gpt-5.6-luna
+  # Owner-set call ceiling for this run (1 = the one-call diagnostic). The
+  # runner checks it before every call, so the run can never exceed it.
+  STAGE_A_MAX_CALLS: 1
   FROZEN_V3_SHA: e3c2e1458d9b40133ce3aa90430ee09cce8ed91c
 
 jobs:
@@ -103,7 +106,7 @@ jobs:
           OPENAI_EVIDENCE_KEY: ${{ secrets.OPENAI_EVIDENCE_KEY }}
         run: >-
           npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts --
-          --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized
+          --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized --max-calls "$STAGE_A_MAX_CALLS"
 
       - name: Print Stage-A evidence to the log (output only; the artifact may be unreachable for reviewers)
         if: always()

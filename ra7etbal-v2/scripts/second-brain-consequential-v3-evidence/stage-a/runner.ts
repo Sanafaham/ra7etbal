@@ -33,7 +33,7 @@ export type StageAVerdict = "FAIL_UNSAFE" | "INCOMPLETE" | "ZERO_AUTOMATIC_UNSAF
 
 export interface StageASummary {
   verdict: StageAVerdict;
-  stopReason: "unsafe" | "provider_error" | "model_mismatch" | null;
+  stopReason: "unsafe" | "provider_error" | "model_mismatch" | "call_ceiling" | null;
   planned: number;
   completed: number;
   unsafe: { id: string; run: number; reasons: string[] }[];
@@ -67,12 +67,32 @@ export async function runOneJob(client: ModelClient, candidateModels: readonly s
   };
 }
 
-export async function runStageA(client: ModelClient, onRecord: (r: StageARecord) => void): Promise<StageASummary> {
+/**
+ * Owner-set ceiling on model calls for one run. Must be a whole number from 1
+ * to the planned 78. Anything else is refused before any call.
+ */
+export function parseMaxCalls(value: string | undefined): number {
+  const planned = stageAJobs().length;
+  if (value === undefined) return planned;
+  if (!/^[0-9]+$/.test(value)) throw new Error(`stage-a: --max-calls must be a whole number from 1 to ${planned}`);
+  const n = Number(value);
+  if (n < 1 || n > planned) throw new Error(`stage-a: --max-calls must be a whole number from 1 to ${planned}`);
+  return n;
+}
+
+export async function runStageA(client: ModelClient, onRecord: (r: StageARecord) => void, opts: { maxCalls?: number } = {}): Promise<StageASummary> {
   const candidateModels = [client.requestedModel];
   const jobs = stageAJobs();
   const records: StageARecord[] = [];
+  const maxCalls = opts.maxCalls ?? jobs.length;
+  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > jobs.length) throw new Error("stage-a: invalid call ceiling");
   let stopReason: StageASummary["stopReason"] = null;
   for (const { c, run } of jobs) {
+    // The ceiling is checked before each call, so it can never be exceeded.
+    if (records.length >= maxCalls) {
+      stopReason = "call_ceiling";
+      break;
+    }
     const record = await runOneJob(client, candidateModels, c, run);
     records.push(record);
     onRecord(record);

@@ -6,7 +6,11 @@ import { V3_CASES, type V3Case } from "../corpus";
 import { runGate, type ModelClient, type RunRecord } from "../run";
 import type { buildSkillRequest, CarsonInstruction, V3Extraction } from "../skill";
 import { STAGE_A_GROUPS, STAGE_A_IDS, STAGE_A_RUNS_PER_CASE, stageACases, stageAJobs } from "./cases";
-import { runStageA, type StageARecord } from "./runner";
+import { parseMaxCalls, runStageA, type StageARecord } from "./runner";
+import { buildChatCompletionsBody, createOpenAIEvidenceClient } from "./openai-evidence-adapter";
+import { OWNER_PEOPLE } from "../corpus";
+import { buildSkillRequest as buildRequest } from "../skill";
+import { vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODEL = "candidate-model-x";
@@ -176,5 +180,52 @@ describe("Stage-A runner", () => {
       const { usage: _u, refusal: _r, providerError: _p, ...core } = r;
       expect(core).toEqual(frozen.find((f) => f.id === r.id && f.run === r.run));
     }
+  });
+});
+
+describe("Owner call ceiling (one-call diagnostic)", () => {
+  it("parses only a whole number from 1 to 78; default is the full 78", () => {
+    expect(parseMaxCalls(undefined)).toBe(78);
+    expect(parseMaxCalls("1")).toBe(1);
+    expect(parseMaxCalls("78")).toBe(78);
+    for (const bad of ["0", "79", "1.5", "-1", "abc", "", " 1", "1e1"]) expect(() => parseMaxCalls(bad), bad).toThrow(/--max-calls/);
+  });
+
+  it("an invalid ceiling is refused before any call", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    await expect(runStageA(client, () => {}, { maxCalls: 0 })).rejects.toThrow(/call ceiling/);
+    await expect(runStageA(client, () => {}, { maxCalls: 79 })).rejects.toThrow(/call ceiling/);
+    expect(client.calls).toHaveLength(0);
+  });
+
+  it("with a ceiling of 1, a SUCCESSFUL first answer still stops after exactly one call, on O-T1, never a pass", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    const records: StageARecord[] = [];
+    const s = await runStageA(client, (r) => records.push(r), { maxCalls: 1 });
+    expect(client.calls).toEqual(["O-T1"]);
+    expect(records.map((r) => r.id)).toEqual(["O-T1"]);
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "call_ceiling", completed: 1, planned: 78 });
+  });
+
+  it("with a ceiling of 1, a rejected first request stops as provider_error after one call", async () => {
+    const client = mockClient(() => ({ error: "provider_http_400:invalid_request_error", producingModel: undefined }));
+    const s = await runStageA(client, () => {}, { maxCalls: 1 });
+    expect(client.calls).toEqual(["O-T1"]);
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "provider_error", completed: 1 });
+  });
+
+  it("end to end through the real adapter (network mocked): one request, unchanged request body, even on success", async () => {
+    const extraction = truthExtraction(stageACases()[0]);
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      model: MODEL, usage: { prompt_tokens: 1, completion_tokens: 1 },
+      choices: [{ message: { tool_calls: [{ type: "function", function: { name: "extract_owner_instruction", arguments: JSON.stringify(extraction) } }] } }],
+    }), { status: 200 }));
+    const client = createOpenAIEvidenceClient({ model: MODEL, env: { OPENAI_EVIDENCE_KEY: "sk-test-only-local" }, fetchImpl });
+    const s = await runStageA(client, () => {}, { maxCalls: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(s).toMatchObject({ stopReason: "call_ceiling", completed: 1, verdict: "INCOMPLETE" });
+    const sent = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    const oT1 = buildRequest({ utterance: stageACases()[0].u, people: OWNER_PEOPLE.map(({ name, relationship }) => ({ name, relationship })) });
+    expect(sent).toEqual(buildChatCompletionsBody(MODEL, oT1));
   });
 });

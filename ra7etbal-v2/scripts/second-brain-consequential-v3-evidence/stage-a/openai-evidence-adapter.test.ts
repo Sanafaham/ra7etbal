@@ -267,6 +267,11 @@ describe("Stage-A workflow wiring (static; never executed by tests)", () => {
     expect(step).not.toMatch(/secrets|EVIDENCE_KEY|env:/);
   });
 
+  it("sets the owner call ceiling to 1 and passes it to the run", () => {
+    expect([...wf.matchAll(/^\s+STAGE_A_MAX_CALLS:\s*(\S+)\s*$/gm)].map((m) => m[1])).toEqual(["1"]);
+    expect(wf).toContain('--owner-authorized --max-calls "$STAGE_A_MAX_CALLS"');
+  });
+
   it("no other workflow references the evidence key", () => {
     for (const f of readdirSync(WORKFLOWS).filter((x) => x !== "v3-stage-a-evidence.yml")) {
       expect(readFileSync(join(WORKFLOWS, f), "utf8").includes("OPENAI_EVIDENCE_KEY"), f).toBe(false);
