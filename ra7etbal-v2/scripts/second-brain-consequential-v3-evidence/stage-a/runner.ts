@@ -21,7 +21,7 @@ import { messageText, planFromExtraction, validateShape } from "../plan";
 import type { ModelClient, RunRecord } from "../run";
 import { buildSkillRequest } from "../skill";
 import { MODEL_MISMATCH_ERROR, producingModelMatches, type EvidenceResult } from "./openai-evidence-adapter";
-import { stageAJobs } from "./cases";
+import { STAGE_A_IDS, stageACases, stageAJobs } from "./cases";
 
 export interface StageARecord extends RunRecord {
   providerError: EvidenceResult["providerError"] | null;
@@ -81,12 +81,29 @@ export function parseMaxCalls(value: string | undefined): number {
   return n;
 }
 
-export async function runStageA(client: ModelClient, onRecord: (r: StageARecord) => void, opts: { maxCalls?: number } = {}): Promise<StageASummary> {
+/**
+ * Owner-selected single case. Only an id from the frozen 26-case Stage-A set
+ * is accepted, and it resolves to the frozen corpus object itself (never a
+ * copy). Anything else is refused before any call. No id means the full set.
+ */
+export function resolveStageACase(id: string | undefined): V3Case | null {
+  if (id === undefined) return null;
+  if (!STAGE_A_IDS.includes(id)) throw new Error(`stage-a: --case must be one of the 26 frozen Stage-A ids (got ${JSON.stringify(id)})`);
+  const c = stageACases().find((x) => x.id === id);
+  if (!c) throw new Error(`stage-a: frozen Stage-A case ${id} not found`);
+  return c;
+}
+
+export async function runStageA(client: ModelClient, onRecord: (r: StageARecord) => void, opts: { maxCalls?: number; caseId?: string } = {}): Promise<StageASummary> {
   const candidateModels = [client.requestedModel];
-  const jobs = stageAJobs();
+  const allJobs = stageAJobs();
+  // Both checks happen before any call. The ceiling is validated against the
+  // full Stage-A plan and enforced independently of case selection.
+  const selected = resolveStageACase(opts.caseId);
+  const maxCalls = opts.maxCalls ?? allJobs.length;
+  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > allJobs.length) throw new Error("stage-a: invalid call ceiling");
+  const jobs = selected ? allJobs.filter((j) => j.c === selected) : allJobs;
   const records: StageARecord[] = [];
-  const maxCalls = opts.maxCalls ?? jobs.length;
-  if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > jobs.length) throw new Error("stage-a: invalid call ceiling");
   let stopReason: StageASummary["stopReason"] = null;
   for (const { c, run } of jobs) {
     // The ceiling is checked before each call, so it can never be exceeded.

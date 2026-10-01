@@ -6,7 +6,7 @@ import { V3_CASES, type V3Case } from "../corpus";
 import { runGate, type ModelClient, type RunRecord } from "../run";
 import type { buildSkillRequest, CarsonInstruction, V3Extraction } from "../skill";
 import { STAGE_A_GROUPS, STAGE_A_IDS, STAGE_A_RUNS_PER_CASE, stageACases, stageAJobs } from "./cases";
-import { parseMaxCalls, runStageA, type StageARecord } from "./runner";
+import { parseMaxCalls, resolveStageACase, runStageA, type StageARecord } from "./runner";
 import { buildResponsesBody, createOpenAIEvidenceClient } from "./openai-evidence-adapter";
 import { OWNER_PEOPLE } from "../corpus";
 import { buildSkillRequest as buildRequest } from "../skill";
@@ -228,5 +228,77 @@ describe("Owner call ceiling (one-call diagnostic)", () => {
     const oT1 = buildRequest({ utterance: stageACases()[0].u, people: OWNER_PEOPLE.map(({ name, relationship }) => ({ name, relationship })) });
     expect((fetchImpl.mock.calls[0] as unknown as [string])[0]).toBe("https://api.openai.com/v1/responses");
     expect(sent).toEqual(buildResponsesBody(MODEL, oT1));
+  });
+});
+
+describe("Owner single-case selection (A-D1 diagnostic)", () => {
+  const frozenAD1 = () => V3_CASES.find((x) => x.id === "A-D1")!;
+
+  it("A-D1 resolves to the existing frozen corpus object, not a copy", () => {
+    const c = resolveStageACase("A-D1")!;
+    expect(c).toBe(frozenAD1());
+    expect(c.u).toBe("Tell Loulya I would like her to call me.");
+    expect(resolveStageACase(undefined)).toBeNull();
+  });
+
+  it("only the 26 frozen Stage-A ids are selectable", () => {
+    for (const id of STAGE_A_IDS) expect(resolveStageACase(id)!.id).toBe(id);
+    const outside = V3_CASES.filter((c) => !STAGE_A_IDS.includes(c.id));
+    expect(outside.length).toBe(V3_CASES.length - 26);
+    for (const c of outside) expect(() => resolveStageACase(c.id), c.id).toThrow(/26 frozen Stage-A ids/);
+  });
+
+  it.each([["NOPE"], [""], ["a-d1"], [" A-D1"], ["A-D1 "], ["--owner-authorized"]])("unknown id %j is refused before any call", async (id) => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    await expect(runStageA(client, () => {}, { maxCalls: 1, caseId: id })).rejects.toThrow(/26 frozen Stage-A ids/);
+    expect(client.calls).toHaveLength(0);
+  });
+
+  it("a valid corpus id outside the Stage-A 26 is refused before any call", async () => {
+    const outside = V3_CASES.find((c) => !STAGE_A_IDS.includes(c.id))!;
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    await expect(runStageA(client, () => {}, { maxCalls: 1, caseId: outside.id })).rejects.toThrow(/26 frozen Stage-A ids/);
+    expect(client.calls).toHaveLength(0);
+  });
+
+  it("with case A-D1 and ceiling 1, a successful answer still stops after exactly one call, on A-D1 only", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    const records: StageARecord[] = [];
+    const s = await runStageA(client, (r) => records.push(r), { maxCalls: 1, caseId: "A-D1" });
+    expect(client.calls).toEqual(["A-D1"]);
+    expect(records.map((r) => [r.id, r.run])).toEqual([["A-D1", 1]]);
+    expect(s).toMatchObject({ stopReason: "call_ceiling", completed: 1, verdict: "INCOMPLETE" });
+  });
+
+  it("the ceiling is independent of the selection: without it, only A-D1's own 3 runs could ever be made", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    await runStageA(client, () => {}, { caseId: "A-D1" });
+    expect(client.calls).toEqual(["A-D1", "A-D1", "A-D1"]);
+    await expect(runStageA(mockClient(() => ({})), () => {}, { maxCalls: 79, caseId: "A-D1" })).rejects.toThrow(/call ceiling/);
+  });
+
+  it("end to end through the real adapter (network mocked): the one request carries the frozen A-D1 input", async () => {
+    const extraction = truthExtraction(frozenAD1());
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      status: "completed", error: null, model: MODEL, usage: { input_tokens: 1, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 } },
+      output: [{ type: "function_call", name: "extract_owner_instruction", arguments: JSON.stringify(extraction), status: "completed" }],
+    }), { status: 200 }));
+    const client = createOpenAIEvidenceClient({ model: MODEL, env: { OPENAI_EVIDENCE_KEY: "sk-test-only-local" }, fetchImpl });
+    await runStageA(client, () => {}, { maxCalls: 1, caseId: "A-D1" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    const ad1 = buildRequest({ utterance: frozenAD1().u, people: OWNER_PEOPLE.map(({ name, relationship }) => ({ name, relationship })) });
+    expect(sent).toEqual(buildResponsesBody(MODEL, ad1));
+    expect(sent.input[0].content).toContain("Tell Loulya I would like her to call me.");
+  });
+
+  it("omitting the case keeps the full 26-case, 78-job order unchanged", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    const s = await runStageA(client, () => {});
+    expect(client.calls).toEqual(stageAJobs().map((j) => j.c.id));
+    expect(s.completed).toBe(78);
+    const first = mockClient((c) => ({ extraction: truthExtraction(c) }));
+    await runStageA(first, () => {}, { maxCalls: 1 });
+    expect(first.calls).toEqual(["O-T1"]);
   });
 });

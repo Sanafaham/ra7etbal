@@ -137,6 +137,13 @@ Reruns after an `INCOMPLETE` start over from the beginning.
     are replaced with `[REDACTED]`.
   - The message is capped at 600 characters and the other fields at 200.
   - No request body, prompt, schema or header is kept.
+- **Single-case selection (diagnostics):** `--case <id>` (workflow
+  `STAGE_A_CASE`) selects one case. Only the 26 frozen Stage-A ids are
+  accepted, and the id resolves to the frozen corpus object itself. Any other
+  value, including a valid corpus id outside Stage A, is refused before any
+  call. The call ceiling (`--max-calls`, workflow `STAGE_A_MAX_CALLS`) is
+  validated against the full 78-call plan and enforced independently. With no
+  case given, the full 26-case order is unchanged.
 - **Stop reason:** a provider error stops the screen as `provider_error` even
   though there is no producing model. `model_mismatch` is reserved for an
   answer from another model.
