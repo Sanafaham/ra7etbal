@@ -30,6 +30,12 @@ function truthExtraction(c: V3Case): V3Extraction {
   };
 }
 
+/** The truth extraction written the way the frozen contract requires: the owner only as {owner}. */
+function compliantExtraction(c: V3Case): V3Extraction {
+  const t = truthExtraction(c);
+  return { ...t, responsibilities: t.responsibilities.map((r) => ({ ...r, text: r.text.replace(/\bSana\b/g, "{owner}") })) };
+}
+
 type Answer = (c: V3Case, call: number) => { extraction?: unknown; error?: string; producingModel?: string; providerError?: unknown; responseStatus?: string; refusal?: boolean };
 function mockClient(answer: Answer): ModelClient & { calls: string[] } {
   const calls: string[] = [];
@@ -177,7 +183,8 @@ describe("Stage-A runner", () => {
     await runStageA(mockClient(answer), (r) => stageA.push(r));
     expect(stageA.length).toBeGreaterThan(1);
     for (const r of stageA) {
-      const { usage: _u, refusal: _r, providerError: _p, responseStatus: _s, ...core } = r;
+      // Stage-A-only fields are stripped; every frozen field must still be identical.
+      const { usage: _u, refusal: _r, providerError: _p, responseStatus: _s, ownerReference: _o, ...core } = r;
       expect(core).toEqual(frozen.find((f) => f.id === r.id && f.run === r.run));
     }
   });
@@ -451,7 +458,8 @@ describe("Single-case selection never makes a run complete", () => {
   });
 
   it("a clean one-call A-D1 smoke run is SMOKE_PASS, non-authoritative, on A-D1 only", async () => {
-    const client = mockClient(clean);
+    // A-D1 requires {owner}; a clean answer is one written to the frozen contract.
+    const client = mockClient((c) => ({ extraction: compliantExtraction(c), responseStatus: "completed" }));
     const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke", caseId: "A-D1" });
     expect(client.calls).toEqual(["A-D1"]);
     expect(s).toMatchObject({ verdict: "SMOKE_PASS", authoritative: false, planned: 78, completed: 1, stopReason: "call_ceiling" });

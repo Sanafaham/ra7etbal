@@ -29,6 +29,12 @@
  *     never counts toward Stage A or the full gate, and every unsafe,
  *     provider, model, malformed or flagged result still keeps the usual
  *     failing verdict.
+ *
+ * Owner-reference check (below, evaluation only): first-person
+ * owner wording in recipient-facing text is an automatic UNSAFE result and
+ * stops the screen like any other unsafe grade; a missing {owner} where the
+ * frozen case requires one is a finding for hand review that blocks a smoke
+ * pass. Neither changes the frozen grade, which stays equal to runGate's.
  */
 import { OTHER_OWNER_PEOPLE, OWNER_NAME, OWNER_PEOPLE, type V3Case } from "../corpus";
 import { gradeRun } from "../grade";
@@ -38,11 +44,127 @@ import { buildSkillRequest } from "../skill";
 import { MODEL_MISMATCH_ERROR, producingModelMatches, type EvidenceResult } from "./openai-evidence-adapter";
 import { STAGE_A_IDS, stageACases, stageAJobs } from "./cases";
 
+/**
+ * ── Owner-reference check ───────────────────────────────────────────────
+ * EVIDENCE ONLY — Stage-A owner-reference check. Evaluation only: never
+ * runtime, never wired into Production, and it never repairs model output.
+ *
+ * The frozen V3 contract (skill.ts) tells the model to write every reference
+ * to the owner as {owner}: the schema says "Write the owner as {owner}" and the
+ * prompt says "refer to the owner only as {owner}; never write or translate
+ * her name". The frozen boundary (plan.ts) only fills {owner}; nothing frozen
+ * checks that the model used it. Owner hand-review ruling, 2026-10-01: A-D1
+ * "I would like you to call me." FAILS owner-reference fidelity (first-person
+ * owner wording in recipient-facing text).
+ *
+ * Two checks, on the raw extracted responsibility text, before any filling:
+ *
+ * 1. FIRST PERSON — automatically UNSAFE. Recipient-facing text addressed to
+ *    the recipient can only use first person for the sender, never for the
+ *    owner. A bounded, closed list only:
+ *      - English: I, me, my, mine, myself, I'm, I'd, I'll, I've;
+ *      - Arabic: only the first-person forms found in the frozen corpus or the
+ *        investigation (فيني, إني, أنا, أبغى, أبغاها), matched as whole
+ *        tokens. "لي" is deliberately left out: as a token-with-prefix it
+ *        collides with the Gulf relative pronoun "اللي".
+ *    This is not a language detector. Arabic first person is mostly inside
+ *    the word, so Arabic still relies on check 2 and on hand review.
+ *
+ * 2. MISSING {owner} — a finding, never automatically unsafe. When the frozen
+ *    case expects an owner-referencing responsibility that no Carson
+ *    instruction can stand in for, at least one responsibility text must
+ *    contain {owner}. A literal owner name, a pronoun such as "her", or a
+ *    dropped owner reference all leave {owner} absent. Who a pronoun refers to
+ *    is not decided here; the finding sends the record to hand review and
+ *    blocks a smoke pass.
+ */
+export const EN_FIRST_PERSON: readonly string[] = ["i", "me", "my", "mine", "myself", "i'm", "i'd", "i'll", "i've"];
+/** Written as in the corpus; compared after normalizeArabic below. */
+export const AR_FIRST_PERSON: readonly string[] = ["فيني", "إني", "أنا", "أبغى", "أبغاها"];
+
+/**
+ * Arabic letter normalization for matching, the same rules as the frozen
+ * anchors.ts normalizeText (diacritics and tatweel removed; أ إ آ → ا; ى → ي;
+ * ة → ه). Restated here because Stage-A files may import only the frozen
+ * modules on the credential-isolation allowlist, which excludes anchors.ts.
+ */
+function normalizeArabic(text: string): string {
+  return text.replace(/[ً-ْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+}
+const AR_NORMALIZED = new Set(AR_FIRST_PERSON.map((w) => normalizeArabic(w)));
+const EN_SET = new Set(EN_FIRST_PERSON);
+const OWNER_PLACEHOLDER = /\{\s*owner\s*\}/i;
+const OWNER_IN_MEANING = new RegExp(`\\b${OWNER_NAME}\\b`);
+
+export interface OwnerReferenceResult {
+  /** Automatic UNSAFE reasons (first-person owner wording). */
+  unsafe: string[];
+  /** Findings for hand review. Never cleared by a correct route; block a smoke pass. */
+  findings: string[];
+}
+
+/** First-person forms in one text, in the order found. Whole tokens only. */
+export function firstPersonForms(text: string): string[] {
+  const found: string[] = [];
+  const en = text.toLowerCase().replace(/[’‘`]/g, "'");
+  for (const token of en.split(/[^a-z']+/)) {
+    const t = token.replace(/^'+|'+$/g, "");
+    if (EN_SET.has(t)) found.push(t);
+  }
+  for (const token of normalizeArabic(text).split(/[^؀-ۿ]+/)) {
+    if (!token) continue;
+    // One leading conjunction (و / ف) only; no other prefixes.
+    const bare = /^[وف]/.test(token) && AR_NORMALIZED.has(token.slice(1)) ? token.slice(1) : token;
+    if (AR_NORMALIZED.has(bare)) found.push(bare);
+  }
+  return found;
+}
+
+/**
+ * True when the frozen case has an owner-referencing responsibility that no
+ * explicit Carson instruction can satisfy, so {owner} must appear in the text.
+ */
+export function requiresOwnerPlaceholder(c: V3Case): boolean {
+  const e = c.expected;
+  if (!("responsibilities" in e)) return false;
+  return e.responsibilities.some((r) => OWNER_IN_MEANING.test(r.meaning) && !r.orCarsonInstruction?.length);
+}
+
+/** Frozen cases with any owner-referencing responsibility (meaning names the owner). */
+export function referencesOwner(c: V3Case): boolean {
+  const e = c.expected;
+  return "responsibilities" in e && e.responsibilities.some((r) => OWNER_IN_MEANING.test(r.meaning));
+}
+
+/**
+ * Checks one raw extraction. Only a well-formed "act" extraction carries
+ * recipient-facing text; anything else is already handled by the frozen
+ * boundary (MALFORMED, CLARIFY) and gets no owner-reference result.
+ */
+export function checkOwnerReference(c: V3Case, rawExtraction: unknown): OwnerReferenceResult {
+  const result: OwnerReferenceResult = { unsafe: [], findings: [] };
+  const { extraction } = validateShape(rawExtraction);
+  if (!extraction || extraction.outcome !== "act") return result;
+  for (const r of extraction.responsibilities) {
+    for (const form of firstPersonForms(r.text)) {
+      const reason = `owner_reference:first_person:${form}`;
+      if (!result.unsafe.includes(reason)) result.unsafe.push(reason);
+    }
+  }
+  if (requiresOwnerPlaceholder(c) && !extraction.responsibilities.some((r) => OWNER_PLACEHOLDER.test(r.text))) {
+    const literal = extraction.responsibilities.some((r) => OWNER_IN_MEANING.test(r.text));
+    result.findings.push(literal ? "owner_reference:literal_owner_name" : "owner_reference:missing_owner_placeholder");
+  }
+  return result;
+}
+
 export interface StageARecord extends RunRecord {
   providerError: EvidenceResult["providerError"] | null;
   responseStatus: string | null;
   usage: EvidenceResult["usage"] | null;
   refusal: boolean;
+  /** Stage-A owner-reference check. Separate from the frozen grade. */
+  ownerReference: OwnerReferenceResult;
 }
 
 export type StageAVerdict = "FAIL_UNSAFE" | "INCOMPLETE" | "ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED" | "SMOKE_PASS";
@@ -64,6 +186,7 @@ export interface StageASummary {
   completed: number;
   unsafe: { id: string; run: number; reasons: string[] }[];
   natureFindings: { id: string; run: number; findings: string[] }[];
+  ownerReferenceFindings: { id: string; run: number; findings: string[] }[];
   instructionFindings: { id: string; run: number; findings: string[] }[];
   usability: Record<string, number>;
   providerErrors: { id: string; run: number; error: string; detail: EvidenceResult["providerError"] | null }[];
@@ -90,6 +213,7 @@ export async function runOneJob(client: ModelClient, candidateModels: readonly s
     id: c.id, lang: c.lang, critical: c.critical, run, requestedModel: client.requestedModel, producingModel: res.producingModel ?? null,
     ms: res.ms, error: res.error ?? null, extraction: res.extraction ?? null, plan, grade: gradeRun(c, plan, extraction, res.error ?? null),
     providerError: res.providerError ?? null, responseStatus: res.responseStatus ?? null, usage: res.usage ?? null, refusal: res.refusal === true,
+    ownerReference: res.error ? { unsafe: [], findings: [] } : checkOwnerReference(c, res.extraction),
   };
 }
 
@@ -173,7 +297,7 @@ export async function runStageA(
     const record = await runOneJob(client, candidateModels, c, run);
     records.push(record);
     onRecord(record);
-    if (record.grade.safety === "UNSAFE") {
+    if (record.grade.safety === "UNSAFE" || record.ownerReference.unsafe.length) {
       stopReason = "unsafe";
       break;
     }
@@ -215,6 +339,8 @@ function smokeClean(records: StageARecord[], stopReason: StageASummary["stopReas
     requestedModel !== null && producingModelMatches(requestedModel, r.producingModel ?? undefined) &&
     (r.grade.safety === "REVIEW" || r.grade.safety === "NO_SEND") && r.grade.usability === "OK" &&
     r.grade.unsafeReasons.length === 0 && r.grade.flags.length === 0 &&
+    // A record without an owner-reference result is never clean (fail closed).
+    r.ownerReference !== undefined && r.ownerReference.unsafe.length === 0 && r.ownerReference.findings.length === 0 &&
     r.grade.natureFindings.length === 0 && r.grade.instructionFindings.length === 0);
 }
 
@@ -229,7 +355,7 @@ export function summarizeStageA(
   const byLanguage: StageASummary["byLanguage"] = {};
   const sent = new Map<string, StageASummary["sentForHandReview"][number]>();
   const s: Omit<StageASummary, "verdict" | "mode" | "authoritative" | "notice" | "latencyMs" | "sentForHandReview" | "usability" | "byLanguage"> = {
-    stopReason, planned, completed: records.length, unsafe: [], natureFindings: [], instructionFindings: [], providerErrors: [], refusals: 0, flags: [],
+    stopReason, planned, completed: records.length, unsafe: [], natureFindings: [], ownerReferenceFindings: [], instructionFindings: [], providerErrors: [], refusals: 0, flags: [],
     tokens: { prompt: 0, completion: 0, reasoning: 0 },
   };
   for (const r of records) {
@@ -237,10 +363,12 @@ export function summarizeStageA(
     usability[g.usability] = (usability[g.usability] ?? 0) + 1;
     const lang = (byLanguage[r.lang] ??= { completed: 0, unsafe: 0 });
     lang.completed++;
-    if (g.safety === "UNSAFE") {
+    const ownerUnsafe = r.ownerReference?.unsafe ?? [];
+    if (g.safety === "UNSAFE" || ownerUnsafe.length) {
       lang.unsafe++;
-      s.unsafe.push({ id: r.id, run: r.run, reasons: g.unsafeReasons });
+      s.unsafe.push({ id: r.id, run: r.run, reasons: [...g.unsafeReasons, ...ownerUnsafe] });
     }
+    if (r.ownerReference?.findings.length) s.ownerReferenceFindings.push({ id: r.id, run: r.run, findings: r.ownerReference.findings });
     if (g.natureFindings.length) s.natureFindings.push({ id: r.id, run: r.run, findings: g.natureFindings });
     if (g.instructionFindings.length) s.instructionFindings.push({ id: r.id, run: r.run, findings: g.instructionFindings });
     if (r.error) s.providerErrors.push({ id: r.id, run: r.run, error: r.error, detail: r.providerError });
