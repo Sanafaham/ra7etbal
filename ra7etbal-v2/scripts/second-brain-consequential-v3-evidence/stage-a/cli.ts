@@ -4,18 +4,22 @@
  * To be used only after separate owner authorization of a Stage-A run.
  *
  *   npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts -- \
- *     --model <candidate> --out <dir> --owner-authorized [--max-calls <1-78>] [--case <frozen Stage-A id>]
+ *     --model <candidate> --out <dir> --owner-authorized [--max-calls <1-78>] [--mode authoritative|smoke] [--case <frozen Stage-A id>]
+ *
+ * --mode defaults to authoritative. --mode smoke needs --max-calls below 78
+ * and can end SMOKE_PASS, which is never a Stage-A result (see runner.ts).
  *
  * Reads only OPENAI_EVIDENCE_KEY. Never prints it. This file is an entry
  * point only: nothing imports it, and it runs main() whenever it is executed.
  *
- * Exit codes: 0 only for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED;
- * 1 FAIL_UNSAFE; 3 INCOMPLETE; 2 refused or setup error.
+ * Exit codes: 0 for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED (authoritative
+ * mode) or SMOKE_PASS (smoke mode only); 1 FAIL_UNSAFE; 3 INCOMPLETE;
+ * 2 refused or setup error.
  */
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOpenAIEvidenceClient, type EvidenceEnv } from "./openai-evidence-adapter";
-import { parseMaxCalls, resolveStageACase, runStageA } from "./runner";
+import { exitCodeFor, parseMaxCalls, parseMode, resolveStageACase, runStageA, validateRunOptions } from "./runner";
 
 export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
   const arg = (name: string) => {
@@ -32,7 +36,7 @@ export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
     console.error("stage-a: --model and --out are required");
     return 2;
   }
-  const maxCalls = parseMaxCalls(arg("--max-calls"));
+  const { mode, maxCalls } = validateRunOptions({ mode: parseMode(arg("--mode")), maxCalls: parseMaxCalls(arg("--max-calls")) });
   const caseId = arg("--case");
   if (argv.includes("--case") && !caseId) throw new Error("stage-a: --case needs a frozen Stage-A id");
   resolveStageACase(caseId); // refuses an unknown id before the client exists
@@ -40,10 +44,11 @@ export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
   mkdirSync(out, { recursive: true });
   const recordsPath = join(out, "stage-a-records.jsonl");
   writeFileSync(recordsPath, "");
-  const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`), { maxCalls, caseId });
-  writeFileSync(join(out, "stage-a-summary.json"), `${JSON.stringify({ requestedModel: model, ...summary }, null, 2)}\n`);
-  console.log(JSON.stringify({ requestedModel: model, maxCalls, caseId: caseId ?? null, stopReason: summary.stopReason, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
-  return summary.verdict === "ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED" ? 0 : summary.verdict === "FAIL_UNSAFE" ? 1 : 3;
+  const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`), { maxCalls, mode, caseId });
+  writeFileSync(join(out, "stage-a-summary.json"), `${JSON.stringify({ requestedModel: model, caseId: caseId ?? null, ...summary }, null, 2)}\n`);
+  console.log(JSON.stringify({ requestedModel: model, mode, authoritative: summary.authoritative, maxCalls, caseId: caseId ?? null, stopReason: summary.stopReason, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
+  if (summary.notice) console.log(summary.notice);
+  return exitCodeFor(summary.verdict);
 }
 
 main(process.argv.slice(2), { OPENAI_EVIDENCE_KEY: process.env.OPENAI_EVIDENCE_KEY }).then(

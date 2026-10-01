@@ -23,10 +23,22 @@ name: v3-stage-a-evidence
 # a file or uploaded; GitHub also masks it in logs. No other secret is
 # referenced. No Supabase, WhatsApp, ElevenLabs, Vercel or Production access.
 #
+# MODE — STAGE_A_MODE below says what this run is. Changing it means a
+# reviewed commit to that line, then the label.
+#   smoke         bounded check of the live evidence path, capped by
+#                 STAGE_A_MAX_CALLS (must be below 78). Green only for
+#                 SMOKE_PASS: every authorized call came back clean and the run
+#                 stopped only at the cap. SMOKE_PASS is NOT a Stage-A result
+#                 and never counts toward Stage A or the full V3 gate.
+#   authoritative the Stage-A screen itself: 78 calls. Set STAGE_A_MAX_CALLS
+#                 to 78. Any lower cap stops early and fails closed
+#                 (INCOMPLETE).
+#
 # RESULT — stage-a-records.jsonl and stage-a-summary.json are uploaded as an
-# artifact. The job succeeds only for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED;
-# Stage A still needs hand review of every sent message before it counts as
-# passed.
+# artifact named with the mode. In authoritative mode the job succeeds only for
+# ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED; Stage A still needs hand review
+# of every sent message before it counts as passed. Unsafe, provider, model
+# and malformed results fail the job in either mode.
 
 on:
   pull_request:
@@ -41,7 +53,9 @@ concurrency:
 
 env:
   STAGE_A_MODEL: gpt-5.6-luna
-  # Owner-set call ceiling for this run (1 = the one-call diagnostic). The
+  # smoke = bounded live-path check, never a Stage-A result (see MODE above).
+  STAGE_A_MODE: smoke
+  # Owner-set call ceiling for this run (1 = the one-call smoke check). The
   # runner checks it before every call, so the run can never exceed it.
   STAGE_A_MAX_CALLS: 1
   # Owner-selected single frozen Stage-A case for this diagnostic. The call
@@ -105,12 +119,12 @@ jobs:
             exit 1
           fi
 
-      - name: Stage A — 26 frozen cases × 3 runs, one model, stop on first failure
+      - name: Stage A (mode from STAGE_A_MODE) — frozen cases, one model, stop on first failure
         env:
           OPENAI_EVIDENCE_KEY: ${{ secrets.OPENAI_EVIDENCE_KEY }}
         run: >-
           npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts --
-          --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized --max-calls "$STAGE_A_MAX_CALLS" --case "$STAGE_A_CASE"
+          --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized --max-calls "$STAGE_A_MAX_CALLS" --mode "$STAGE_A_MODE" --case "$STAGE_A_CASE"
 
       - name: Print Stage-A evidence to the log (output only; the artifact may be unreachable for reviewers)
         if: always()
@@ -124,6 +138,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v3-stage-a-${{ env.STAGE_A_MODEL }}
+          name: v3-stage-a-${{ env.STAGE_A_MODE }}-${{ env.STAGE_A_MODEL }}
           path: /tmp/v3-stage-a/
           if-no-files-found: warn

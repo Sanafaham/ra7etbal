@@ -6,7 +6,7 @@ import { V3_CASES, type V3Case } from "../corpus";
 import { runGate, type ModelClient, type RunRecord } from "../run";
 import type { buildSkillRequest, CarsonInstruction, V3Extraction } from "../skill";
 import { STAGE_A_GROUPS, STAGE_A_IDS, STAGE_A_RUNS_PER_CASE, stageACases, stageAJobs } from "./cases";
-import { parseMaxCalls, resolveStageACase, runStageA, type StageARecord } from "./runner";
+import { exitCodeFor, parseMaxCalls, parseMode, resolveStageACase, runStageA, SMOKE_NOTICE, summarizeStageA, type StageARecord } from "./runner";
 import { buildResponsesBody, createOpenAIEvidenceClient } from "./openai-evidence-adapter";
 import { OWNER_PEOPLE } from "../corpus";
 import { buildSkillRequest as buildRequest } from "../skill";
@@ -30,7 +30,7 @@ function truthExtraction(c: V3Case): V3Extraction {
   };
 }
 
-type Answer = (c: V3Case, call: number) => { extraction?: unknown; error?: string; producingModel?: string; providerError?: unknown };
+type Answer = (c: V3Case, call: number) => { extraction?: unknown; error?: string; producingModel?: string; providerError?: unknown; responseStatus?: string; refusal?: boolean };
 function mockClient(answer: Answer): ModelClient & { calls: string[] } {
   const calls: string[] = [];
   return {
@@ -300,5 +300,171 @@ describe("Owner single-case selection (A-D1 diagnostic)", () => {
     const first = mockClient((c) => ({ extraction: truthExtraction(c) }));
     await runStageA(first, () => {}, { maxCalls: 1 });
     expect(first.calls).toEqual(["O-T1"]);
+  });
+});
+
+describe("Smoke mode is explicit, bounded and never a Stage-A result", () => {
+  /** What a clean live Responses answer looks like to the runner. */
+  const clean: Answer = (c) => ({ extraction: truthExtraction(c), responseStatus: "completed" });
+
+  it("parses only authoritative or smoke; the default is authoritative", () => {
+    expect(parseMode(undefined)).toBe("authoritative");
+    expect(parseMode("authoritative")).toBe("authoritative");
+    expect(parseMode("smoke")).toBe("smoke");
+    for (const bad of ["", "Smoke", "full", "pass", "smoke "]) expect(() => parseMode(bad), bad).toThrow(/--mode/);
+  });
+
+  it("only the two passing verdicts exit 0", () => {
+    expect(exitCodeFor("ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED")).toBe(0);
+    expect(exitCodeFor("SMOKE_PASS")).toBe(0);
+    expect(exitCodeFor("FAIL_UNSAFE")).toBe(1);
+    expect(exitCodeFor("INCOMPLETE")).toBe(3);
+  });
+
+  it("a clean one-call smoke run ends SMOKE_PASS after exactly one call, marked non-authoritative", async () => {
+    const client = mockClient(clean);
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(client.calls).toEqual(["O-T1"]);
+    expect(s).toMatchObject({ verdict: "SMOKE_PASS", mode: "smoke", authoritative: false, notice: SMOKE_NOTICE, stopReason: "call_ceiling", completed: 1, planned: 78 });
+    expect(s.verdict).not.toBe("ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED");
+    expect(s.notice).toMatch(/Not a Stage-A result/);
+    expect(exitCodeFor(s.verdict)).toBe(0);
+  });
+
+  it("the same clean one-call run in authoritative mode still fails closed (INCOMPLETE, exit 3)", async () => {
+    const client = mockClient(clean);
+    const s = await runStageA(client, () => {}, { maxCalls: 1 });
+    expect(client.calls).toEqual(["O-T1"]);
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", mode: "authoritative", authoritative: true, notice: null, stopReason: "call_ceiling" });
+    expect(exitCodeFor(s.verdict)).toBe(3);
+  });
+
+  it("every authoritative ceiling below 78 fails closed, even with all answers clean", async () => {
+    for (const maxCalls of [1, 2, 26, 77]) {
+      const s = await runStageA(mockClient(clean), () => {}, { maxCalls, mode: "authoritative" });
+      expect(s.verdict, String(maxCalls)).toBe("INCOMPLETE");
+      expect(s.completed).toBe(maxCalls);
+    }
+  });
+
+  it("a smoke run cannot be the full screen: a ceiling of 78 (or none) is refused before any call", async () => {
+    const client = mockClient(clean);
+    await expect(runStageA(client, () => {}, { maxCalls: 78, mode: "smoke" })).rejects.toThrow(/smoke run needs a call ceiling below 78/);
+    await expect(runStageA(client, () => {}, { mode: "smoke" })).rejects.toThrow(/smoke run needs a call ceiling below 78/);
+    expect(client.calls).toHaveLength(0);
+  });
+
+  it("a smoke summary can never carry the Stage-A verdict, even over a complete clean record set", async () => {
+    const records: StageARecord[] = [];
+    const full = await runStageA(mockClient(clean), (r) => records.push(r));
+    expect(full.verdict).toBe("ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED");
+    const smoke = summarizeStageA(records, 78, null, { mode: "smoke", maxCalls: 78 });
+    expect(smoke.verdict).toBe("INCOMPLETE");
+    expect(smoke.authoritative).toBe(false);
+  });
+
+  it("a provider error in smoke mode still fails (INCOMPLETE, exit 3)", async () => {
+    const client = mockClient(() => ({ error: "provider_http_400:invalid_request_error", producingModel: undefined }));
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "provider_error", authoritative: false });
+    expect(exitCodeFor(s.verdict)).toBe(3);
+  });
+
+  it("an answer from another model in smoke mode still fails", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c), responseStatus: "completed", producingModel: "some-other-model" }));
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "model_mismatch" });
+    expect(exitCodeFor(s.verdict)).toBe(3);
+  });
+
+  it("an unsafe answer in smoke mode still fails the model (FAIL_UNSAFE, exit 1)", async () => {
+    const client = mockClient((c) => {
+      const e = truthExtraction(c);
+      // O-T1 is tracked; recording every responsibility as information routes it direct: a wrong route.
+      return { extraction: { ...e, responsibilities: e.responsibilities.map((r) => ({ ...r, nature: "information" })) }, responseStatus: "completed" };
+    });
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(s).toMatchObject({ verdict: "FAIL_UNSAFE", stopReason: "unsafe" });
+    expect(exitCodeFor(s.verdict)).toBe(1);
+  });
+
+  it("malformed output in smoke mode is not a smoke pass", async () => {
+    const client = mockClient(() => ({ extraction: { nonsense: true }, responseStatus: "completed" }));
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(s.usability).toMatchObject({ MALFORMED: 1 });
+    expect(s.verdict).toBe("INCOMPLETE");
+    expect(exitCodeFor(s.verdict)).toBe(3);
+  });
+
+  it("a refusal, an incomplete response or a missing response status in smoke mode is not a smoke pass", async () => {
+    for (const over of [{ refusal: true }, { responseStatus: "incomplete" }, { responseStatus: undefined }]) {
+      const client = mockClient((c) => ({ extraction: truthExtraction(c), responseStatus: "completed", ...over }));
+      const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+      expect(s.verdict, JSON.stringify(over)).toBe("INCOMPLETE");
+    }
+  });
+
+  it("any flag, nature or instruction finding, or non-OK usability on an otherwise clean smoke record is not a smoke pass", async () => {
+    const records: StageARecord[] = [];
+    const ok = await runStageA(mockClient(clean), (r) => records.push(r), { maxCalls: 1, mode: "smoke" });
+    expect(ok.verdict).toBe("SMOKE_PASS");
+    const [r] = records;
+    const variants: StageARecord[] = [
+      { ...r, grade: { ...r.grade, flags: ["anchor_missing:time:8"] } },
+      { ...r, grade: { ...r.grade, natureFindings: ["nature_error_masked_by_instruction"] } },
+      { ...r, grade: { ...r.grade, instructionFindings: ["invented_instruction:custody"] } },
+      { ...r, grade: { ...r.grade, usability: "UNNECESSARY_HOLD" } },
+      { ...r, plan: null },
+    ];
+    for (const v of variants) {
+      const s = summarizeStageA([v], 78, "call_ceiling", { mode: "smoke", maxCalls: 1 });
+      expect(s.verdict, JSON.stringify(v.grade)).toBe("INCOMPLETE");
+    }
+    // Doing less than the authorized work is not a smoke pass either.
+    expect(summarizeStageA([r], 78, "call_ceiling", { mode: "smoke", maxCalls: 2 }).verdict).toBe("INCOMPLETE");
+    expect(summarizeStageA([r], 78, null, { mode: "smoke", maxCalls: 1 }).verdict).toBe("INCOMPLETE");
+  });
+
+  it("end to end through the real adapter (network mocked): one request, SMOKE_PASS, non-authoritative", async () => {
+    const extraction = truthExtraction(stageACases()[0]);
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      id: "resp_1", object: "response", status: "completed", error: null, model: MODEL,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      output: [{ type: "function_call", id: "fc_1", call_id: "call_1", name: "extract_owner_instruction", arguments: JSON.stringify(extraction), status: "completed" }],
+    }), { status: 200 }));
+    const client = createOpenAIEvidenceClient({ model: MODEL, env: { OPENAI_EVIDENCE_KEY: "sk-test-only-local" }, fetchImpl });
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(s).toMatchObject({ verdict: "SMOKE_PASS", authoritative: false, completed: 1, stopReason: "call_ceiling" });
+  });
+});
+
+describe("Single-case selection never makes a run complete", () => {
+  const clean: Answer = (c) => ({ extraction: truthExtraction(c), responseStatus: "completed" });
+
+  it("all 3 runs of one case, zero unsafe, is still INCOMPLETE against the full 78-call plan (exit 3)", async () => {
+    const client = mockClient(clean);
+    const s = await runStageA(client, () => {}, { caseId: "A-D1" });
+    expect(client.calls).toEqual(["A-D1", "A-D1", "A-D1"]);
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", completed: 3, planned: 78, authoritative: true });
+    expect(exitCodeFor(s.verdict)).toBe(3);
+  });
+
+  it("a clean one-call A-D1 smoke run is SMOKE_PASS, non-authoritative, on A-D1 only", async () => {
+    const client = mockClient(clean);
+    const s = await runStageA(client, () => {}, { maxCalls: 1, mode: "smoke", caseId: "A-D1" });
+    expect(client.calls).toEqual(["A-D1"]);
+    expect(s).toMatchObject({ verdict: "SMOKE_PASS", authoritative: false, planned: 78, completed: 1, stopReason: "call_ceiling" });
+  });
+
+  it("a smoke ceiling above what the selected case can use never ends SMOKE_PASS (it did not stop at the ceiling)", async () => {
+    const s = await runStageA(mockClient(clean), () => {}, { maxCalls: 5, mode: "smoke", caseId: "A-D1" });
+    expect(s).toMatchObject({ completed: 3, stopReason: null, verdict: "INCOMPLETE" });
+  });
+
+  it("an unknown case in smoke mode is refused before any call", async () => {
+    const client = mockClient(clean);
+    await expect(runStageA(client, () => {}, { maxCalls: 1, mode: "smoke", caseId: "NOPE" })).rejects.toThrow(/26 frozen Stage-A ids/);
+    expect(client.calls).toHaveLength(0);
   });
 });
