@@ -7,7 +7,7 @@ import { planFromExtraction } from "../plan";
 import { buildSkillRequest, TOOL_NAME, TOOL_SCHEMA } from "../skill";
 import {
   buildChatCompletionsBody, createOpenAIEvidenceClient, EVIDENCE_KEY_VAR, EvidenceCredentialMissingError, OPENAI_CHAT_COMPLETIONS_URL,
-  producingModelMatches, toStrictParameters, type EvidenceEnv,
+  producingModelMatches, redactProviderText, toStrictParameters, type EvidenceEnv,
 } from "./openai-evidence-adapter";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -271,5 +271,60 @@ describe("Stage-A workflow wiring (static; never executed by tests)", () => {
     for (const f of readdirSync(WORKFLOWS).filter((x) => x !== "v3-stage-a-evidence.yml")) {
       expect(readFileSync(join(WORKFLOWS, f), "utf8").includes("OPENAI_EVIDENCE_KEY"), f).toBe(false);
     }
+  });
+});
+
+describe("Provider error diagnostics (redacted)", () => {
+  const errResponse = (status: number, error: Record<string, unknown>, requestId = "req_abc123") =>
+    new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json", "x-request-id": requestId } });
+
+  it("keeps OpenAI's status, type, code, param, message and request id for a rejected request", async () => {
+    const fetchImpl = vi.fn(async () => errResponse(400, {
+      type: "invalid_request_error", code: "invalid_value", param: "tools[0].function.parameters",
+      message: "Invalid schema for function 'extract_owner_instruction': In context=('properties', 'clarification'), ...",
+    }));
+    const r = await createOpenAIEvidenceClient({ model: MODEL, env: env(SECRET), fetchImpl }).extract(request);
+    expect(r.error).toBe("provider_http_400:invalid_value");
+    expect(r.providerError).toEqual({
+      status: 400, type: "invalid_request_error", code: "invalid_value", param: "tools[0].function.parameters",
+      message: "Invalid schema for function 'extract_owner_instruction': In context=('properties', 'clarification'), ...", requestId: "req_abc123",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("nulls the fields OpenAI did not send, and handles a non-JSON error body", async () => {
+    const a = await createOpenAIEvidenceClient({ model: MODEL, env: env(SECRET), fetchImpl: vi.fn(async () => errResponse(400, { type: "invalid_request_error", code: null, param: null, message: "Bad request" })) }).extract(request);
+    expect(a.providerError).toEqual({ status: 400, type: "invalid_request_error", code: null, param: null, message: "Bad request", requestId: "req_abc123" });
+    const b = await createOpenAIEvidenceClient({ model: MODEL, env: env(SECRET), fetchImpl: vi.fn(async () => new Response("<html>bad gateway</html>", { status: 502 })) }).extract(request);
+    expect(b.providerError).toEqual({ status: 502, type: null, code: null, param: null, message: null, requestId: null });
+  });
+
+  it("never keeps the evidence key, a bearer token, or anything shaped like an OpenAI key", async () => {
+    const leaky = errResponse(401, {
+      type: "invalid_request_error", code: "invalid_api_key", param: `key=${SECRET}`,
+      message: `Incorrect API key provided: ${SECRET}. Also sk-proj-abc123****wxyz and Bearer ${SECRET} and rk-live_ABCDEF123456.`,
+    }, `req_${SECRET}`);
+    const r = await createOpenAIEvidenceClient({ model: MODEL, env: env(SECRET), fetchImpl: vi.fn(async () => leaky) }).extract(request);
+    const out = JSON.stringify(r);
+    expect(out).not.toContain(SECRET);
+    expect(out).not.toContain("sk-proj-abc123");
+    expect(out).not.toContain("rk-live_ABCDEF123456");
+    expect(out).not.toMatch(/bearer\s+(?!\[REDACTED\])/i);
+    expect(r.providerError?.message).toContain("[REDACTED]");
+  });
+
+  it("caps message length and keeps no request body, prompt, schema or header", async () => {
+    const fetchImpl = vi.fn(async () => errResponse(400, { type: "invalid_request_error", message: "x".repeat(5000) }));
+    const r = await createOpenAIEvidenceClient({ model: MODEL, env: env(SECRET), fetchImpl }).extract(request);
+    expect(r.providerError!.message!.length).toBeLessThanOrEqual(601);
+    expect(Object.keys(r).sort()).toEqual(["error", "ms", "providerError"]);
+    const out = JSON.stringify(r);
+    expect(out).not.toContain(request.system.slice(0, 40));
+    expect(out).not.toMatch(/authorization|input_schema|"messages"/i);
+  });
+
+  it("redactProviderText removes the key even when it is the whole value", () => {
+    expect(redactProviderText(SECRET, SECRET, 200)).toBe("[REDACTED]");
+    expect(redactProviderText(undefined, SECRET, 200)).toBeNull();
   });
 });

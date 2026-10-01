@@ -112,6 +112,16 @@ Reruns after an `INCOMPLETE` start over from the beginning.
 - **Evidence:** provider errors are kept as `provider_http_<status>:<code>` or
   `provider_network:<name>`. Latency and token usage are recorded. The key never
   appears in any result or error.
+- **Rejected requests:** for an HTTP error, the record also keeps OpenAI's
+  diagnostic: status, `type`, `code`, `param`, `message` and the
+  `x-request-id` header.
+  - The evidence key, any bearer token and anything shaped like an OpenAI key
+    are replaced with `[REDACTED]`.
+  - The message is capped at 600 characters and the other fields at 200.
+  - No request body, prompt, schema or header is kept.
+- **Stop reason:** a provider error stops the screen as `provider_error` even
+  though there is no producing model. `model_mismatch` is reserved for an
+  answer from another model.
 - **Isolation:** imports only Node built-ins and the frozen V3 modules. It has
   no Production, database, messaging or SDK code.
 

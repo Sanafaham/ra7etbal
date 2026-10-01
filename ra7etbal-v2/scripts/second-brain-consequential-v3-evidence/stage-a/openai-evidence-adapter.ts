@@ -25,6 +25,7 @@ import type { buildSkillRequest } from "../skill";
 export const EVIDENCE_KEY_VAR = "OPENAI_EVIDENCE_KEY";
 export const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 export const DEFAULT_TIMEOUT_MS = 60_000;
+export const MODEL_MISMATCH_ERROR = "auth:producing_model_mismatch";
 
 export type SkillRequest = ReturnType<typeof buildSkillRequest>;
 
@@ -32,10 +33,26 @@ export interface EvidenceEnv {
   readonly OPENAI_EVIDENCE_KEY?: string;
 }
 
+/**
+ * What OpenAI said about a rejected request, kept so the rejection can be
+ * diagnosed. Only these fields are kept: never the request body, headers or
+ * key. The key value and anything shaped like an OpenAI key are redacted,
+ * and text fields are length-capped.
+ */
+export interface ProviderErrorDetail {
+  status: number;
+  type: string | null;
+  code: string | null;
+  param: string | null;
+  message: string | null;
+  requestId: string | null;
+}
+
 export interface EvidenceResult {
   producingModel?: string;
   extraction?: unknown;
   error?: string;
+  providerError?: ProviderErrorDetail;
   ms: number;
   usage?: { promptTokens: number | null; completionTokens: number | null };
   refusal?: boolean;
@@ -106,6 +123,30 @@ export function buildChatCompletionsBody(model: string, request: SkillRequest) {
   };
 }
 
+const KEY_SHAPE = /\b(sk|rk|ek)-[A-Za-z0-9_*\-]{6,}/g;
+const MESSAGE_MAX = 600;
+const FIELD_MAX = 200;
+
+/** Removes the evidence key and anything shaped like an OpenAI key, then caps the length. */
+export function redactProviderText(v: unknown, key: string, max: number): string | null {
+  if (typeof v !== "string" || v.length === 0) return null;
+  let out = key ? v.split(key).join("[REDACTED]") : v;
+  out = out.replace(/bearer\s+\S+/gi, "Bearer [REDACTED]").replace(KEY_SHAPE, "[REDACTED]");
+  return out.length > max ? `${out.slice(0, max)}…` : out;
+}
+
+export function providerErrorDetail(status: number, body: unknown, requestId: string | null, key: string): ProviderErrorDetail {
+  const e = (body && typeof body === "object" ? ((body as Record<string, unknown>).error ?? {}) : {}) as Record<string, unknown>;
+  return {
+    status,
+    type: redactProviderText(e.type, key, FIELD_MAX),
+    code: redactProviderText(typeof e.code === "number" ? String(e.code) : e.code, key, FIELD_MAX),
+    param: redactProviderText(e.param, key, FIELD_MAX),
+    message: redactProviderText(e.message, key, MESSAGE_MAX),
+    requestId: redactProviderText(requestId, key, FIELD_MAX),
+  };
+}
+
 function safeCode(v: unknown): string {
   return typeof v === "string" ? v.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 64) : "";
 }
@@ -159,7 +200,11 @@ export function createOpenAIEvidenceClient(opts: OpenAIEvidenceClientOptions): O
 
       if (!res.ok) {
         const e = (data?.error ?? {}) as Record<string, unknown>;
-        return { error: `provider_http_${res.status}:${safeCode(e.code) || safeCode(e.type) || "unknown"}`, ms };
+        return {
+          error: `provider_http_${res.status}:${safeCode(e.code) || safeCode(e.type) || "unknown"}`,
+          providerError: providerErrorDetail(res.status, data, res.headers.get("x-request-id"), key),
+          ms,
+        };
       }
       if (!data) return { error: "provider_bad_json", ms };
 
@@ -188,7 +233,7 @@ export function createOpenAIEvidenceClient(opts: OpenAIEvidenceClientOptions): O
       }
 
       if (!producingModelMatches(model, producingModel)) {
-        return { producingModel, extraction, error: "auth:producing_model_mismatch", ms, usage, refusal };
+        return { producingModel, extraction, error: MODEL_MISMATCH_ERROR, ms, usage, refusal };
       }
       return { producingModel, extraction, ms, usage, refusal };
     },

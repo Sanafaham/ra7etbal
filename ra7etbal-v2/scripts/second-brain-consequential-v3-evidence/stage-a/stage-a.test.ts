@@ -26,7 +26,7 @@ function truthExtraction(c: V3Case): V3Extraction {
   };
 }
 
-type Answer = (c: V3Case, call: number) => { extraction?: unknown; error?: string; producingModel?: string };
+type Answer = (c: V3Case, call: number) => { extraction?: unknown; error?: string; producingModel?: string; providerError?: unknown };
 function mockClient(answer: Answer): ModelClient & { calls: string[] } {
   const calls: string[] = [];
   return {
@@ -128,7 +128,24 @@ describe("Stage-A runner", () => {
     const s = await runStageA(client, () => {});
     expect(client.calls).toHaveLength(5);
     expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "provider_error", completed: 5 });
-    expect(s.providerErrors).toEqual([{ id: STAGE_A_IDS[1], run: 2, error: "provider_http_429:insufficient_quota" }]);
+    expect(s.providerErrors).toEqual([{ id: STAGE_A_IDS[1], run: 2, error: "provider_http_429:insufficient_quota", detail: null }]);
+  });
+
+  it("a rejected request with no producing model stops as provider_error (not model_mismatch) and keeps OpenAI's diagnostic", async () => {
+    const detail = { status: 400, type: "invalid_request_error", code: "invalid_value", param: "tools[0]", message: "Invalid schema", requestId: "req_1" };
+    const client = mockClient(() => ({ error: "provider_http_400:invalid_value", producingModel: undefined, providerError: detail }));
+    const records: StageARecord[] = [];
+    const s = await runStageA(client, (r) => records.push(r));
+    expect(client.calls).toHaveLength(1);
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "provider_error", completed: 1 });
+    expect(s.providerErrors).toEqual([{ id: STAGE_A_IDS[0], run: 1, error: "provider_http_400:invalid_value", detail }]);
+    expect(records[0].providerError).toEqual(detail);
+  });
+
+  it("an answer the adapter rejected for coming from another model still stops as model_mismatch", async () => {
+    const client = mockClient((c) => ({ extraction: truthExtraction(c), producingModel: "other-model", error: "auth:producing_model_mismatch" }));
+    const s = await runStageA(client, () => {});
+    expect(s).toMatchObject({ verdict: "INCOMPLETE", stopReason: "model_mismatch", completed: 1 });
   });
 
   it.each([["some-other-model"], [undefined]])("a wrong or missing producing model (%j) stops the screen as INCOMPLETE, even if the client did not flag it", async (producing) => {
@@ -156,7 +173,7 @@ describe("Stage-A runner", () => {
     await runStageA(mockClient(answer), (r) => stageA.push(r));
     expect(stageA.length).toBeGreaterThan(1);
     for (const r of stageA) {
-      const { usage: _u, refusal: _r, ...core } = r;
+      const { usage: _u, refusal: _r, providerError: _p, ...core } = r;
       expect(core).toEqual(frozen.find((f) => f.id === r.id && f.run === r.run));
     }
   });

@@ -20,10 +20,11 @@ import { gradeRun } from "../grade";
 import { messageText, planFromExtraction, validateShape } from "../plan";
 import type { ModelClient, RunRecord } from "../run";
 import { buildSkillRequest } from "../skill";
-import { producingModelMatches, type EvidenceResult } from "./openai-evidence-adapter";
+import { MODEL_MISMATCH_ERROR, producingModelMatches, type EvidenceResult } from "./openai-evidence-adapter";
 import { stageAJobs } from "./cases";
 
 export interface StageARecord extends RunRecord {
+  providerError: EvidenceResult["providerError"] | null;
   usage: EvidenceResult["usage"] | null;
   refusal: boolean;
 }
@@ -39,7 +40,7 @@ export interface StageASummary {
   natureFindings: { id: string; run: number; findings: string[] }[];
   instructionFindings: { id: string; run: number; findings: string[] }[];
   usability: Record<string, number>;
-  providerErrors: { id: string; run: number; error: string }[];
+  providerErrors: { id: string; run: number; error: string; detail: EvidenceResult["providerError"] | null }[];
   refusals: number;
   flags: { id: string; run: number; flags: string[] }[];
   byLanguage: Record<string, { completed: number; unsafe: number }>;
@@ -62,7 +63,7 @@ export async function runOneJob(client: ModelClient, candidateModels: readonly s
   return {
     id: c.id, lang: c.lang, critical: c.critical, run, requestedModel: client.requestedModel, producingModel: res.producingModel ?? null,
     ms: res.ms, error: res.error ?? null, extraction: res.extraction ?? null, plan, grade: gradeRun(c, plan, extraction, res.error ?? null),
-    usage: res.usage ?? null, refusal: res.refusal === true,
+    providerError: res.providerError ?? null, usage: res.usage ?? null, refusal: res.refusal === true,
   };
 }
 
@@ -77,6 +78,12 @@ export async function runStageA(client: ModelClient, onRecord: (r: StageARecord)
     onRecord(record);
     if (record.grade.safety === "UNSAFE") {
       stopReason = "unsafe";
+      break;
+    }
+    // A provider error comes first: a rejected request has no producing
+    // model, and that is a provider failure, not a model mismatch.
+    if (record.error && record.error !== MODEL_MISMATCH_ERROR) {
+      stopReason = "provider_error";
       break;
     }
     if (!producingModelMatches(client.requestedModel, record.producingModel ?? undefined)) {
@@ -115,7 +122,7 @@ export function summarizeStageA(records: StageARecord[], planned: number, stopRe
     }
     if (g.natureFindings.length) s.natureFindings.push({ id: r.id, run: r.run, findings: g.natureFindings });
     if (g.instructionFindings.length) s.instructionFindings.push({ id: r.id, run: r.run, findings: g.instructionFindings });
-    if (r.error) s.providerErrors.push({ id: r.id, run: r.run, error: r.error });
+    if (r.error) s.providerErrors.push({ id: r.id, run: r.run, error: r.error, detail: r.providerError });
     if (r.refusal) s.refusals++;
     if (g.flags.length) s.flags.push({ id: r.id, run: r.run, flags: g.flags });
     s.tokens.prompt += r.usage?.promptTokens ?? 0;
