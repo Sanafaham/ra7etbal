@@ -222,3 +222,45 @@ describe("Structured output: forced, strict, frozen schema", () => {
     }
   });
 });
+
+describe("Stage-A workflow wiring (static; never executed by tests)", () => {
+  const WORKFLOWS = join(HERE, "..", "..", "..", "..", ".github", "workflows");
+  const wf = readFileSync(join(WORKFLOWS, "v3-stage-a-evidence.yml"), "utf8");
+  const OTHER_CREDENTIALS = [PRODUCTION_KEY_NAME, ["LLM", "API", "KEY"].join("_"), ["ANTHROPIC", "EVIDENCE", "KEY"].join("_"), ["ANTHROPIC", "API", "KEY"].join("_")];
+
+  it("references exactly one secret, OPENAI_EVIDENCE_KEY, and no other credential name", () => {
+    expect(new Set([...wf.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]))).toEqual(new Set(["OPENAI_EVIDENCE_KEY"]));
+    for (const name of OTHER_CREDENTIALS) expect(wf.includes(name), name).toBe(false);
+    expect(wf).not.toMatch(/secrets\s*\[|toJSON\(\s*secrets|secrets:\s*inherit|OPENAI_BASE_URL/);
+  });
+
+  it("exposes the key to exactly one step, the Stage-A run", () => {
+    const assignments = [...wf.matchAll(/^\s+OPENAI_EVIDENCE_KEY:\s*\$\{\{\s*secrets\.OPENAI_EVIDENCE_KEY\s*\}\}\s*$/gm)];
+    expect(assignments).toHaveLength(1);
+    const after = wf.slice(assignments[0].index);
+    expect(after).toMatch(/^[\s\S]*?run: >-\s+npx --no-install vite-node scripts\/second-brain-consequential-v3-evidence\/stage-a\/cli\.ts --/);
+  });
+
+  it("runs only on an owner-added label for this exact branch, with read-only permissions", () => {
+    expect(wf).toMatch(/^on:\n {2}pull_request:\n {4}types: \[labeled\]\n\n/m);
+    expect(wf).not.toMatch(/^\s+(push|workflow_dispatch|schedule|pull_request_target|workflow_run|issue_comment):/m);
+    expect(wf).toContain("github.event.label.name == 'run-v3-stage-a'");
+    expect(wf).toContain("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(wf).toContain("github.event.pull_request.head.ref == 'claude/second-brain-consequential-v3-stage-a'");
+    expect(wf).toMatch(/^permissions:\n {2}contents: read\n/m);
+    expect(wf).toContain("persist-credentials: false");
+  });
+
+  it("names exactly one candidate model and checks the frozen V3 files before any call", () => {
+    expect([...wf.matchAll(/^\s+STAGE_A_MODEL:\s*(\S+)\s*$/gm)].map((m) => m[1])).toEqual(["gpt-5.6-luna"]);
+    expect(wf).toContain("FROZEN_V3_SHA: e3c2e1458d9b40133ce3aa90430ee09cce8ed91c");
+    expect(wf.indexOf("git diff --exit-code")).toBeLessThan(wf.indexOf("stage-a/cli.ts"));
+    expect(wf.indexOf("vitest run")).toBeLessThan(wf.indexOf("stage-a/cli.ts"));
+  });
+
+  it("no other workflow references the evidence key", () => {
+    for (const f of readdirSync(WORKFLOWS).filter((x) => x !== "v3-stage-a-evidence.yml")) {
+      expect(readFileSync(join(WORKFLOWS, f), "utf8").includes("OPENAI_EVIDENCE_KEY"), f).toBe(false);
+    }
+  });
+});

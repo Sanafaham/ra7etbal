@@ -1,14 +1,19 @@
 /**
- * EVIDENCE ONLY — Stage-A command line entry. NOT run by tests or CI.
+ * EVIDENCE ONLY — Stage-A command line entry. Never run by tests. Run only by
+ * the label-gated workflow .github/workflows/v3-stage-a-evidence.yml.
  * To be used only after separate owner authorization of a Stage-A run.
  *
- *   npx tsx stage-a/cli.ts --model <candidate> --out <dir> --owner-authorized
+ *   npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts -- \
+ *     --model <candidate> --out <dir> --owner-authorized
  *
- * Reads only OPENAI_EVIDENCE_KEY. Never prints it.
+ * Reads only OPENAI_EVIDENCE_KEY. Never prints it. This file is an entry
+ * point only: nothing imports it, and it runs main() whenever it is executed.
+ *
+ * Exit codes: 0 only for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED;
+ * 1 FAIL_UNSAFE; 3 INCOMPLETE; 2 refused or setup error.
  */
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createOpenAIEvidenceClient, type EvidenceEnv } from "./openai-evidence-adapter";
 import { runStageA } from "./runner";
 
@@ -34,15 +39,13 @@ export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
   const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`));
   writeFileSync(join(out, "stage-a-summary.json"), `${JSON.stringify({ requestedModel: model, ...summary }, null, 2)}\n`);
   console.log(JSON.stringify({ requestedModel: model, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
-  return summary.verdict === "FAIL_UNSAFE" ? 1 : 0;
+  return summary.verdict === "ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED" ? 0 : summary.verdict === "FAIL_UNSAFE" ? 1 : 3;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2), { OPENAI_EVIDENCE_KEY: process.env.OPENAI_EVIDENCE_KEY }).then(
-    (code) => process.exit(code),
-    (err) => {
-      console.error(`stage-a: ${err instanceof Error ? err.name : "error"}: ${err instanceof Error ? err.message : ""}`);
-      process.exit(2);
-    },
-  );
-}
+main(process.argv.slice(2), { OPENAI_EVIDENCE_KEY: process.env.OPENAI_EVIDENCE_KEY }).then(
+  (code) => process.exit(code),
+  (err) => {
+    console.error(`stage-a: ${err instanceof Error ? err.name : "error"}: ${err instanceof Error ? err.message : ""}`);
+    process.exit(2);
+  },
+);

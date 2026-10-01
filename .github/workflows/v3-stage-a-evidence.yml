@@ -1,0 +1,114 @@
+name: v3-stage-a-evidence
+
+# EVIDENCE BRANCH ONLY (claude/second-brain-consequential-v3-stage-a). Not for
+# merge. Runs the V3 Stage-A falsification screen once: 26 frozen V3 cases ×
+# 3 runs = at most 78 calls to ONE named OpenAI model through
+# /v1/chat/completions. It stops at the first unsafe result, provider error or
+# producing-model mismatch. No retry, no fallback, no second model.
+#
+# TRIGGER — deliberate and manual only. It runs only when someone with write
+# access adds the label `run-v3-stage-a` to a pull request whose head is this
+# exact branch in this repository. Pushes, opened/synchronize events and any
+# other label never run it. (workflow_dispatch was not used: GitHub only offers
+# it for workflows already on the default branch.) Adding the label IS the
+# owner's run authorization. To run again: remove the label and add it again.
+#
+# MODEL — STAGE_A_MODEL below is the one candidate for this run. Changing the
+# candidate means a reviewed commit to this line, never a fallback.
+#
+# CREDENTIAL — the only secret this workflow references is OPENAI_EVIDENCE_KEY,
+# an evidence-only key restricted to /v1/chat/completions. It is passed to the
+# one step that needs it as an environment variable, never echoed, written to
+# a file or uploaded; GitHub also masks it in logs. No other secret is
+# referenced. No Supabase, WhatsApp, ElevenLabs, Vercel or Production access.
+#
+# RESULT — stage-a-records.jsonl and stage-a-summary.json are uploaded as an
+# artifact. The job succeeds only for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED;
+# Stage A still needs hand review of every sent message before it counts as
+# passed.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v3-stage-a-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  STAGE_A_MODEL: gpt-5.6-luna
+  FROZEN_V3_SHA: e3c2e1458d9b40133ce3aa90430ee09cce8ed91c
+
+jobs:
+  stage-a:
+    if: >-
+      github.event.label.name == 'run-v3-stage-a' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'claude/second-brain-consequential-v3-stage-a'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+
+      - run: npm ci
+
+      - name: Show the exact commit under evidence
+        run: git rev-parse HEAD
+
+      - name: Frozen V3 files are unchanged from the frozen commit
+        run: |
+          git diff --exit-code "$FROZEN_V3_SHA" HEAD -- \
+            scripts/second-brain-consequential-v3-evidence/anchors.ts \
+            scripts/second-brain-consequential-v3-evidence/skill.ts \
+            scripts/second-brain-consequential-v3-evidence/policy.ts \
+            scripts/second-brain-consequential-v3-evidence/plan.ts \
+            scripts/second-brain-consequential-v3-evidence/corpus.ts \
+            scripts/second-brain-consequential-v3-evidence/grade.ts \
+            scripts/second-brain-consequential-v3-evidence/run.ts \
+            scripts/second-brain-consequential-v3-evidence/policy.test.ts \
+            scripts/second-brain-consequential-v3-evidence/plan.test.ts \
+            scripts/second-brain-consequential-v3-evidence/corpus.test.ts \
+            scripts/second-brain-consequential-v3-evidence/GATE_SPEC.md
+
+      - name: V3 and Stage-A deterministic tests (no model calls)
+        run: npx --no-install vitest run scripts/second-brain-consequential-v3-evidence/
+
+      - name: Check the evidence-only secret is configured
+        env:
+          HAS_EVIDENCE_KEY: ${{ secrets.OPENAI_EVIDENCE_KEY != '' }}
+        run: |
+          if [ "$HAS_EVIDENCE_KEY" != "true" ]; then
+            echo "::error::Repository secret OPENAI_EVIDENCE_KEY is not set. No evidence was produced."
+            exit 1
+          fi
+
+      - name: Stage A — 26 frozen cases × 3 runs, one model, stop on first failure
+        env:
+          OPENAI_EVIDENCE_KEY: ${{ secrets.OPENAI_EVIDENCE_KEY }}
+        run: >-
+          npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts --
+          --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized
+
+      - name: Upload Stage-A evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v3-stage-a-${{ env.STAGE_A_MODEL }}
+          path: /tmp/v3-stage-a/
+          if-no-files-found: warn

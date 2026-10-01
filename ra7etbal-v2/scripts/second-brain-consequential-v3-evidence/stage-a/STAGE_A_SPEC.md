@@ -115,13 +115,43 @@ Reruns after an `INCOMPLETE` start over from the beginning.
 - **Isolation:** imports only Node built-ins and the frozen V3 modules. It has
   no Production, database, messaging or SDK code.
 
-## Running it later (requires separate owner authorization)
+## Running it (requires separate owner authorization)
+
+The run happens only in GitHub Actions, through
+`.github/workflows/v3-stage-a-evidence.yml` on this branch:
+
+1. Open a pull request from `claude/second-brain-consequential-v3-stage-a`.
+   It must never be merged. Opening it runs only the normal no-call checks.
+2. Add the label `run-v3-stage-a`. That label is the run authorization. The
+   job runs only for that label, on this exact branch, from this repository.
+
+The job then does the following, in order:
+
+1. checks the frozen V3 files are byte-identical to `e3c2e14`;
+2. runs the deterministic tests;
+3. checks that `OPENAI_EVIDENCE_KEY` is set;
+4. runs the CLI against the one model named in `STAGE_A_MODEL`.
+
+Only that last step receives the key, and the workflow references no other
+secret.
+
+Results are uploaded as an artifact (`stage-a-records.jsonl`,
+`stage-a-summary.json`). CLI exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | `ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED` |
+| 1 | `FAIL_UNSAFE` |
+| 3 | `INCOMPLETE` |
+| 2 | refused or setup error, before any call |
+
+The job is green only for exit code 0. Even then, hand review is still
+required before Stage A counts as passed.
+
+Manual equivalent (never run by tests):
 
 ```
-OPENAI_EVIDENCE_KEY=<evidence-only key> npx tsx scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts \
+OPENAI_EVIDENCE_KEY=<evidence-only key> npx --no-install vite-node \
+  scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts -- \
   --model <candidate> --out <dir> --owner-authorized
 ```
-
-The CLI writes `stage-a-records.jsonl` and `stage-a-summary.json`. It refuses
-to run without `--owner-authorized`, and it never prints the key. Nothing in
-tests or CI runs it.
