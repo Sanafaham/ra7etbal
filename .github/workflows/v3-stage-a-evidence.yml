@@ -105,6 +105,14 @@ jobs:
           npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts --
           --model "$STAGE_A_MODEL" --out /tmp/v3-stage-a --owner-authorized
 
+      - name: Print Stage-A evidence to the log (no secrets; the artifact may be unreachable for reviewers)
+        if: always()
+        run: |
+          for f in /tmp/v3-stage-a/stage-a-summary.json /tmp/v3-stage-a/stage-a-records.jsonl; do
+            echo "=== $f"
+            if [ -f "$f" ]; then cat "$f"; else echo "(not written)"; fi
+          done
+
       - name: Upload Stage-A evidence
         if: always()
         uses: actions/upload-artifact@v4

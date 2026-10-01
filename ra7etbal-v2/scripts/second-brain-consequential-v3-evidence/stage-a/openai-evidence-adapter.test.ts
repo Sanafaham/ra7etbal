@@ -258,6 +258,15 @@ describe("Stage-A workflow wiring (static; never executed by tests)", () => {
     expect(wf.indexOf("vitest run")).toBeLessThan(wf.indexOf("stage-a/cli.ts"));
   });
 
+  it("prints the summary and records to the log after the run, without touching any secret", () => {
+    const step = wf.slice(wf.indexOf("- name: Print Stage-A evidence"), wf.indexOf("- name: Upload Stage-A evidence"));
+    expect(wf.indexOf("stage-a/cli.ts")).toBeLessThan(wf.indexOf("- name: Print Stage-A evidence"));
+    expect(step).toContain("if: always()");
+    expect(step).toContain("stage-a-summary.json");
+    expect(step).toContain("stage-a-records.jsonl");
+    expect(step).not.toMatch(/secrets|EVIDENCE_KEY|env:/);
+  });
+
   it("no other workflow references the evidence key", () => {
     for (const f of readdirSync(WORKFLOWS).filter((x) => x !== "v3-stage-a-evidence.yml")) {
       expect(readFileSync(join(WORKFLOWS, f), "utf8").includes("OPENAI_EVIDENCE_KEY"), f).toBe(false);
