@@ -1004,6 +1004,7 @@
       "files_functions": [
         "src/lib/text-carson.ts:executeDelegationFromText",
         "src/lib/ai/extract.ts:extractItems",
+        "src/lib/ai/role-precedence.ts:applyRolePrecedence (post-extraction routing correction; never authors recipient perspective)",
         "src/components/home/ElevenLabsAgentWidget.tsx:executeInstruction / clientTools.execute_instruction / guardCurrentToolInvocation",
         "src/lib/carson-transcript-guard.ts:CARSON_REPEAT_PROMPT / evaluateCarsonTranscriptCapture / matchCarsonSocialAcknowledgment (2026-09-07 registration — was already load-bearing for execute_instruction's invalid-capture handling at ElevenLabsAgentWidget.tsx's guardCurrentVoiceCapture/rawInstruction capture-guard call sites, but had never been added to this or any capability; registered while fixing a confirmed production regression, not a behavior change)"
       ],

@@ -426,7 +426,13 @@ function recipientMessageContent(
 ): string {
   if (item.ownerPerspective !== undefined) {
     const composed = item.suggestedMessage?.trim() ?? "";
-    if (!composed) throw new OwnerPerspectiveError("composition_missing", recipient);
+    if (!composed) {
+      throw new OwnerPerspectiveError(
+        "composition_missing",
+        recipient,
+        `There was no message text for ${recipient}, so nothing was saved or sent. Please say what you want to tell them.`,
+      );
+    }
     return renderOwnerPerspective(composed, {
       ownerName,
       recipientName: recipient,

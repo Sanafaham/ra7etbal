@@ -617,6 +617,40 @@ describe("canonical action creation paths", () => {
         nothingWritten();
       });
 
+      it("row 3 (EN) root cause: role-precedence no longer rewrites 'her appointment' into 'your appointment' (the bad text was deterministic, not the model's)", async () => {
+        mockExtractionResponse([{ type: "delegation", assignedTo: "Grace",
+          description: "Take Loulya to her appointment and call Sana after.",
+          suggestedMessage: "Can you please take Loulya to her appointment and call Sana after?", ...rendered }]);
+        const result = await extractItems("Ask Grace to take Loulya to her appointment and call me after.", people, "Sana");
+        expect(result.extracted[0]).toMatchObject({ type: "delegation", assignedTo: "Grace" });
+        expect(result.extracted[0].suggestedMessage).toBe("Can you please take Loulya to her appointment and call me after.");
+        expect(result.extracted[0].suggestedMessage).not.toMatch(/your appointment/);
+      });
+
+      it("row 3 reachable path: a delegation flipped to a message with no words to send never promotes the model's delegation text — refused, nothing written", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("Tell Grace", [{ type: "delegation", assignedTo: "Grace", description: "Take Loulya to her appointment.",
+            suggestedMessage: "Can you please take Loulya to your appointment and call me after.", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "composition_missing" });
+        expect((caught as Error).message).toMatch(/There was no message text for Grace, so nothing was saved or sent/);
+        nothingWritten();
+      });
+
+      it("retired rewriteRecipientPronouns: 'Tell Grace she can leave early' is no longer guessed into 'you can leave early' — the boundary refuses it", async () => {
+        await refused(extractAndSave("Tell Grace she can leave early", [{ type: "reminder", assignedTo: "Grace",
+          description: "Grace can leave early", ...rendered }], people));
+        nothingWritten();
+      });
+
+      it("a flipped message with no pronoun to resolve still sends the owner's own words", async () => {
+        await extractAndSave("Tell Grace dinner is ready", [{ type: "reminder", assignedTo: "Grace", description: "Dinner is ready", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "Grace, dinner is ready" });
+      });
+
       it.todo("row 5 (AR): 'سنا بتأخر الليلة.' bound to Grace and declared rendered is still NOT detectable deterministically (first-person verb form) — needs the owner decision recorded in RA7ETBAL_STATE.md");
 
       it("row 6 (AR): 'سنا تحبك.' is accepted for Loulya (Arabic kept, recipient bound)", async () => {
