@@ -651,7 +651,14 @@ describe("canonical action creation paths", () => {
         expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "Grace, dinner is ready" });
       });
 
-      it.todo("row 5 (AR): 'سنا بتأخر الليلة.' bound to Grace and declared rendered is still NOT detectable deterministically (first-person verb form) — needs the owner decision recorded in RA7ETBAL_STATE.md");
+      // OWNER-ACCEPTED LIMITATION (2026-10-02), not expected work: Batch #2 row 5 stays FAIL evidence. Arabic/Turkish
+      // perspective is model-native; deterministic code cannot verify verb person without grammar machinery, which
+      // is not authorized. This pin documents that the boundary does NOT catch it — see RA7ETBAL_STATE.md.
+      it("row 5 (AR) known limitation: 'سنا بتأخر الليلة.' (wrong verb person) bound to Grace is NOT detected deterministically and is sent", async () => {
+        await extractAndSave("قول لقريس إني بتأخر الليلة", [{ type: "message", assignedTo: "Grace",
+          description: "قول لقريس إني بتأخر الليلة.", suggestedMessage: "سنا بتأخر الليلة.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "سنا بتأخر الليلة." });
+      });
 
       it("row 6 (AR): 'سنا تحبك.' is accepted for Loulya (Arabic kept, recipient bound)", async () => {
         await extractAndSave("قولي للوليا إني أحبها", [{ type: "message", assignedTo: "Loulya",
