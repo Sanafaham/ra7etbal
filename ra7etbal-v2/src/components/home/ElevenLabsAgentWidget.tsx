@@ -95,7 +95,7 @@ import {
   CANONICAL_CONFIRMATION_ORIGIN,
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
-import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
+import { createAndSendDirectMessage, directMessageFailureResponse, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
 import { interpretStaffInstruction } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
@@ -2456,7 +2456,7 @@ export default function ElevenLabsAgentWidget({
             stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
             error: err instanceof Error ? err.message : String(err),
           });
-          return `I couldn't send ${person.name} the message. Please try again.`;
+          return directMessageFailureResponse(err, person.name);
         }
       }
 
@@ -3576,7 +3576,7 @@ export default function ElevenLabsAgentWidget({
           recipient: person.name,
           error: errMsg,
         });
-        return `I couldn't send ${person.name} the message. Please try again.`;
+        return directMessageFailureResponse(err, person.name);
       }
     },
     [],

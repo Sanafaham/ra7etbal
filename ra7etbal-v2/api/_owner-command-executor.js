@@ -1,5 +1,5 @@
 import sendWhatsappTask from './send-whatsapp-task.js';
-import { normalizeFirstPersonForOwner } from '../shared/owner-reference-normalization.js';
+import { isOwnerPerspectiveError, ownerPerspectiveClarification, renderOwnerPerspective } from '../shared/owner-perspective.js';
 
 // Legacy no-"to" fallback only — the primary delegation signal is the
 // infinitive "to <verb>" grammatical marker (see classifyOwnerCommand),
@@ -102,8 +102,20 @@ export function classifyOwnerCommand(text) {
   return { type: 'unsupported', text: input };
 }
 
-export function normalizeOwnerReferences(text, ownerName) {
-  return normalizeFirstPersonForOwner(text, String(ownerName || '').trim() || 'the owner');
+/**
+ * The command text as the recipient should read it, through the single
+ * owner-perspective contract (shared/owner-perspective.js). A tracked
+ * delegation's text is task text for the assignee (stored as
+ * tasks.description and later quoted by follow-ups); a direct message is the
+ * owner's words to the recipient. Throws OwnerPerspectiveError when perspective cannot be resolved
+ * safely — the caller then sends nothing.
+ */
+export function resolveOwnerCommandText(text, { ownerName, recipientName, commandType }) {
+  return renderOwnerPerspective(text, {
+    ownerName: String(ownerName || '').trim() || 'the owner',
+    recipientName,
+    voice: commandType === 'delegation' ? 'task_text' : 'owner_to_recipient',
+  });
 }
 
 export async function persistAndExecuteOwnerCommand({
@@ -146,15 +158,20 @@ export async function persistAndExecuteOwnerCommand({
     };
   } catch (error) {
     const parseFailed = error?.message === 'reminder_time_parse_failed';
-    const exhausted = parseFailed ||
+    // Owner perspective could not be resolved: nothing was sent, and a retry
+    // would fail the same way. Terminal, with a request to rephrase.
+    const perspectiveFailed = isOwnerPerspectiveError(error);
+    const exhausted = parseFailed || perspectiveFailed ||
       Number(row.retry_count || 0) >= Number(row.max_retries || MAX_RETRIES);
     await updateCommand(supabaseUrl, serviceKey, receipt, identity.userId, {
       execution_status: exhausted ? 'terminal_failed' : 'failed',
-      execution_error: error?.message || String(error),
+      execution_error: perspectiveFailed ? `${error.code}:${error.reason}` : (error?.message || String(error)),
       next_retry_at: exhausted ? null : new Date(Date.now() + 60_000).toISOString(),
     });
     const acknowledgement = parseFailed
       ? "I couldn't understand the reminder time, so nothing was scheduled."
+      : perspectiveFailed
+        ? ownerPerspectiveClarification(classification.recipient)
       : exhausted
         ? 'I recorded your command, but I could not complete it after the allowed attempts. Nothing was claimed as done and no further retry is scheduled.'
         : 'I recorded your command, but I could not complete it. Nothing further was claimed as done; Ra7etBal will retry it safely.';
@@ -239,7 +256,11 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
     ? 'delegation'
     : classification.type;
 
-  const normalizedText = normalizeOwnerReferences(classification.text, ownerName);
+  // Resolved before anything is written: an unresolved perspective throws
+  // here, so no task, message or delivery exists for it.
+  const normalizedText = resolveOwnerCommandText(classification.text, {
+    ownerName, recipientName: person.name, commandType: effectiveType,
+  });
   const messageId = row.action_message_id || receipt.receipt_id;
   let taskId = row.action_task_id || null;
   let confirmationLink = null;

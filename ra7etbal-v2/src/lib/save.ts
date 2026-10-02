@@ -1,4 +1,4 @@
-import { createDelegationTaskAndMessage, rewriteOwnerPronouns } from "./delegations";
+import { createDelegationTaskAndMessage, resolveDelegationTaskText } from "./delegations";
 import { createDirectMessageRecord } from "./direct-messages";
 import { buildDelegationMessage } from "./delegation-message";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
@@ -139,15 +139,15 @@ export async function savePending(
         (person) => person.name.trim().toLowerCase() === recipient.toLowerCase(),
       );
       const content = assignedPersonMsg
-        ? rewriteOwnerPronouns(
-            buildDelegationMessage({
-              personName: recipient,
-              taskText: item.description,
-              personNotes: assignedPersonMsg.notes ?? null,
-              ownerName,
-            }),
+        ? buildDelegationMessage({
+            personName: recipient,
+            // Owner perspective resolved through the single contract before
+            // the template is built (throws OwnerPerspectiveError: nothing is
+            // sent when it cannot be resolved safely).
+            taskText: resolveDelegationTaskText(item.description, recipient, ownerName),
+            personNotes: assignedPersonMsg.notes ?? null,
             ownerName,
-          )
+          })
         : (item.suggestedMessage ?? item.description).trim();
       if (!content) {
         skipped += 1;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyOwnerCommand,
-  normalizeOwnerReferences,
+  resolveOwnerCommandText,
   parseOwnerReminderDue,
 } from './_owner-command-executor.js';
 
@@ -79,7 +79,14 @@ describe('server owner-command classification', () => {
   });
 });
 
+// Owner perspective is resolved through the single contract
+// (shared/owner-perspective.js). Same input→output pairs as before for the
+// direct-message voice, plus the classes the old leading-subject normalizer
+// left unchanged and the fail-closed cases.
 describe('owner-reference normalization', () => {
+  const direct = (text) => resolveOwnerCommandText(text, { ownerName: 'Sana', recipientName: 'Loulya', commandType: 'direct_message' });
+  const tracked = (text) => resolveOwnerCommandText(text, { ownerName: 'Sana', recipientName: 'Grace', commandType: 'delegation' });
+
   it.each([
     ['call me', 'call Sana'],
     ['wait for me', 'wait for Sana'],
@@ -87,7 +94,28 @@ describe('owner-reference normalization', () => {
     ['bring me', 'bring Sana'],
     ['call myself', 'call Sana'],
   ])('%s becomes %s', (input, expected) => {
-    expect(normalizeOwnerReferences(input, 'Sana')).toBe(expected);
+    expect(direct(input)).toBe(expected);
+  });
+
+  it('direct message: the owner wish class becomes consistent recipient-facing wording', () => {
+    expect(direct('I would like her to call me')).toBe('Sana would like you to call Sana');
+    expect(direct("I'd like you to call me")).toBe('Sana would like you to call Sana');
+  });
+
+  it('tracked delegation: the stored task text names the owner and keeps third parties', () => {
+    expect(tracked('put it in my room')).toBe("put it in Sana's room");
+    expect(tracked('meet me outside')).toBe('meet Sana outside');
+    expect(tracked('take Loulya to her appointment and call me after')).toBe('take Loulya to her appointment and call Sana after');
+  });
+
+  it('fails closed (OwnerPerspectiveError) instead of guessing', () => {
+    for (const text of ['Grace said I would call back', 'I did it myself', 'اتصلي فيني', 'Beni ara lütfen']) {
+      expect(() => direct(text), text).toThrow(expect.objectContaining({ code: 'owner_perspective_unresolved' }));
+    }
+  });
+
+  it('falls back to "the owner" when no display name exists, as before', () => {
+    expect(resolveOwnerCommandText('call me', { ownerName: '', recipientName: 'Grace', commandType: 'direct_message' })).toBe('call the owner');
   });
 });
 

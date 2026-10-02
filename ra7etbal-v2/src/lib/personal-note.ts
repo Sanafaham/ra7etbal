@@ -1,3 +1,5 @@
+import { renderOwnerPerspective } from "./direct-message-owner-normalization";
+
 /**
  * Personal-note helpers
  *
@@ -39,6 +41,7 @@
 export function normalizePersonalNote(
   note: string,
   ownerName: string | null | undefined,
+  recipientName?: string | null,
 ): string {
   const raw = note?.trim();
   if (!raw) return raw ?? "";
@@ -58,9 +61,15 @@ export function normalizePersonalNote(
   );
   const hasSubject = subjectPattern.test(text);
 
+  // The note is the owner's own words to the recipient. Owner perspective is
+  // resolved through the single contract (shared/owner-perspective.js);
+  // OwnerPerspectiveError fails the delegation closed when it cannot be.
+  const resolve = (value: string) =>
+    renderOwnerPerspective(value, { ownerName: ownerName?.trim() || "the sender", recipientName, voice: "owner_to_recipient" });
+
   if (hasSubject) {
-    // Well-formed — normalise capitalisation and add period.
-    return sentence(text);
+    // Well-formed — resolve owner perspective, normalise capitalisation, add period.
+    return sentence(resolve(text));
   }
 
   // Urgency phrases are task modifiers, not personal communications.
@@ -74,7 +83,7 @@ export function normalizePersonalNote(
   }
 
   // Bare expression — attach "[Owner] says [expression]."
-  const lower = lcFirst(text);
+  const lower = lcFirst(resolve(text));
   return sentence(`${owner} says ${lower}`);
 }
 

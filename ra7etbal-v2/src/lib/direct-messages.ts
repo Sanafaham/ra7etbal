@@ -1,6 +1,6 @@
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
 import { preserveDirectMessageReplyIntent } from "./direct-message-reply-intent";
-import { normalizeFirstPersonForOwner } from "./direct-message-owner-normalization";
+import { isOwnerPerspectiveError, ownerPerspectiveClarification, resolveOwnerPerspective, OwnerPerspectiveError } from "./direct-message-owner-normalization";
 import type { Message } from "../types/message";
 import type { MessageDraft } from "../types/message";
 
@@ -8,13 +8,28 @@ export type DirectMessageStage = "create_message" | "deliver_message";
 
 export class DirectMessageBoundaryError extends Error {
   stage: DirectMessageStage;
+  /** The original error, kept so callers can recognise its kind. */
+  override cause: unknown;
 
   constructor(stage: DirectMessageStage, cause: unknown) {
     const detail = cause instanceof Error ? cause.message : String(cause);
     super(detail || "Direct message failed.");
     this.name = "DirectMessageBoundaryError";
     this.stage = stage;
+    this.cause = cause;
   }
+}
+
+/**
+ * The owner-facing reply when a direct message was not sent. When the
+ * owner-perspective boundary refused to word the message (it could not tell
+ * safely who "I", "me" or "her" would mean to the recipient), the owner is
+ * asked to rephrase instead of being told to "try again" with the same words.
+ */
+export function directMessageFailureResponse(err: unknown, recipientName: string): string {
+  const cause = err instanceof DirectMessageBoundaryError ? err.cause : err;
+  if (isOwnerPerspectiveError(cause)) return ownerPerspectiveClarification(recipientName);
+  return `I couldn't send ${recipientName} the message. Please try again.`;
 }
 
 export interface CreateDirectMessageInput {
@@ -72,22 +87,35 @@ export async function createDirectMessageRecord({
 }: CreateDirectMessageInput): Promise<Message> {
   void source;
   const cleanRecipient = recipient.trim();
-  // Owner-reference normalization ("me"/"I"/"my" -> the owner's name)
-  // happens here, at the one boundary every direct-message path (Talk's
-  // send_direct_whatsapp_message tool and sendDelegation's communication
-  // reroute; Type's executeDirectMessageFastPath and the same sendDelegation
-  // reroute) converges on before a message row is ever created — see
-  // direct-message-owner-normalization.ts.
-  // Ordering invariant: reconstruct explicit reply requests AFTER ordinary
-  // owner normalization. The verbatim owner instruction is authoritative, so
-  // this repairs either a raw first-person tool payload or one the model has
-  // already rewritten, while ordinary direct messages retain normalization.
-  const ownerNormalizedMessage = normalizeFirstPersonForOwner(messageText, ownerName).trim();
-  const cleanMessage = preserveDirectMessageReplyIntent(
-    ownerInstruction,
-    cleanRecipient,
-    ownerNormalizedMessage,
-  ).trim();
+  // Owner perspective is resolved here, at the one boundary every
+  // direct-message path (Talk's send_direct_whatsapp_message tool and
+  // sendDelegation's communication reroute; Type's
+  // executeDirectMessageFastPath and the same reroute; Clear My Head's save)
+  // converges on before a message row is ever created — through the single
+  // authoritative owner-perspective contract (shared/owner-perspective.js).
+  // The text is the owner's words to the recipient: first person is the
+  // owner, second person is the recipient.
+  // Ordering invariant: reconstruct explicit reply requests AFTER owner
+  // perspective. The verbatim owner instruction is authoritative, so this
+  // repairs either a raw first-person tool payload or one the model has
+  // already rewritten, while ordinary direct messages keep the resolved text.
+  const perspective = resolveOwnerPerspective(messageText, {
+    ownerName,
+    recipientName: cleanRecipient,
+    voice: "owner_to_recipient",
+  });
+  let cleanMessage: string;
+  if (perspective.status === "needs_composition") {
+    // Fail closed: nothing is created or sent — unless the owner's own
+    // "ask <recipient> to reply …" instruction replaces this text entirely.
+    const replyRequest = preserveDirectMessageReplyIntent(ownerInstruction, cleanRecipient, messageText.trim()).trim();
+    if (replyRequest === messageText.trim() || !replyRequest.startsWith("Please reply:")) {
+      throw new OwnerPerspectiveError(perspective.reason, cleanRecipient);
+    }
+    cleanMessage = replyRequest;
+  } else {
+    cleanMessage = preserveDirectMessageReplyIntent(ownerInstruction, cleanRecipient, perspective.text.trim()).trim();
+  }
   if (!userId) throw new Error("Not signed in.");
   if (!cleanRecipient) throw new Error("Direct message recipient is required.");
   if (!cleanMessage) throw new Error("Direct message text is required.");

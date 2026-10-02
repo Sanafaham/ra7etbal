@@ -4,6 +4,7 @@ import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./p
 import { composeMergedMessage } from "./ai/compose-message";
 import { scheduleEscalationMessages } from "./qstash-escalation";
 import { createTask } from "./tasks";
+import { renderOwnerPerspective, resolveOwnerPerspective } from "./direct-message-owner-normalization";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
@@ -48,13 +49,19 @@ export interface CreateDelegationTaskAndMessageResult {
   confirmationUrl: string;
 }
 
-export function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
-  const name = ownerName?.trim() || "the sender";
-  return text
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name);
+/**
+ * The task text as the assignee should read it, through the single
+ * owner-perspective contract (shared/owner-perspective.js), in task-text
+ * voice: the owner's "I/me/my" become the owner, with correct grammar; "you"
+ * is the assignee and stays; third parties stay third parties. Throws OwnerPerspectiveError — nothing is created or sent — when
+ * the perspective cannot be resolved safely.
+ */
+export function resolveDelegationTaskText(taskText: string, assigneeName: string, ownerName?: string | null): string {
+  return renderOwnerPerspective(taskText, {
+    ownerName: ownerName?.trim() || "the sender",
+    recipientName: assigneeName,
+    voice: "task_text",
+  });
 }
 
 export async function buildDelegationMessageContent({
@@ -70,25 +77,27 @@ export async function buildDelegationMessageContent({
   personNotes?: string | null;
   ownerName?: string | null;
 }): Promise<string> {
-  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName);
+  const resolvedTask = resolveDelegationTaskText(taskText, personName, ownerName);
+  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName, personName);
 
   if (normalizedNote) {
     const merged = await composeMergedMessage({
       personName,
-      taskText,
+      taskText: resolvedTask,
       personalNote: normalizedNote,
       ownerName,
     });
-    if (merged) return merged;
+    if (merged) {
+      // Model-composed text is recipient-facing too: it passes the same
+      // boundary, and falls back to the deterministic message below when its
+      // perspective cannot be resolved safely.
+      const checked = resolveOwnerPerspective(merged, { ownerName, recipientName: personName, voice: "owner_to_recipient" });
+      if (checked.status !== "needs_composition") return checked.text;
+    }
   }
 
   return injectPersonalNote(
-    stripClosingLine(
-      rewriteOwnerPronouns(
-        buildDelegationMessage({ personName, taskText, personNotes, ownerName }),
-        ownerName,
-      ),
-    ),
+    stripClosingLine(buildDelegationMessage({ personName, taskText: resolvedTask, personNotes, ownerName })),
     normalizedNote,
   );
 }
@@ -110,9 +119,11 @@ export async function createDelegationTaskAndMessage({
   if (!userId) throw new Error("Not signed in.");
 
   const assigneeName = assignee.name.trim();
-  const description = taskText.trim();
   if (!assigneeName) throw new Error("Delegation assignee is required.");
-  if (!description) throw new Error("Delegation task text is required.");
+  if (!taskText.trim()) throw new Error("Delegation task text is required.");
+  // Stored as the assignee reads it, so the confirm page, the message and
+  // every later follow-up quote the same correctly-referenced task.
+  const description = resolveDelegationTaskText(taskText.trim(), assigneeName, ownerName);
 
   const id = taskId?.trim() || crypto.randomUUID();
   const confirmationUrl = `${CANONICAL_CONFIRMATION_ORIGIN}/confirm?task=${encodeURIComponent(id)}`;

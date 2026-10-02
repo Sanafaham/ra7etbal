@@ -104,6 +104,7 @@ import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
+import { resolveOwnerPerspective } from '../shared/owner-perspective.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -582,12 +583,11 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
   }
 
   // Resolve owner display name for two purposes:
-  //   1. Rewrite pronouns in the description ("you" → owner's name) for the recipient.
+  //   1. Render the description for the recipient (owner-perspective contract).
   //   2. Pass as ownerName to send-whatsapp-task so the task template {{1}} shows
   //      the real owner name instead of the "Rahet Bal" server fallback.
   const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, user_id);
-  const rewrittenDescription = rewriteDelegationPronouns(description, ownerName);
-  const messageText = `Following up: ${rewrittenDescription}`;
+  const messageText = buildFollowUpMessageText({ description, ownerName, assignedTo: assigned_to });
   const label = testMode ? '[testMode] ' : '';
   console.log(`[escalation] ${label}sending follow-up WhatsApp to ${assigned_to} for task ${taskId}`, {
     route: `${appBaseUrl}/api/send-whatsapp-task`,
@@ -755,25 +755,6 @@ async function resolveOwnerName(supabaseUrl, serviceKey, userId) {
   return typeof name === 'string' && name.trim() ? name.trim() : 'the sender';
 }
 
-/**
- * Rewrite owner-facing pronouns so the recipient reads the correct name.
- * Used on task.description (stored from the owner's perspective).
- *
- * Safe to include "you" here because description is always owner-facing:
- *   "text you in one minute" → "text Sana in one minute"
- * Unlike suggestedMessage, description does NOT use "you" to address Grace.
- */
-function rewriteDelegationPronouns(text, ownerName) {
-  const name = (typeof ownerName === 'string' && ownerName.trim()) ? ownerName.trim() : 'the sender';
-  return text
-    .replace(/\byou\b/gi, name)
-    .replace(/\byour\b/gi, `${name}'s`)
-    .replace(/\byourself\b/gi, name)
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name);
-}
 
 async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
   // Guard: only stamp if still null (prevents race conditions on concurrent runs).
@@ -793,6 +774,20 @@ async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
   } else {
     console.log('[escalation] guard stamped', { taskId, column, value });
   }
+}
+
+/**
+ * Staff-facing follow-up text. task.description is a task record from the
+ * owner's side; it is rendered for the assignee through the single
+ * owner-perspective contract (shared/owner-perspective.js). When that cannot
+ * be done safely the follow-up does not quote the task at all rather than
+ * guess who "I" or "her" means.
+ */
+export function buildFollowUpMessageText({ description, ownerName, assignedTo }) {
+  const resolved = resolveOwnerPerspective(String(description || ''), { ownerName, recipientName: assignedTo, voice: 'task_record' });
+  return resolved.status === 'needs_composition'
+    ? `Following up on the task ${ownerName} sent you.`
+    : `Following up: ${resolved.text}`;
 }
 
 export function getDelegationSkipReason(task) {
