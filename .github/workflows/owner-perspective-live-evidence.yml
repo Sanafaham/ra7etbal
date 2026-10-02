@@ -1,0 +1,100 @@
+name: owner-perspective-live-evidence
+
+# Bounded, owner-authorized live evidence for the owner-perspective extraction
+# contract (PR #430). EVIDENCE ONLY: runs the 12 fixed inputs in
+# ra7etbal-v2/scripts/owner-perspective-extraction.live-evidence.test.ts
+# through the real production extraction prompt/parser (claude-sonnet-4-6)
+# and the real shared owner-perspective boundary. Exactly 12 provider calls,
+# hard-capped inside the harness; no retry.
+#
+# TRIGGER — only when someone with write access adds the label
+# `run-owner-perspective-evidence` to a pull request from this repository.
+# It never runs the general carson-live-model-evidence script.
+#
+# ISOLATION — no Supabase (inert placeholders; any access throws), no
+# WhatsApp, no ElevenLabs, no composer, no app session. The only secret is
+# the existing dedicated ANTHROPIC_EVIDENCE_KEY, passed to one step.
+#
+# RESULT — each of the 12 rows is published as a check-run annotation (the
+# raw rows contain no secrets) so the evidence can be read from the API.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-perspective-live-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  owner-perspective-live-evidence:
+    if: >-
+      github.event.label.name == 'run-owner-perspective-evidence' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+
+      - run: npm ci
+
+      - name: Show the exact commit under evidence
+        run: git rev-parse HEAD
+
+      - name: Check the dedicated evidence secret is configured
+        env:
+          HAS_EVIDENCE_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY != '' }}
+        run: |
+          if [ "$HAS_EVIDENCE_KEY" != "true" ]; then
+            echo "::error::Repository secret ANTHROPIC_EVIDENCE_KEY is not set. No live evidence was produced."
+            exit 1
+          fi
+
+      - name: Run the 12-call owner-perspective evidence (no retry)
+        env:
+          OWNER_PERSPECTIVE_LIVE_EVIDENCE: "1"
+          OWNER_PERSPECTIVE_EVIDENCE_OUT: /tmp/owner-perspective-evidence.json
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY }}
+          VITE_SUPABASE_URL: http://127.0.0.1:9
+          VITE_SUPABASE_ANON_KEY: evidence-placeholder
+        run: npx vitest run scripts/owner-perspective-extraction.live-evidence.test.ts
+
+      - name: Publish call count and rows 1-6
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "/tmp/owner-perspective-evidence.json";
+            if (!fs.existsSync(p)) { console.log("::error::No evidence file was written."); process.exit(0); }
+            const e = JSON.parse(fs.readFileSync(p, "utf8"));
+            const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+            console.log(`::notice title=evidence-summary::${esc(JSON.stringify({ calls: e.calls, models: e.models, rows: e.rows.length }))}`);
+            for (const r of e.rows.filter((r) => r.n <= 6)) console.log(`::notice title=evidence-row-${r.n}::${esc(JSON.stringify(r))}`);
+          '
+
+      - name: Publish rows 7-12
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "/tmp/owner-perspective-evidence.json";
+            if (!fs.existsSync(p)) process.exit(0);
+            const e = JSON.parse(fs.readFileSync(p, "utf8"));
+            const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+            for (const r of e.rows.filter((r) => r.n > 6)) console.log(`::notice title=evidence-row-${r.n}::${esc(JSON.stringify(r))}`);
+          '
