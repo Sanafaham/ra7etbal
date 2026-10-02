@@ -25,6 +25,8 @@ import { classifyCalendarEvent, formatEventTime, formatEventEndTime } from "./ca
 import { derivePendingItems, formatPendingItemsForCarson } from "./pending-items";
 import {
   collectSupersededManifestationIds,
+  deriveRecurringManifestationState,
+  RESOLUTION_RESOLVED,
   withoutSupersededManifestations,
   type RecurringSourceIndexes,
 } from "../../shared/carson-recurring-manifestations.js";
@@ -80,6 +82,46 @@ export interface CarsonContextInput {
    * never too little.
    */
   recurringSourceIndexes?: RecurringSourceIndexes;
+}
+
+/**
+ * Bounded OPEN window membership (P3 step 2, 2026-10-02).
+ *
+ * Only decides WHICH current open items fill the bounded window when there are
+ * more than `limit`. Within the window, items keep their incoming
+ * (newest-first) order, so a list that already fits is returned unchanged.
+ *
+ * Why: a recurring source's CURRENT manifestation is always among the newest
+ * rows, so plain newest-first truncation dropped the oldest genuine
+ * responsibilities first (Production 2026-10-02: 17 current items, the two
+ * oldest overdue reminders omitted). Under overflow, genuine responsibilities
+ * are kept first and current recurring manifestations take the remaining
+ * capacity, newest first. This is context-window prioritization only — it does
+ * not rank importance anywhere else, and it changes no state.
+ *
+ * "Recurring" means exactly what P3 5b supersession means by it: a task the
+ * shared derivation resolves to a single trustworthy recurring source. Anything
+ * the derivation leaves unresolved or ambiguous — including every manifestation
+ * excluded by the accountability guard (assignee, needs_follow_up,
+ * delegation/followup, follow-up or escalation stamped) — counts as genuine, so
+ * a gap in evidence can only keep an item visible, never push it out.
+ */
+function selectOpenWindow(
+  open: Task[],
+  allTasks: Task[],
+  indexes: RecurringSourceIndexes | undefined,
+  limit: number,
+): Task[] {
+  if (open.length <= limit) return open;
+  const state = deriveRecurringManifestationState(allTasks, indexes);
+  const isRecurring = (t: Task) => state.get(t.id)?.resolution === RESOLUTION_RESOLVED;
+  const genuine = open.filter((t) => !isRecurring(t));
+  const keep = new Set(genuine.slice(0, limit));
+  for (const t of open) {
+    if (keep.size >= limit) break;
+    if (isRecurring(t)) keep.add(t);
+  }
+  return open.filter((t) => keep.has(t));
 }
 
 /**
@@ -262,7 +304,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     lines.push("OPEN: none");
   } else {
     lines.push("OPEN:");
-    const openSlice = open.slice(0, 15);
+    const openSlice = selectOpenWindow(open, tasks, input.recurringSourceIndexes, 15);
     if (open.length > 15) lines.push(`(showing 15 of ${open.length} open items)`);
     for (const t of openSlice) {
       const assigned = t.assigned_to ? `, assigned to ${t.assigned_to}` : "";
