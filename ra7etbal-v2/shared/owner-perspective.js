@@ -201,6 +201,12 @@ const IMPERATIVE_STARTS = new Set(['tell', 'ask', 'call', 'let', 'bring', 'take'
   'update', 'check', 'find', 'buy', 'book', 'arrange', 'pass', 'hand', 'fetch', 'grab', 'contact', 'phone', 'email']);
 const SENTENCE_LEADERS = new Set(['please', 'and', 'also', 'then', 'so', 'kindly']);
 const OWNER_SUBJECT_FORMS = new Set(['i', "i'm", "i'd", "i'll", "i've"]);
+/** The only words allowed between the owner's "I" and a pronoun that means the recipient. */
+const RECIPIENT_ANCHOR_VERBS = new Set(['would', 'will', 'like', 'love', 'need', 'want', 'to', 'ask', 'expect', 'miss',
+  'give', 'tell', 'remind', 'let', 'help', 'see', 'call', 'text', 'meet', 'thank', 'invite']);
+/** Words that, right before "I", mean the verb after it does not agree with "I" alone (questions, "you and I"). */
+const BEFORE_I_NO_AGREEMENT = new Set(['can', 'could', 'should', 'would', 'will', 'shall', 'may', 'might', 'must', 'do', 'does',
+  'did', 'am', 'was', 'have', 'had', "can't", "won't", "don't", "didn't", "shouldn't", "wouldn't", "couldn't", 'and', 'or', 'nor']);
 const SENTENCE_ABBREVIATIONS = new Set(['mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr', 'prof', 'vs', 'etc', 'no']);
 
 function normalizeArabic(text) {
@@ -271,11 +277,16 @@ function isTurkishMyNoun(w) {
 }
 
 function isTurkishText(words, tokens) {
-  return words.some((i) => {
+  const evidence = words.filter((i) => {
     const w = tokens[i].text.toLocaleLowerCase('tr');
     return TR_SIGNAL.test(tokens[i].text) || TR_FUNCTION_WORDS.has(w) || TR_FIRST_PERSON.has(w) || isTurkishMyNoun(w) ||
       (TR_SPECIFIC_SUFFIXES.test(w) && !TR_SUFFIX_NOT_ME.has(w));
-  });
+  }).length;
+  if (evidence === 0) return false;
+  if (evidence >= 2) return true;
+  // A single Turkish-looking token (a name such as "Gökhan" or "Ara") inside
+  // clearly English text does not make the text Turkish.
+  return words.filter((i) => EN_FUNCTION_WORDS.has(tokens[i].lower)).length < 2;
 }
 
 /** True when one Turkish (Latin-script) token is an owner first-person form. */
@@ -377,21 +388,31 @@ function composedPronounWithoutAntecedent(tokens, words, recipient, ownerLower) 
 
 /** Small, closed set of English function words: enough to tell English from Turkish output, not a grammar. */
 const EN_FUNCTION_WORDS = new Set(['the', 'to', 'and', 'you', 'your', 'please', 'can', 'could', 'is', 'are', 'of', 'for',
-  'in', 'on', 'at', 'with', 'will', 'would', 'this', 'that', 'it', 'be', 'when', 'tonight', 'tomorrow', 'today']);
+  'in', 'on', 'at', 'with', 'will', 'would', 'this', 'that', 'it', 'be', 'when', 'tonight', 'tomorrow', 'today',
+  // No Turkish collisions ("her", "an" are Turkish words and stay out).
+  'i', 'am', "i'm", 'me', 'my', 'tell', 'ask', 'he', 'she', 'him', 'we', 'they', 'not', 'a']);
+
+/** True when at least half of the letters in these words are Arabic script. */
+function mostlyArabic(tokens, idxs) {
+  const letters = idxs.map((i) => tokens[i].text).join('').match(/\p{L}/gu) || [];
+  if (!letters.length) return false;
+  return letters.filter((c) => ARABIC.test(c)).length * 2 >= letters.length;
+}
 
 /**
  * Composition contract (script / function-word level, never grammar): text
  * the model composed for the recipient must stay in the language the owner
- * wrote. Arabic is checked by script. Turkish source is only flagged when the
- * output carries no Turkish signal and reads as English (two or more English
- * function words). Mixed-language sources fail closed when the output drops
- * the Arabic entirely.
+ * wrote. Arabic is judged by script share: a mostly-Arabic source needs a
+ * mostly-Arabic output (one surviving Arabic name is not enough), and a
+ * mostly-Latin source with an Arabic word in it sets no Arabic requirement.
+ * Turkish source is only flagged when the output carries no Turkish signal and
+ * reads as English (two or more English function words).
  */
 function composedLanguageChanged(sourceText, outTokens, outWords) {
   const srcTokens = annotate(tokenize(sourceText));
   const srcWords = wordIndexes(srcTokens).filter((i) => !srcTokens[i].quoted);
-  const outArabic = outWords.some((i) => ARABIC.test(outTokens[i].text));
-  if (srcWords.some((i) => ARABIC.test(srcTokens[i].text))) return !outArabic;
+  const outArabic = mostlyArabic(outTokens, outWords);
+  if (mostlyArabic(srcTokens, srcWords)) return !outArabic;
   if (!isTurkishText(srcWords, srcTokens)) return false;
   if (outArabic || isTurkishText(outWords, outTokens)) return false;
   return outWords.filter((i) => EN_FUNCTION_WORDS.has(outTokens[i].lower)).length >= 2;
@@ -416,7 +437,7 @@ function matchCase(original, replacement) {
  * @param {{ ownerName?: string | null, recipientName?: string | null, voice: 'owner_to_recipient' | 'task_text' | 'task_record' | 'composed', declared?: 'rendered' | 'unclear' }} options
  * @returns {{ status: 'unchanged' | 'rendered' | 'needs_composition', text: string, reason: string | null, language: string[] }}
  */
-export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined, sourceText = null }) {
+export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined, sourceText = null, thirdPersonMayMeanRecipient = true }) {
   const input = String(text ?? '');
   const owner = String(ownerName || '').trim();
   const recipient = String(recipientName || '').trim().toLowerCase();
@@ -512,6 +533,20 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     const capitalized = /^\p{Lu}/u.test(w.text) && !w.sentenceStart;
     return capitalized && w.lower !== 'i' && !w.lower.startsWith("i'") && w.lower !== recipient && w.lower !== ownerLower;
   });
+  // "he/him/her" means the recipient only in one provable shape: the first
+  // sentence opens with the owner as subject and reaches the pronoun through a
+  // short, closed verb chain ("I'd like her to…", "I need him to…"), so no
+  // other person can have been mentioned before it. Anything else is either a
+  // provable third party or fails closed.
+  const anchoredToRecipient = (i) => {
+    const s = tokens[i].sentence;
+    if (tokens[words[0]].sentence !== s) return false;
+    const before = words.filter((j) => j < i && tokens[j].sentence === s);
+    if (!before.length || before.some((j) => tokens[j].quoted) || !OWNER_SUBJECT_FORMS.has(tokens[before[0]].lower)) return false;
+    if (/[,;:]/.test(tokens.slice(before[0] + 1, i).map((t) => t.text).join(''))) return false;
+    const chain = before.slice(1).filter((j) => !ADVERBS.has(tokens[j].lower));
+    return chain.length >= 1 && chain.length <= 3 && chain.every((j) => RECIPIENT_ANCHOR_VERBS.has(tokens[j].lower));
+  };
   const nextWordAfter = (i) => {
     const nextIdx = words.find((j) => j > i);
     if (nextIdx === undefined) return null;
@@ -525,7 +560,9 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     let role;
     if (previousRole) role = previousRole;
     else if (recordVoice || isImperative(tokens[i].sentence) || hasCompetingAntecedent(i)) role = 'third';
-    else role = 'recipient';
+    else if (!thirdPersonMayMeanRecipient) role = 'third';
+    else if (anchoredToRecipient(i)) role = 'recipient';
+    else return fail('recipient_reference_unanchored');
     previousRole = role;
     const objectForm = w === 'him' || (w === 'her' && (next === null || OBJECT_FOLLOWERS.has(next)));
 
@@ -591,6 +628,9 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     }
     // Subject "I".
     if (v === undefined) return fail('unresolved_owner_verb');
+    const prev = words.filter((j) => j < i && tokens[j].sentence === t.sentence).pop();
+    if (prev !== undefined && BEFORE_I_NO_AGREEMENT.has(tokens[prev].lower) &&
+      !/[.!?,;:]/.test(tokens.slice(prev + 1, i).map((x) => x.text).join(''))) return fail('unresolved_owner_verb');
     const inflected = thirdPersonForm(tokens[v].lower);
     if (inflected === null) return fail('unresolved_owner_verb');
     out[i] = name;

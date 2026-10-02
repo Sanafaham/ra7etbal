@@ -56,7 +56,9 @@ export function buildCanonicalStaffDecisionMessage({ decision, instructionText, 
 export function resolveStaffAnswerText(text, { ownerName = null, staffName = null } = {}) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return '';
-  return renderOwnerPerspective(trimmed, { ownerName, recipientName: staffName, voice: 'owner_to_recipient' });
+  // he/him/her in an answer refers to whoever the staff member asked about,
+  // never the staff member: kept as a third party, never turned into "you".
+  return renderOwnerPerspective(trimmed, { ownerName, recipientName: staffName, voice: 'owner_to_recipient', thirdPersonMayMeanRecipient: false });
 }
 
 /**

@@ -64,6 +64,15 @@ export function resolveStoredMessageForResend({
     voice: "owner_to_recipient",
   });
   if (resolved.status === "needs_composition") {
+    // Arabic/Turkish rows cannot be re-checked on this no-model path: say so
+    // truthfully instead of claiming an "I"/"me"/"her" problem.
+    if (resolved.reason === "unverifiable_language" || resolved.reason?.startsWith("arabic_") || resolved.reason?.startsWith("turkish_")) {
+      return {
+        ok: false,
+        response: `Not sent: I can't re-check an Arabic or Turkish saved message to ${who} before sending it again. `
+          + "Message them yourself, or ask Carson to send it again.",
+      };
+    }
     return {
       ok: false,
       response: `Not sent: I couldn't safely tell who "I", "me" or "her" refers to in this saved message to ${who}. `

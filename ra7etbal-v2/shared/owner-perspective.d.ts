@@ -10,6 +10,8 @@ export interface OwnerPerspectiveOptions {
   declared?: DeclaredOwnerPerspective | null;
   /** Composed voice only: the owner's original words; the composed text must keep their language. */
   sourceText?: string | null;
+  /** owner_to_recipient: false when he/him/her can never mean the recipient (staff answers: the person is named in the staff member's question). Default true. */
+  thirdPersonMayMeanRecipient?: boolean;
 }
 
 export interface OwnerPerspectiveResult {

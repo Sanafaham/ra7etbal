@@ -51,6 +51,18 @@ describe('staff answer text — the canonical builder resolves owner perspective
     expect(resolveStaffAnswerText("I'll call you after the meeting.", { ownerName: 'Sana', staffName: 'Christopher' }))
       .toBe('Sana will call you after the meeting.');
   });
+  it('Approve/Reject on an escalation quotes the staff member\'s own words and never renders their "I" as the owner (checker L2)', () => {
+    const replyText = 'Christopher, this was approved: "Is 2" pipe ok, I will get 3" if not" — please go ahead.';
+    expect(buildStaffAnswerMessageText({ decision: 'approved', replyText, staffName: 'Christopher', ownerName: 'Sana', isTaskBasedDecision: false }))
+      .toBe(replyText);
+  });
+  it('he/him/her in an answer is whoever the staff member asked about — never turned into the staff member (checker B1)', () => {
+    // Pre-fix output: "From the owner: Yes let you in, Sana wants you to clean the kitchen."
+    expect(buildStaffAnswerMessageText({ decision: 'custom_instruction', replyText: 'Yes let her in, I want her to clean the kitchen.', ownerName: 'Sana', staffName: 'Christopher', isTaskBasedDecision: true }))
+      .toBe('From the owner: Yes let her in, Sana wants her to clean the kitchen.');
+    expect(resolveStaffAnswerText('I need him to come early.', { ownerName: 'Sana', staffName: 'Christopher' }))
+      .toBe('Sana needs him to come early.');
+  });
   it.each([
     ['Bring me the receipt.', null, 'no_owner_name'],
     ['Grace said I would pay.', 'Sana', 'reported_speech_first_person'],

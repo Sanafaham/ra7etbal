@@ -1739,6 +1739,10 @@ export function derivePersistedEscalationDecision({
  */
 export function buildStaffAnswerMessageText({ decision, replyText, staffName, ownerName, isTaskBasedDecision, confirmationUrl }) {
   const recipientBoundReply = normalizeOwnerReplyForRecipient(replyText, staffName);
+  // Approve/Reject on an escalation: the text is built by code around a quote
+  // of the staff member's own words and holds no owner words. Never read it as
+  // the owner's speech (a stray " inside their words could expose their "I").
+  if (!isTaskBasedDecision && (decision === 'approved' || decision === 'rejected')) return recipientBoundReply;
   return isTaskBasedDecision
     ? buildCanonicalStaffDecisionMessage({ decision, instructionText: recipientBoundReply, confirmationUrl, ownerName, staffName })
     : resolveStaffAnswerText(recipientBoundReply, { ownerName, staffName });

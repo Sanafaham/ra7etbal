@@ -475,3 +475,61 @@ describe("owner perspective — fail-closed API", () => {
     expect(() => resolveOwnerPerspective("x", { ownerName: "Sana", voice: "other" as OwnerPerspectiveVoice })).toThrow(/unknown voice/);
   });
 });
+
+// Independent checker review of PR #430 (2026-10-02): B1, M1, M2, M3. Each input below was reproduced
+// against the pre-fix boundary and produced the wrong text shown in its test name.
+describe("owner perspective — checker regressions (he/him/her, inverted questions, language detection)", () => {
+  it.each([
+    "Maria is sick. I need her to rest.", // was "…Sana needs you to rest." (Maria's rest assigned to Grace)
+    "maria is sick. i need her to rest.",
+    "The plumber is coming at 3. I need him to fix the sink.", // was "…Sana needs you to fix the sink."
+    "Christopher, I need him to call me.", // was "Christopher, Sana needs you to call Sana."
+    "Yes let her in, I want her to clean the kitchen.", // was "Yes let you in, Sana wants you to clean the kitchen."
+  ])("B1: %j — a he/him/her with no provable referent is never turned into the recipient; fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("recipient_reference_unanchored"));
+  });
+
+  it("B1: the provable shape still reaches the recipient as 'you' (protected 'I would like her to call me')", () => {
+    expect(render("I would like her to call me.", "Sana", "Loulya")).toBe("Sana would like you to call Sana.");
+    expect(render("I need him to call me back.", "Sana", "Christopher")).toBe("Sana needs you to call Sana back.");
+  });
+
+  it("B1: when the caller says he/him/her can never mean the recipient, the pronoun stays a third party", () => {
+    const r = resolveOwnerPerspective("Yes let her in, I want her to clean the kitchen.", {
+      ownerName: "Sana", recipientName: "Grace", voice: "owner_to_recipient", thirdPersonMayMeanRecipient: false,
+    });
+    expect(r).toMatchObject({ status: "rendered", text: "Yes let her in, Sana wants her to clean the kitchen." });
+  });
+
+  it.each([
+    "Can I call you later?", // was "Can Sana calls you later?"
+    "What time should I come?", // was "…should Sana comes?"
+    "Do I need to bring anything?", // was "Do Sana needs…"
+    "Did I leave my keys there?", // was "Did Sana leaves Sana's keys there?"
+    "You and I need to talk.", // was "You and Sana needs to talk."
+  ])("M1: %j — 'I' after an auxiliary or 'and' has no safe verb agreement; fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
+  });
+
+  it("M2: one Turkish-looking name in clearly English text does not make it Turkish", () => {
+    expect(render("Please give the keys to Gökhan.")).toBe("Please give the keys to Gökhan.");
+    const composed = resolveOwnerPerspective("Sana is running late tonight.", {
+      ownerName: "Sana", recipientName: "Grace", voice: "composed", declared: "rendered", sourceText: "Tell Ayşe I am running late tonight",
+    });
+    expect(composed.status).not.toBe("needs_composition");
+  });
+
+  it("M2: real Turkish is still detected and refused on no-model paths", () => {
+    expect(render("Akşam yemeği hazır")).toBe(NEEDS("unverifiable_language"));
+    expect(render("Tamam")).toBe(NEEDS("unverifiable_language"));
+  });
+
+  it.each([
+    ["Tell Grace to buy خبز and tell Christopher dinner is at 9", "Can you please have dinner ready by 9?", false],
+    ["خلي قريس تجيب السيارة الساعة ٥", "Please bring the car at 5, قريس.", true],
+    ["خلي قريس تجيب الأغراض لغرفتي", "Bring the groceries to Sana's room.", true],
+  ])("M3: source %j → composed %j refused=%s (Arabic judged by share of letters, not one token)", (sourceText, out, refused) => {
+    const r = resolveOwnerPerspective(out, { ownerName: "Sana", recipientName: "Grace", voice: "composed", declared: "rendered", sourceText });
+    expect(r.status === "needs_composition" && r.reason === "composition_language_changed").toBe(refused);
+  });
+});

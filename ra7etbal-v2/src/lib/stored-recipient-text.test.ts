@@ -73,8 +73,6 @@ describe("TaskCard re-send of a stored message row", () => {
   it.each([
     ["Hi Sarah, could you tell Sarah Sana is running late? Let Sana know when done.", "Sarah"],
     ["Grace said I would call back.", "Loulya"],
-    ["الغدا جاهز", "Grace"],
-    ["Akşam yemeği hazır", "Grace"],
     ["I did it myself.", "Grace"],
   ])("unresolvable historical row %j is not re-sent; the owner is told why", (content, recipient) => {
     const result = resend(content, recipient);
@@ -82,6 +80,17 @@ describe("TaskCard re-send of a stored message row", () => {
     if (!result.ok) {
       expect(result.response).toMatch(new RegExp(`^Not sent: .* saved message to ${recipient}\\.`));
       expect(result.response).toMatch(/Message them yourself, or ask Carson to send it again using names\./);
+    }
+  });
+});
+
+describe("TaskCard re-send of a saved Arabic/Turkish message (checker L1)", () => {
+  it.each(["الغدا جاهز", "Akşam yemeği hazır"])("%j is not re-sent, and the owner is told the real reason (language, not 'I/me/her')", (content) => {
+    const result = resend(content, "Grace");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response).toBe("Not sent: I can't re-check an Arabic or Turkish saved message to Grace before sending it again. "
+        + "Message them yourself, or ask Carson to send it again.");
     }
   });
 });
