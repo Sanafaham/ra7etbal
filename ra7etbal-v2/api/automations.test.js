@@ -99,6 +99,8 @@ describe("api/automations POST", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      // Owner-perspective resolution reads the assignee's name before saving.
+      .mockResolvedValueOnce(jsonResponse([{ name: "Christopher" }]))
       .mockResolvedValueOnce(jsonResponse([{
         id: "automation-once-1",
         user_id: "user-1",

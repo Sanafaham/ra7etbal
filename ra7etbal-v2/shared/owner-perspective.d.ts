@@ -30,3 +30,7 @@ export function ownerPerspectiveClarification(recipientName?: string | null): st
 export function isOwnerPerspectiveError(error: unknown): error is OwnerPerspectiveError;
 export function resolveOwnerPerspective(text: string, options: OwnerPerspectiveOptions): OwnerPerspectiveResult;
 export function renderOwnerPerspective(text: string, options: OwnerPerspectiveOptions): string;
+export function withOwnerNameWhenNeeded<T>(
+  build: (ownerName: string | null) => T,
+  loadOwnerName: () => Promise<string | null | undefined> | string | null | undefined,
+): Promise<{ text: T; ownerName: string | null }>;

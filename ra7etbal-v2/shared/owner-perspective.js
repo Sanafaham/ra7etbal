@@ -582,3 +582,18 @@ export function renderOwnerPerspective(text, options) {
   if (result.status === 'needs_composition') throw new OwnerPerspectiveError(result.reason, options.recipientName);
   return result.text;
 }
+
+/**
+ * Resolve with no owner name first (no profile read); only text that really
+ * refers to the owner needs the name, loaded once via loadOwnerName.
+ * `build(ownerName)` must call this boundary and may throw OwnerPerspectiveError.
+ */
+export async function withOwnerNameWhenNeeded(build, loadOwnerName) {
+  try {
+    return { text: build(null), ownerName: null };
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err) || err.reason !== 'no_owner_name') throw err;
+    const ownerName = (await loadOwnerName()) || null;
+    return { text: build(ownerName), ownerName };
+  }
+}

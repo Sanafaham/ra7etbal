@@ -104,7 +104,8 @@ import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
-import { resolveOwnerPerspective } from '../shared/owner-perspective.js';
+import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED, resolveOwnerPerspective, withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
+import { automationRecipientVoice, renderAutomationRecipientText } from './_automation-recipient-text.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -864,7 +865,7 @@ function isTestMode(req) {
  * Called both from the `run-routines` action dispatch AND at the end of
  * every escalation run (the existing 10-min QStash cron handles both).
  */
-async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
+export async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   const startedAt = new Date();
   console.log('[routines] job started', { startedAt: startedAt.toISOString() });
 
@@ -916,6 +917,12 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
 
       } else if (routine.type === 'delegation') {
         const result = await executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appBaseUrl });
+        if (result === OWNER_PERSPECTIVE_UNRESOLVED) {
+          // Never sent; disabled so the unsafe text is not retried every tick.
+          await disableRoutine(supabaseUrl, serviceKey, routine.id);
+          stats.skipped++;
+          continue;
+        }
         if (result === 'missing_person') {
           await disableRoutine(supabaseUrl, serviceKey, routine.id);
           console.warn('[routines] routine disabled (missing person)', { routineId: routine.id });
@@ -931,6 +938,12 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
           serviceKey,
           appBaseUrl,
         });
+        if (result === OWNER_PERSPECTIVE_UNRESOLVED) {
+          // Never sent; disabled so the unsafe text is not retried every tick.
+          await disableRoutine(supabaseUrl, serviceKey, routine.id);
+          stats.skipped++;
+          continue;
+        }
         if (result === 'missing_person') {
           // Don't disable — person might get a phone added later; just skip this tick.
           console.warn('[routines] message routine skipped (missing person or phone)', { routineId: routine.id });
@@ -1144,11 +1157,19 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
 
   const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, user_id);
 
+  // Owner perspective of the stored routine text, through the shared
+  // boundary, BEFORE the task exists or anything is sent.
+  const taskText = resolveStoredRecipientText(message, {
+    voice: automationRecipientVoice({ automationType: 'delegation', hasRecipient: true }),
+    ownerName, recipientName: person.name, log: { routineId: routine.id, kind: 'routine_delegation' },
+  });
+  if (taskText === null) return OWNER_PERSPECTIVE_UNRESOLVED;
+
   // Create the delegation task.
   const taskId = await createTask(supabaseUrl, serviceKey, {
     user_id,
     type: 'delegation',
-    description: message,
+    description: taskText,
     status: 'pending',
     needs_follow_up: true,
     assigned_to: person.name,
@@ -1183,7 +1204,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
       headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
       body: JSON.stringify({
         to: person.phone,
-        messageText: message,
+        messageText: taskText,
         confirmationLink: confirmationUrl,
         taskId,
         routineId: routine.id,
@@ -1265,11 +1286,18 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, appBase
     return 'missing_person';
   }
 
+  const recipientMessage = await resolveStoredRecipientTextLazily(cleanMessage, {
+    voice: automationRecipientVoice({ automationType: 'message', hasRecipient: true }),
+    recipientName: person.name, supabaseUrl, serviceKey, userId: user_id,
+    log: { routineId, kind: 'routine_message' },
+  });
+  if (recipientMessage === null) return OWNER_PERSPECTIVE_UNRESOLVED;
+
   console.log('[routines] message: sending', {
     routineId,
     routineName,
     recipientName: person.name,
-    messageLength: cleanMessage.length,
+    messageLength: recipientMessage.length,
   });
 
   try {
@@ -1281,7 +1309,7 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, appBase
       },
       body: JSON.stringify({
         to: normalizedPhone,
-        messageText: cleanMessage,
+        messageText: recipientMessage,
         routineId,
         sourceType: 'routine_message',
         sendMode: 'routine_message',
@@ -1535,6 +1563,59 @@ async function stampRoutineLastRun(supabaseUrl, serviceKey, routineId, value, ne
 }
 
 /** Set enabled=false on a routine (e.g. when its referenced person is gone). */
+/**
+ * Stored automation / routine text as its recipient will read it, through
+ * the shared owner-perspective boundary (voice chosen by
+ * _automation-recipient-text.js). Returns the safe text, or null when it
+ * cannot be resolved — the caller then sends nothing. Logs only the reason,
+ * never the text.
+ */
+function resolveStoredRecipientText(text, { voice, ownerName, recipientName, log }) {
+  try {
+    return renderAutomationRecipientText(text, { voice, ownerName, recipientName });
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err)) throw err;
+    console.warn('[automations] owner perspective unresolved — not sent', { ...log, reason: err.reason });
+    return null;
+  }
+}
+
+/** As above, reading the owner's name only when the text refers to the owner. */
+async function resolveStoredRecipientTextLazily(text, { voice, recipientName, supabaseUrl, serviceKey, userId, log }) {
+  try {
+    const { text: rendered } = await withOwnerNameWhenNeeded(
+      (ownerName) => renderAutomationRecipientText(text, { voice, ownerName, recipientName }),
+      () => resolveOwnerName(supabaseUrl, serviceKey, userId),
+    );
+    return rendered;
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err)) throw err;
+    console.warn('[automations] owner perspective unresolved — not sent', { ...log, reason: err.reason });
+    return null;
+  }
+}
+
+/**
+ * An automation run whose stored text cannot be resolved safely: nothing was
+ * created or sent. The run is recorded as failed with the reason and the
+ * automation is paused with it (existing columns), so the owner sees why and
+ * the unsafe text is never retried as-is. next_run_at is not advanced.
+ */
+async function refuseAutomationRun({ supabaseUrl, serviceKey, automation, runId, now }) {
+  await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+    current_state:  'failed',
+    failure_reason: OWNER_PERSPECTIVE_FAILURE_REASON,
+  });
+  await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+    status:        'paused',
+    paused_reason: OWNER_PERSPECTIVE_FAILURE_REASON,
+    updated_at:    now.toISOString(),
+  });
+}
+
+const OWNER_PERSPECTIVE_FAILURE_REASON =
+  'Not sent: I couldn\'t safely tell who "I", "me" or "her" means in this automation\'s wording. Please create it again using names instead.';
+
 async function disableRoutine(supabaseUrl, serviceKey, routineId) {
   await fetch(
     `${supabaseUrl}/rest/v1/routines?id=eq.${encodeURIComponent(routineId)}`,
@@ -1788,13 +1869,30 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
     }
   }
 
+  // ── Step 2b: Owner perspective of the stored text (send-time defense) ─────
+  // Rows saved before creation-time resolution existed must not bypass the
+  // shared boundary. Unresolvable → no task, no send, run failed, automation
+  // paused with the reason (never retried as-is).
+  let taskDescription = automation.instruction;
+  if (assignee) {
+    taskDescription = await resolveStoredRecipientTextLazily(automation.instruction, {
+      voice: automationRecipientVoice({ automationType: 'delegation', hasRecipient: true }),
+      recipientName: assignee.name, supabaseUrl, serviceKey, userId: automation.user_id,
+      log: { automationId: automation.id, kind: 'automation_delegation' },
+    });
+    if (taskDescription === null) {
+      await refuseAutomationRun({ supabaseUrl, serviceKey, automation, runId, now });
+      return 'failed';
+    }
+  }
+
   // ── Step 3: Create the real task row ─────────────────────────────────────
   // Delegation task (with assignee): picked up by escalation cron for follow-up.
   // Action task (no assignee): owner-only — visible in task list, no WhatsApp needed.
   const taskId = await createTask(supabaseUrl, serviceKey, {
     user_id:         automation.user_id,
     type:            assignee ? 'delegation' : 'action',
-    description:     automation.instruction,
+    description:     taskDescription,
     status:          'pending',
     needs_follow_up: Boolean(assignee),
     assigned_to:     assignee?.name ?? null,
@@ -1833,7 +1931,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
         headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
         body: JSON.stringify({
           to:              assignee.phone,
-          messageText:     automation.instruction,
+          messageText:     taskDescription,
           confirmationLink: confirmationUrl,
           taskId,
           automationRunId: runId,
@@ -2068,10 +2166,20 @@ export async function processMessageAutomation({
     return 'failed';
   }
 
+  const recipientMessage = await resolveStoredRecipientTextLazily(automation.instruction, {
+    voice: automationRecipientVoice({ automationType: 'message', hasRecipient: true }),
+    recipientName: person.name, supabaseUrl, serviceKey, userId: automation.user_id,
+    log: { automationId: automation.id, kind: 'automation_message' },
+  });
+  if (recipientMessage === null) {
+    await refuseAutomationRun({ supabaseUrl, serviceKey, automation, runId, now });
+    return 'failed';
+  }
+
   console.log('[automations] message: sending', {
     automationId:  automation.id,
     recipientName: person.name,
-    messageLength: automation.instruction.length,
+    messageLength: recipientMessage.length,
   });
 
   let sent = false;
@@ -2085,7 +2193,7 @@ export async function processMessageAutomation({
       },
       body: JSON.stringify({
         to: person.phone,
-        messageText: automation.instruction,
+        messageText: recipientMessage,
         automationRunId: runId,
         sourceType: 'automation_message',
         sendMode: 'routine_message',

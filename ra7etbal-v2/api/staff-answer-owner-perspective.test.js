@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildCanonicalStaffDecisionMessage, resolveStaffAnswerText } from './_staff-decision-message.js';
+import { buildCanonicalStaffDecisionMessage, resolveStaffAnswerText, savedAnswerUndeliverableMessage } from './_staff-decision-message.js';
 import { ownerPerspectiveClarification } from '../shared/owner-perspective.js';
 
 /**
@@ -137,6 +137,53 @@ describe('staff answer — refused BEFORE it is saved; nothing sent', () => {
     expect(calls[1].body.p_owner_reply_text).toBe('Bring me the receipt.');
     expect(result.kind).toBe('rpc_error');
     expect(sendMetaMessageMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('an answer saved BEFORE this boundary that cannot be delivered safely — truthful recovery message', () => {
+  // Production read-only count at 5db8d3f+: 0 such rows (0 answered, 0
+  // delivering, 1 failed row with text that the boundary passes). The state
+  // machine is first-write-wins (answer_escalation_owner_decision only saves
+  // while 'open'), so the owner cannot replace a saved answer here: the reply
+  // must never claim that rephrasing will fix it.
+  beforeEach(() => {
+    sendMetaMessageMock.mockReset();
+    vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'meta-token');
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('is not sent, releases the lease as failed, and tells the owner to contact the staff member directly', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const u = String(url);
+      calls.push({ url: u, body: options.body ? JSON.parse(options.body) : null });
+      if (u.includes('/rpc/claim_escalation_answer_delivery')) {
+        return jsonOk([{ id: 'esc-1', claimed: true, claim_token: 'lease-1', reply_text: 'Grace said I would pay.', delivery_status: 'delivering' }]);
+      }
+      if (u.includes('/rest/v1/people?')) return jsonOk([{ id: 'person-1', phone: '+15559990001', whatsapp_opted_in: true }]);
+      if (u.includes('/rest/v1/profiles?')) return jsonOk([{ display_name: 'Sana' }]);
+      if (u.includes('/rpc/fail_escalation_answer_delivery')) return jsonOk({ status: 'failed' });
+      throw new Error(`unexpected call ${u}`);
+    }));
+    const result = await resolveAndDeliverEscalationAnswer({
+      supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY, userId: 'user-1', deepLinkToken: 'token-1',
+      escalation: { ...openEscalation(null), status: 'failed', owner_reply_text: 'Grace said I would pay.' },
+      staffMessage: STAFF_MESSAGE, staffContextText: STAFF_MESSAGE.inbound_text,
+      decision: 'custom_instruction', instructionText: 'Owner tries a new answer', replyChannel: 'whatsapp',
+      verifiedPhoneNumberId: 'phone-id-1',
+    });
+    expect(result).toMatchObject({ kind: 'owner_perspective_unresolved', persisted: true, message: savedAnswerUndeliverableMessage('Christopher') });
+    expect(result.message).toMatch(/was not sent/);
+    expect(result.message).toMatch(/can't be changed or resent from here/);
+    expect(result.message).toMatch(/contact Christopher directly/);
+    expect(result.message).not.toMatch(/say it again|rephrase/i);
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.url.includes('/rpc/answer_escalation_owner_decision'))).toBe(false);
+    expect(calls.find((c) => c.url.includes('/rpc/fail_escalation_answer_delivery')).body)
+      .toMatchObject({ p_claim_token: 'lease-1', p_error: 'owner_perspective_unresolved' });
   });
 });
 

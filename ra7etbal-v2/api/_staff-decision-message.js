@@ -1,4 +1,6 @@
-import { isOwnerPerspectiveError, renderOwnerPerspective } from '../shared/owner-perspective.js';
+import { renderOwnerPerspective } from '../shared/owner-perspective.js';
+
+export { withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
 
 /**
  * Workstream 3 — the one canonical staff-facing message builder for every
@@ -58,15 +60,14 @@ export function resolveStaffAnswerText(text, { ownerName = null, staffName = nul
 }
 
 /**
- * Resolve with no owner name first (no profile read); only text that really
- * refers to the owner needs the name, fetched once via loadOwnerName.
+ * Owner-facing reply when an answer that was ALREADY SAVED (before the
+ * owner-perspective boundary existed) cannot be delivered safely. Saving is
+ * first-write-wins, so rephrasing cannot replace it: never ask the owner to
+ * rephrase here — tell them it was not sent and that they should contact the
+ * staff member directly.
  */
-export async function withOwnerNameWhenNeeded(build, loadOwnerName) {
-  try {
-    return { text: build(null), ownerName: null };
-  } catch (err) {
-    if (!isOwnerPerspectiveError(err) || err.reason !== 'no_owner_name') throw err;
-    const ownerName = (await loadOwnerName()) || null;
-    return { text: build(ownerName), ownerName };
-  }
+export function savedAnswerUndeliverableMessage(staffName) {
+  const who = String(staffName || '').trim() || 'the staff member';
+  return `Your earlier answer to ${who} was not sent: I couldn't safely tell who "I", "me" or "her" in it refers to. `
+    + `That saved answer can't be changed or resent from here, so please contact ${who} directly.`;
 }

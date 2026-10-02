@@ -60,7 +60,7 @@ import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailur
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { NO_RESPONSE_REVIEW_TYPE, executeNoResponseChoice } from './_no-response-handoff.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
-import { buildCanonicalStaffDecisionMessage, resolveStaffAnswerText, withOwnerNameWhenNeeded } from './_staff-decision-message.js';
+import { buildCanonicalStaffDecisionMessage, resolveStaffAnswerText, savedAnswerUndeliverableMessage, withOwnerNameWhenNeeded } from './_staff-decision-message.js';
 import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED } from '../shared/owner-perspective.js';
 import {
   loadCanonicalConfirmedTask,
@@ -1606,11 +1606,18 @@ export async function resolveAndDeliverEscalationAnswer({
     ));
   } catch (err) {
     if (!isOwnerPerspectiveError(err)) throw err;
-    // Only reachable for an answer saved before this boundary existed.
+    // Only reachable for an answer saved before this boundary existed. The
+    // saved answer is first-write-wins, so asking the owner to rephrase would
+    // be untrue: say it was not sent and cannot be replaced here.
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, OWNER_PERSPECTIVE_UNRESOLVED,
     );
-    return { kind: OWNER_PERSPECTIVE_UNRESOLVED, message: err.message, reason: err.reason, persisted: true };
+    return {
+      kind: OWNER_PERSPECTIVE_UNRESOLVED,
+      message: savedAnswerUndeliverableMessage(staffMessage.staff_name),
+      reason: err.reason,
+      persisted: true,
+    };
   }
   if (!messageText) {
     await failEscalationDeliveryLease(

@@ -18,6 +18,8 @@
  */
 
 import { scheduleAutomationRunWakeup, resolveAppBaseUrl } from './qstash-reminder.js';
+import { automationPerspectiveRefusal, automationRecipientVoice, renderAutomationRecipientText } from './_automation-recipient-text.js';
+import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED, withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
 import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
 
 const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly'];
@@ -249,12 +251,23 @@ async function handlePost(req, res) {
     });
   }
 
+  // ── Owner perspective of recipient-facing text — BEFORE anything is saved ─
+  // What is saved is exactly what the recipient will later read; when it
+  // cannot be resolved safely nothing is created.
+  const recipientText = await resolveAutomationRecipientTextForSave(config, uid, {
+    instruction, automationType: automation_type, assigneeId: body.assignee_id ?? null,
+  });
+  if (!recipientText.ok) {
+    logAutomationPostRejection(OWNER_PERSPECTIVE_UNRESOLVED, uid, body);
+    return res.status(422).json(recipientText.body);
+  }
+
   // ── Build and insert row ──────────────────────────────────────────────────
   const row = {
     ...(routing.present ? { id: body.routing_evidence.operation_id } : {}),
     user_id:            uid,
     title:              title.trim(),
-    instruction:        instruction.trim(),
+    instruction:        recipientText.text,
     assignee_id:        body.assignee_id ?? null,
     cadence_type,
     cadence_value:      cadence_value ?? {},
@@ -378,7 +391,7 @@ async function handlePatch(req, res) {
   const checkRes = await sbFetch(
     config,
     `${config.supabaseUrl}/rest/v1/automations` +
-    `?id=eq.${e(id)}&user_id=eq.${e(uid)}&select=id,status&limit=1`,
+    `?id=eq.${e(id)}&user_id=eq.${e(uid)}&select=id,status,instruction,assignee_id,automation_type&limit=1`,
   );
   if (!checkRes.ok) {
     return res.status(500).json({ error: 'Failed to verify automation.' });
@@ -451,6 +464,23 @@ async function handlePatch(req, res) {
     return res.status(400).json({
       error: 'escalate_after_min must be greater than followup_after_min.',
     });
+  }
+
+  // ── Owner perspective: the merged recipient-facing text is resolved again
+  // whenever the words, the recipient or the type change, before saving ──
+  if ('instruction' in patch || 'assignee_id' in patch || 'automation_type' in patch) {
+    const current = rows[0];
+    const merged = {
+      instruction: 'instruction' in patch ? patch.instruction : current.instruction,
+      automationType: 'automation_type' in patch ? patch.automation_type : current.automation_type,
+      assigneeId: 'assignee_id' in patch ? patch.assignee_id : current.assignee_id,
+    };
+    if (typeof merged.instruction !== 'string' || !merged.instruction.trim()) {
+      return res.status(400).json({ error: 'instruction is required.' });
+    }
+    const recipientText = await resolveAutomationRecipientTextForSave(config, uid, merged);
+    if (!recipientText.ok) return res.status(422).json(recipientText.body);
+    patch.instruction = recipientText.text;
   }
 
   // ── Apply update ──────────────────────────────────────────────────────────
@@ -605,6 +635,47 @@ function sbFetch(config, url, opts = {}) {
 /** URL-encode a query parameter value safely. */
 function e(value) {
   return encodeURIComponent(value);
+}
+
+/**
+ * The automation text as its recipient will read it, through the shared
+ * owner-perspective boundary (see _automation-recipient-text.js). Owner-only
+ * automations (no recipient) are returned unchanged. Reads the assignee's
+ * name, and the owner's name only when the text refers to the owner.
+ */
+async function resolveAutomationRecipientTextForSave(config, uid, { instruction, automationType, assigneeId }) {
+  const text = String(instruction ?? '').trim();
+  let recipientName = null;
+  if (assigneeId) {
+    const personRes = await sbFetch(
+      config,
+      `${config.supabaseUrl}/rest/v1/people?id=eq.${e(assigneeId)}&user_id=eq.${e(uid)}&select=name&limit=1`,
+    );
+    const people = personRes.ok ? await personRes.json().catch(() => []) : [];
+    recipientName = Array.isArray(people) && people[0]?.name ? String(people[0].name).trim() : null;
+  }
+  const voice = automationRecipientVoice({ automationType: automationType ?? 'delegation', hasRecipient: Boolean(recipientName) });
+  if (!voice) return { ok: true, text };
+  try {
+    const { text: rendered } = await withOwnerNameWhenNeeded(
+      (ownerName) => renderAutomationRecipientText(text, { voice, ownerName, recipientName }),
+      async () => {
+        const profileRes = await sbFetch(
+          config,
+          `${config.supabaseUrl}/rest/v1/profiles?id=eq.${e(uid)}&select=display_name&limit=1`,
+        );
+        const profiles = profileRes.ok ? await profileRes.json().catch(() => []) : [];
+        return Array.isArray(profiles) ? String(profiles[0]?.display_name || '').trim() || null : null;
+      },
+    );
+    return { ok: true, text: rendered };
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err)) throw err;
+    return {
+      ok: false,
+      body: { error: automationPerspectiveRefusal(recipientName), code: OWNER_PERSPECTIVE_UNRESOLVED, reason: err.reason },
+    };
+  }
 }
 
 function isUnsupportedRecurringWhatsappAutomation(row) {

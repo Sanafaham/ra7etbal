@@ -743,8 +743,10 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
 
   if (result.kind === OWNER_PERSPECTIVE_UNRESOLVED) {
     // The answer's owner perspective could not be resolved safely: nothing
-    // was sent to staff. Ask the owner to rephrase; terminal, never retried
-    // (a retry would hit the same text).
+    // was sent to staff. result.message is the truthful owner reply — a
+    // rephrase request when nothing was saved, or "contact them directly"
+    // for an answer already saved. Terminal, never retried (a retry would hit
+    // the same text).
     const clarification = result.message;
     const ack = durableInbound?.acknowledgement_status === 'accepted' &&
       durableInbound?.acknowledgement_text === clarification

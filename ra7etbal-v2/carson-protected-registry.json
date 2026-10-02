@@ -398,6 +398,7 @@
         "api/process-delegation-escalations.timing-safety.test.js",
         "api/process-delegation-escalations.uncertain-olg.test.js",
         "api/automations.test.js",
+        "api/automation-owner-perspective.test.js",
         "src/lib/automation-context.test.ts",
         "src/lib/automation-support.test.ts",
         "src/lib/one-time-automation-routing.test.ts"
