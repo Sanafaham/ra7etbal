@@ -572,6 +572,112 @@ describe("canonical action creation paths", () => {
       nothingWritten();
     });
 
+    describe("Batch #2 live evidence (run 37040868214, claude-sonnet-4-6) — permanent regression fixtures", () => {
+      // The model outputs below are the exact items returned live in Batch #2.
+      const rendered = { ownerPerspective: "rendered" as const };
+
+      it("row 1 (EN): 'Sana is running late tonight.' is accepted for Sarah", async () => {
+        await extractAndSave("Tell Sarah I'm running late tonight.", [{ type: "message", assignedTo: "Sarah",
+          description: "Tell Sarah I'm running late tonight.", suggestedMessage: "Sana is running late tonight.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Sarah", content: "Sana is running late tonight." });
+      });
+
+      it("row 2 (EN): 'Sana loves you.' is accepted for Loulya", async () => {
+        await extractAndSave("Tell Loulya I love her.", [{ type: "message", assignedTo: "Loulya",
+          description: "Tell Loulya I love her.", suggestedMessage: "Sana loves you.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "Sana loves you." });
+      });
+
+      it("row 3 (EN): the task text actually used is correct; the model's unused delegation message ('your appointment … call me') is never sent", async () => {
+        await extractAndSave("Ask Grace to take Loulya to her appointment and call me after.", [{ type: "delegation", assignedTo: "Grace",
+          description: "Take Loulya to her appointment and call Sana after.",
+          suggestedMessage: "Can you please take Loulya to your appointment and call me after.", ...rendered }], people);
+        expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Take Loulya to her appointment and call Sana after." });
+        expect(h.db.messages[0].content).not.toMatch(/your appointment|call me/);
+      });
+
+      it.each([
+        ["row 4 (EN)", "Tell Grace Ali said I'd come at 5.", "Tell Grace Ali said I'd come at 5."],
+        ["row 8 (AR)", "قول لقريس إن علي قال إني بجي الساعة ٥", "Tell Grace that Ali said he's coming at 5."],
+      ])("%s: the embedded speaker stays unclear and fails closed", async (_row, input, description) => {
+        await refused(extractAndSave(input, [{ type: "message", assignedTo: "Grace", description, suggestedMessage: null, ownerPerspective: "unclear" }], people));
+        nothingWritten();
+      });
+
+      it("row 5 (AR): the live output's model-spelled recipient 'قريس' is not bound to the contact Grace — refused before anything is saved", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("قول لقريس إني بتأخر الليلة", [{ type: "message", assignedTo: "قريس",
+            description: "قول لقريس إنها بتأخر الليلة.", suggestedMessage: "سنا بتأخر الليلة.", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "recipient_not_bound" });
+        expect((caught as Error).message).toMatch(/couldn't match "قريس" to anyone in your People list/);
+        nothingWritten();
+      });
+
+      it.todo("row 5 (AR): 'سنا بتأخر الليلة.' bound to Grace and declared rendered is still NOT detectable deterministically (first-person verb form) — needs the owner decision recorded in RA7ETBAL_STATE.md");
+
+      it("row 6 (AR): 'سنا تحبك.' is accepted for Loulya (Arabic kept, recipient bound)", async () => {
+        await extractAndSave("قولي للوليا إني أحبها", [{ type: "message", assignedTo: "Loulya",
+          description: "قولي للوليا إني أحبها.", suggestedMessage: "سنا تحبك.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "سنا تحبك." });
+      });
+
+      it("row 7 (AR): Arabic input whose delegation came back in English is refused (language contract) — no task, no message", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("خلي قريس تجيب الأغراض لغرفتي", [{ type: "delegation", assignedTo: "Grace",
+            description: "Bring the groceries to Sana's room.", suggestedMessage: "Can you please bring the groceries to Sana's room?", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "composition_language_changed" });
+        expect((caught as Error).message).toMatch(/couldn't keep the message in the language you used/);
+        nothingWritten();
+      });
+
+      it.each([
+        ["row 9", "Grace'e söyle bu akşam geç kalacağım", "message", "Grace", "Grace, Sana bu akşam geç kalacak."],
+        ["row 10", "Loulya'ya onu sevdiğimi söyle", "message", "Loulya", "Sana seni seviyor."],
+      ])("%s (TR): accepted — identity comes from the bound contact, not from reading 'Sana'", async (_row, input, type, assignedTo, text) => {
+        await extractAndSave(input, [{ type: type as "message", assignedTo, description: input, suggestedMessage: text, ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: assignedTo, content: text });
+      });
+
+      it("row 11 (TR): delegation 'Çantaları Sana'nın odasına getir.' is stored for Grace", async () => {
+        await extractAndSave("Grace'ten odama çantaları getirmesini iste", [{ type: "delegation", assignedTo: "Grace",
+          description: "Çantaları Sana'nın odasına getir.", suggestedMessage: "Çantaları Sana'nın odasına getirir misin lütfen?", ...rendered }], people);
+        expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Çantaları Sana'nın odasına getir." });
+      });
+
+      it("Turkish: the pronoun 'sana' (to you) is not mistaken for the owner, and a Turkish item that came back in English is refused", async () => {
+        await extractAndSave("Grace'e bir paket geldiğini söyle", [{ type: "message", assignedTo: "Grace",
+          description: "Grace'e paket geldiğini söyle", suggestedMessage: "Grace, sana bir paket geldi.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "Grace, sana bir paket geldi." });
+        resetHarness();
+        await refused(extractAndSave("Grace'e söyle bu akşam geç kalacağım", [{ type: "message", assignedTo: "Grace",
+          description: "x", suggestedMessage: "Sana will be late tonight, please wait for her.", ...rendered }], people));
+        nothingWritten();
+      });
+
+      it("row 12 (TR): invalid JSON from the model fails closed — truthful error, nothing written", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: "{ not valid json" }] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        })));
+        await expect(extractItems("Grace'e Ali'nin saat 5'te geleceğimi söylediğini söyle", people, "Sana"))
+          .rejects.toThrow("The AI returned something Ra7etBal couldn't parse. Please try again.");
+        nothingWritten();
+      });
+
+      it("an unknown recipient the model explicitly marks needsPerson keeps the existing never-sent path", async () => {
+        await extractAndSave("Tell Ahmed dinner is at 8", [{ type: "message", assignedTo: "Ahmed", needsPerson: true,
+          description: "Tell Ahmed dinner is at 8", suggestedMessage: "Ahmed, dinner is at 8.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Ahmed" });
+      });
+    });
+
     it("the extraction parser turns a missing or invalid declaration into 'unclear' (never 'rendered')", async () => {
       mockExtractionResponse([
         { type: "message", assignedTo: "Grace", description: "a", suggestedMessage: "a" },

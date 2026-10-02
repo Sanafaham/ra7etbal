@@ -72,11 +72,14 @@ export function ownerPerspectiveClarification(recipientName) {
 }
 
 export class OwnerPerspectiveError extends Error {
-  constructor(reason, recipientName) {
-    super(ownerPerspectiveClarification(recipientName));
+  /** `detail` replaces the default explanation when the refusal is not about pronouns (identity, language). */
+  constructor(reason, recipientName, detail = null) {
+    const explanation = detail || ownerPerspectiveDetail();
+    super(`I didn't send anything to ${String(recipientName || '').trim() || 'them'}. ${explanation}`);
     this.name = 'OwnerPerspectiveError';
     this.code = OWNER_PERSPECTIVE_UNRESOLVED;
     this.reason = reason;
+    this.detail = explanation;
   }
 }
 
@@ -372,6 +375,28 @@ function composedPronounWithoutAntecedent(tokens, words, recipient, ownerLower) 
   return false;
 }
 
+/** Small, closed set of English function words: enough to tell English from Turkish output, not a grammar. */
+const EN_FUNCTION_WORDS = new Set(['the', 'to', 'and', 'you', 'your', 'please', 'can', 'could', 'is', 'are', 'of', 'for',
+  'in', 'on', 'at', 'with', 'will', 'would', 'this', 'that', 'it', 'be', 'when', 'tonight', 'tomorrow', 'today']);
+
+/**
+ * Composition contract (script / function-word level, never grammar): text
+ * the model composed for the recipient must stay in the language the owner
+ * wrote. Arabic is checked by script. Turkish source is only flagged when the
+ * output carries no Turkish signal and reads as English (two or more English
+ * function words). Mixed-language sources fail closed when the output drops
+ * the Arabic entirely.
+ */
+function composedLanguageChanged(sourceText, outTokens, outWords) {
+  const srcTokens = annotate(tokenize(sourceText));
+  const srcWords = wordIndexes(srcTokens).filter((i) => !srcTokens[i].quoted);
+  const outArabic = outWords.some((i) => ARABIC.test(outTokens[i].text));
+  if (srcWords.some((i) => ARABIC.test(srcTokens[i].text))) return !outArabic;
+  if (!isTurkishText(srcWords, srcTokens)) return false;
+  if (outArabic || isTurkishText(outWords, outTokens)) return false;
+  return outWords.filter((i) => EN_FUNCTION_WORDS.has(outTokens[i].lower)).length >= 2;
+}
+
 function thirdPersonForm(word) {
   if (IRREGULAR[word]) return IRREGULAR[word];
   if (INVARIANT.has(word)) return word;
@@ -391,7 +416,7 @@ function matchCase(original, replacement) {
  * @param {{ ownerName?: string | null, recipientName?: string | null, voice: 'owner_to_recipient' | 'task_text' | 'task_record' | 'composed', declared?: 'rendered' | 'unclear' }} options
  * @returns {{ status: 'unchanged' | 'rendered' | 'needs_composition', text: string, reason: string | null, language: string[] }}
  */
-export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined }) {
+export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined, sourceText = null }) {
   const input = String(text ?? '');
   const owner = String(ownerName || '').trim();
   const recipient = String(recipientName || '').trim().toLowerCase();
@@ -440,6 +465,7 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
 
   if (voice === 'composed') {
     // Verify, never rewrite: the claim "rendered" must hold structurally.
+    if (sourceText != null && composedLanguageChanged(String(sourceText), tokens, words)) return fail('composition_language_changed');
     if (words.some((i) => !tokens[i].quoted && EN_FIRST_PERSON.has(tokens[i].lower))) return fail('composed_owner_first_person');
     const orphan = composedPronounWithoutAntecedent(tokens, words, recipient, owner.toLowerCase());
     if (orphan) return fail('composed_pronoun_without_antecedent');

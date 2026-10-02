@@ -8,6 +8,8 @@ export interface OwnerPerspectiveOptions {
   recipientName?: string | null;
   voice: OwnerPerspectiveVoice;
   declared?: DeclaredOwnerPerspective | null;
+  /** Composed voice only: the owner's original words; the composed text must keep their language. */
+  sourceText?: string | null;
 }
 
 export interface OwnerPerspectiveResult {
@@ -22,7 +24,8 @@ export const OWNER_PERSPECTIVE_UNRESOLVED: "owner_perspective_unresolved";
 export class OwnerPerspectiveError extends Error {
   code: typeof OWNER_PERSPECTIVE_UNRESOLVED;
   reason: string | null;
-  constructor(reason: string | null, recipientName?: string | null);
+  detail: string;
+  constructor(reason: string | null, recipientName?: string | null, detail?: string | null);
 }
 
 export function ownerPerspectiveDetail(): string;

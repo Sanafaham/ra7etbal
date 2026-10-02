@@ -101,7 +101,8 @@ export async function extractItems(
   // of `tasks` (see todo-routing.ts).
   return {
     ...result,
-    extracted: applyTodoRouting(withNoteRouting),
+    // sourceText is attached by code, never taken from the model.
+    extracted: applyTodoRouting(withNoteRouting).map((item) => ({ ...item, sourceText: text })),
   };
 }
 

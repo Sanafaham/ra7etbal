@@ -569,7 +569,12 @@ own phone. So write them as the RECIPIENT reads them:
     ("Tell Sarah …", "Sana loves her" sent to that same her).
   - Other people stay third parties, exactly as the user meant them.
   - Words the user quoted stay inside quotes, unchanged, with who said them.
-  - Keep the user's language. Do not translate.
+  - Keep the user's language for every recipient-facing field, including a
+    delegation's description. Do not translate.
+  - assignedTo is the person's name EXACTLY as written in "Known people",
+    even when the user wrote it in another script or spelling (a name the
+    user wrote in Arabic letters for Grace is still "Grace"). Ra7etBal
+    refuses a recipient it cannot match to a known person.
 
 Then set ownerPerspective for the item:
   - "rendered" when every reference above is certain.

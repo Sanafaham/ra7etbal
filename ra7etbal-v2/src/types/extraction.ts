@@ -68,6 +68,12 @@ export interface ExtractedItem {
    * still verifies the text, and anything but "rendered" fails closed.
    */
   ownerPerspective?: DeclaredOwnerPerspective;
+  /**
+   * In-memory only, set by extractItems (never by the model): the owner's
+   * original input. The shared boundary uses it to check that model-composed
+   * recipient text kept the owner's language.
+   */
+  sourceText?: string;
   needsPerson: boolean;
   needsClarification: boolean;
   clarificationQuestion: string | null;

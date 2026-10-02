@@ -32,7 +32,7 @@ import { executeDirectMessageFastPath } from "./direct-message-fast-path";
 import { createDelegationTaskAndMessage } from "./delegations";
 import { normalizePersonalNote } from "./personal-note";
 import { sanitizeCarsonErrorDetail } from "./carson-social";
-import { ownerPerspectiveClarification, ownerPerspectiveDetail } from "./direct-message-owner-normalization";
+import { OwnerPerspectiveError, ownerPerspectiveClarification, ownerPerspectiveDetail } from "./direct-message-owner-normalization";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -110,6 +110,15 @@ describe("Typed fast path — parity with Talk and fail-closed clarification", (
       expect(d.createMessageFn).not.toHaveBeenCalled();
       expect(d.deliverTaskMessageFn).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe("Owner-facing refusal text", () => {
+  it("identity and language refusals show their own truthful detail, not the pronoun explanation", () => {
+    const identity = new OwnerPerspectiveError("recipient_not_bound", "قريس", "I couldn't match \"قريس\" to anyone in your People list, so nothing was saved or sent. Please use their name as it appears there.");
+    expect(sanitizeCarsonErrorDetail(identity)).toMatch(/couldn't match "قريس"/);
+    expect(identity.message).toMatch(/^I didn't send anything to قريس\. I couldn't match/);
+    expect(sanitizeCarsonErrorDetail(new OwnerPerspectiveError("owner_reflexive", "Grace"))).toBe(ownerPerspectiveDetail());
   });
 });
 

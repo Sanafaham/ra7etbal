@@ -96,7 +96,7 @@ export function sanitizeCarsonErrorDetail(error: unknown): string {
   }
   // The owner-perspective boundary refused to word the delegation: ask the
   // owner to rephrase rather than to retry the same words.
-  if (isOwnerPerspectiveError(error)) return ownerPerspectiveDetail();
+  if (isOwnerPerspectiveError(error)) return error.detail || ownerPerspectiveDetail();
   return "Please try again.";
 }
 

@@ -100,7 +100,8 @@ describe("OWNER PERSPECTIVE — the existing extraction call declares recipient 
     expect(prompt).toMatch(/OWNER PERSPECTIVE \(applies to every item, in every language\)/);
     expect(prompt).toMatch(/"ownerPerspective": "rendered\|unclear/);
     expect(prompt).toMatch(/Never refer to the recipient in the third person in their own message/);
-    expect(prompt).toMatch(/Keep the user's language\. Do not translate\./);
+    expect(prompt).toMatch(/Keep the user's language for every recipient-facing field, including a\s+delegation's description\. Do not translate\./);
+    expect(prompt).toMatch(/assignedTo is the person's name EXACTLY as written in "Known people"/);
     expect(prompt).toMatch(/"unclear" when you cannot tell who an "I"\/"me"\/"my"/);
   });
 

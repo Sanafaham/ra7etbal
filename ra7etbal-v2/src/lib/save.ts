@@ -1,6 +1,6 @@
 import { createDelegationTaskAndMessage, resolveDelegationTaskText } from "./delegations";
 import { createDirectMessageRecord } from "./direct-messages";
-import { OwnerPerspectiveError, renderOwnerPerspective } from "./direct-message-owner-normalization";
+import { OwnerPerspectiveError, renderOwnerPerspective, resolveOwnerPerspective } from "./direct-message-owner-normalization";
 import { normalizePersonalNote } from "./personal-note";
 import { buildDelegationMessage } from "./delegation-message";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
@@ -100,6 +100,9 @@ export async function savePending(
   const messageContentByItemId = new Map<string, string>();
   for (const item of items) {
     const recipient = item.assignedTo && item.assignedTo !== "__me__" ? item.assignedTo : null;
+    if ((item.type === "message" || item.type === "delegation") && recipient) {
+      enforceComposedContract(item, recipient, people, ownerName);
+    }
     if (item.type === "message" && recipient) {
       messageContentByItemId.set(item.id, recipientMessageContent(item, recipient, people, ownerName));
     } else if (item.type === "delegation" && recipient) {
@@ -442,4 +445,45 @@ function recipientMessageContent(
         ownerName,
       })
     : (item.suggestedMessage ?? item.description).trim();
+}
+
+/**
+ * Structural checks on an item the extraction model composed (declared
+ * ownerPerspective present), run before anything is saved. They do not
+ * judge grammar — the shared boundary verifies what it can — they check
+ * the identity and language claims deterministic code CAN verify:
+ *   - the recipient is a canonical contact from the People list, not a
+ *     model-generated spelling ("قريس" for Grace); an explicitly unknown
+ *     recipient (needsPerson) keeps the existing never-sent path;
+ *   - every recipient-facing field kept the language the owner wrote in
+ *     (Arabic input must not become English).
+ */
+function enforceComposedContract(item: ExtractedItem, recipient: string, people: Person[], ownerName?: string | null): void {
+  if (item.ownerPerspective === undefined) return;
+  const bound = people.some((person) => person.name.trim().toLowerCase() === recipient.trim().toLowerCase());
+  if (!bound && item.needsPerson !== true) {
+    throw new OwnerPerspectiveError(
+      "recipient_not_bound",
+      recipient,
+      `I couldn't match "${recipient}" to anyone in your People list, so nothing was saved or sent. Please use their name as it appears there.`,
+    );
+  }
+  const recipientTexts = [item.type === "message" ? item.suggestedMessage : item.description, item.personalNote];
+  for (const text of recipientTexts) {
+    if (!text?.trim()) continue;
+    const checked = resolveOwnerPerspective(text, {
+      ownerName,
+      recipientName: recipient,
+      voice: "composed",
+      declared: item.ownerPerspective,
+      sourceText: item.sourceText ?? null,
+    });
+    if (checked.status === "needs_composition" && checked.reason === "composition_language_changed") {
+      throw new OwnerPerspectiveError(
+        checked.reason,
+        recipient,
+        "I couldn't keep the message in the language you used, so nothing was saved or sent. Please try again.",
+      );
+    }
+  }
 }
