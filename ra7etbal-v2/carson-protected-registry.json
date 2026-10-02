@@ -235,7 +235,9 @@
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
-        "shared/owner-perspective.js"
+        "shared/owner-perspective.js",
+        "shared/follow-up-message.js",
+        "src/lib/stored-recipient-text.ts"
       ],
       "db": {
         "tables": [
@@ -257,6 +259,7 @@
         "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts",
         "api/send-whatsapp-task.test.js",
         "src/lib/owner-perspective-paths.test.ts",
+        "src/lib/stored-recipient-text.test.ts",
         "src/lib/direct-message-owner-normalization.test.ts"
       ],
       "protected_suite": true,
@@ -291,7 +294,8 @@
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
         "api/anthropic.js",
-        "shared/owner-perspective.js"
+        "shared/owner-perspective.js",
+        "src/lib/stored-recipient-text.ts"
       ],
       "db": {
         "tables": [
@@ -319,7 +323,8 @@
         "src/lib/staff-messages.test.ts",
         "src/lib/ai/extract-prompt.test.ts",
         "src/lib/direct-message-owner-normalization.test.ts",
-        "src/lib/owner-perspective-paths.test.ts"
+        "src/lib/owner-perspective-paths.test.ts",
+        "src/lib/stored-recipient-text.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,

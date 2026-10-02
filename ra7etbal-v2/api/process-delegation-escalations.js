@@ -104,8 +104,9 @@ import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
-import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED, resolveOwnerPerspective, withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
+import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED, withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
 import { automationRecipientVoice, renderAutomationRecipientText } from './_automation-recipient-text.js';
+import { buildFollowUpMessageText } from '../shared/follow-up-message.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -777,19 +778,9 @@ async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
   }
 }
 
-/**
- * Staff-facing follow-up text. task.description is a task record from the
- * owner's side; it is rendered for the assignee through the single
- * owner-perspective contract (shared/owner-perspective.js). When that cannot
- * be done safely the follow-up does not quote the task at all rather than
- * guess who "I" or "her" means.
- */
-export function buildFollowUpMessageText({ description, ownerName, assignedTo }) {
-  const resolved = resolveOwnerPerspective(String(description || ''), { ownerName, recipientName: assignedTo, voice: 'task_record' });
-  return resolved.status === 'needs_composition'
-    ? `Following up on the task ${ownerName} sent you.`
-    : `Following up: ${resolved.text}`;
-}
+// Staff-facing follow-up text: one builder shared with Talk's send_followup
+// (shared/follow-up-message.js); re-exported for existing callers and tests.
+export { buildFollowUpMessageText } from '../shared/follow-up-message.js';
 
 export function getDelegationSkipReason(task) {
   if (!task) return 'missing task';

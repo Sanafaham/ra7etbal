@@ -13,6 +13,8 @@ import { resolveQualityLifecycle } from "../../lib/quality-lifecycle";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import { submitSubstituteDecision, type SubstituteDecision } from "../../lib/quality-substitute-decision";
 import { useTasksStore } from "../../stores/tasks";
+import { useProfileStore } from "../../stores/profile";
+import { resolveStoredMessageForResend } from "../../lib/stored-recipient-text";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
@@ -141,11 +143,22 @@ export default function TaskCard({
   async function send() {
     if (!message?.content) return;
     if (busy) return;
+    // A saved row may predate the owner-perspective boundary: resolve it at
+    // send time through the shared boundary, never re-send raw owner text.
+    const resend = resolveStoredMessageForResend({
+      content: message.content,
+      ownerName: useProfileStore.getState().displayName,
+      recipientName: task.assigned_to,
+    });
+    if (!resend.ok) {
+      window.alert(resend.response);
+      return;
+    }
     setBusy("send");
     try {
       await sendWhatsAppTask({
         to: recipientPhone ?? null,
-        messageText: message.content,
+        messageText: resend.text,
         confirmationLink: hasConfirmLink ? task.confirmation_url : null,
         taskId: task.id,
         recipientName: task.assigned_to,
