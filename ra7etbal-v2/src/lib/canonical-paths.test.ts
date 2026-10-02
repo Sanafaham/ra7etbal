@@ -419,6 +419,7 @@ describe("canonical action creation paths", () => {
           description: "buy flowers",
           assignedTo: "Grace",
           suggestedMessage: "Grace, please buy flowers.",
+          ownerPerspective: "rendered",
         },
       ],
       [grace],
@@ -451,6 +452,135 @@ describe("canonical action creation paths", () => {
     expect(h.db.carson_todos).toHaveLength(0);
     expect(h.db.carson_notes).toHaveLength(0);
     expect(h.reminderSchedules).toHaveLength(0);
+  });
+
+  describe("owner perspective — existing extraction call declares it, the shared boundary enforces it", () => {
+    const person = (name: string): Person => ({ ...grace, id: `person-${name.toLowerCase()}`, name });
+    const sarah = person("Sarah");
+    const loulya = person("Loulya");
+    const people = [grace, sarah, loulya];
+    const nothingWritten = () => {
+      expect(h.db.tasks).toHaveLength(0);
+      expect(h.db.messages).toHaveLength(0);
+      expect(h.db.carson_todos).toHaveLength(0);
+      expect(h.db.carson_notes).toHaveLength(0);
+    };
+    const refused = (promise: Promise<unknown>) =>
+      expect(promise).rejects.toMatchObject({ code: "owner_perspective_unresolved" });
+
+    it("Sarah case: the recipient reads the model's recipient-perspective text, never \"could you tell Sarah …\"", async () => {
+      await extractAndSave("Tell Sarah I'm running late tonight.", [{
+        type: "message", assignedTo: "Sarah", description: "Tell Sarah I'm running late tonight.",
+        suggestedMessage: "Sana is running late tonight.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages).toHaveLength(1);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Sarah", task_id: null, content: "Sana is running late tonight." });
+      expect(h.db.messages[0].content).not.toMatch(/tell Sarah|\bI'm\b|\bme\b/i);
+    });
+
+    it("Sarah case: model output that still names the recipient as a third party fails closed, nothing written", async () => {
+      await refused(extractAndSave("Tell Sarah I'm running late.", [{
+        type: "message", assignedTo: "Sarah", description: "Tell Sarah I'm running late.",
+        suggestedMessage: "Hi Sarah, could you tell Sarah Sana is running late?", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("Loulya case: \"Sana loves you.\" is sent; \"Sana loves her.\" (recipient as a third party) fails closed", async () => {
+      await extractAndSave("Tell Loulya I love her.", [{
+        type: "message", assignedTo: "Loulya", description: "Tell Loulya I love her.",
+        suggestedMessage: "Sana loves you.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "Sana loves you." });
+
+      resetHarness();
+      await refused(extractAndSave("Tell Loulya I love her.", [{
+        type: "message", assignedTo: "Loulya", description: "Tell Loulya I love her.",
+        suggestedMessage: "Sana loves her.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it.each([
+      ["missing", {}],
+      ["unclear", { ownerPerspective: "unclear" }],
+      ["invalid", { ownerPerspective: "yes" }],
+    ])("%s perspective status fails closed even for clean text, nothing written", async (_label, status) => {
+      await refused(extractAndSave("Tell Grace dinner is at 8.", [{
+        type: "message", assignedTo: "Grace", description: "Tell Grace dinner is at 8.",
+        suggestedMessage: "Grace, dinner is at 8.", ...(status as Partial<ExtractedItem>),
+      }], people));
+      nothingWritten();
+    });
+
+    it("model claims rendered but leaves owner first person: structurally contradictory, fails closed", async () => {
+      await refused(extractAndSave("Tell Grace I'm running late.", [{
+        type: "message", assignedTo: "Grace", description: "Tell Grace I'm running late.",
+        suggestedMessage: "I'm running late.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("one unresolvable item fails the whole instruction before ANY row is written", async () => {
+      await refused(extractAndSave("Add buy flowers to my to-do list and tell Grace I'm late", [
+        { type: "action", description: "buy flowers" },
+        { type: "message", assignedTo: "Grace", description: "Tell Grace I'm late.", suggestedMessage: "I'm late.", ownerPerspective: "rendered" },
+      ], people));
+      nothingWritten();
+    });
+
+    it("tracked delegation: owner named, assignee is 'you', third party kept; stored description is what the assignee reads", async () => {
+      await extractAndSave("Ask Grace to take Loulya to her appointment and call me after", [{
+        type: "delegation", assignedTo: "Grace",
+        description: "Take Loulya to her appointment and call Sana after.",
+        suggestedMessage: "Can you take Loulya to her appointment and call Sana after?", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Take Loulya to her appointment and call Sana after." });
+      expect(h.db.messages[0].content).toContain("Loulya to her appointment and call Sana after");
+      expect(h.db.messages[0].content).not.toMatch(/\bme\b|\bI\b|\bmy\b/);
+    });
+
+    it("tracked delegation with an unclear or contradictory declaration creates no task and no message", async () => {
+      await refused(extractAndSave("Ask Grace to call me", [{
+        type: "delegation", assignedTo: "Grace", description: "Call Sana.", ownerPerspective: "unclear",
+      }], people));
+      nothingWritten();
+      await refused(extractAndSave("Ask Grace to call me", [{
+        type: "delegation", assignedTo: "Grace", description: "Call me.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("Arabic and Turkish recipient text is accepted ONLY from the declaring extraction call, with the frozen backstop still applied", async () => {
+      await extractAndSave("قول لقريس إن الغدا جاهز", [{
+        type: "message", assignedTo: "Grace", description: "قول لقريس إن الغدا جاهز",
+        suggestedMessage: "الغدا جاهز", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "الغدا جاهز" });
+
+      resetHarness();
+      await extractAndSave("Grace'e söyle akşam yemeği hazır", [{
+        type: "delegation", assignedTo: "Grace", description: "Akşam yemeğini hazırla, Sana yolda.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.tasks[0]).toMatchObject({ description: "Akşam yemeğini hazırla, Sana yolda." });
+
+      resetHarness();
+      await refused(extractAndSave("قول لقريس بروح السوق", [{
+        type: "message", assignedTo: "Grace", description: "قول لقريس بروح السوق",
+        suggestedMessage: "بروح السوق", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("the extraction parser turns a missing or invalid declaration into 'unclear' (never 'rendered')", async () => {
+      mockExtractionResponse([
+        { type: "message", assignedTo: "Grace", description: "a", suggestedMessage: "a" },
+        { type: "message", assignedTo: "Grace", description: "b", suggestedMessage: "b", ownerPerspective: "RENDERED" as never },
+        { type: "message", assignedTo: "Grace", description: "c", suggestedMessage: "c", ownerPerspective: "rendered" },
+      ]);
+      const result = await extractItems("x", people, "Sana");
+      expect(result.extracted.map((i) => i.ownerPerspective)).toEqual(["unclear", "unclear", "rendered"]);
+    });
   });
 });
 

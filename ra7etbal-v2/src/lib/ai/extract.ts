@@ -206,6 +206,8 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
     dueText,
     suggestedMessage,
     personalNote,
+    // Missing or invalid → "unclear": the shared boundary then fails closed.
+    ownerPerspective: v.ownerPerspective === "rendered" ? "rendered" : "unclear",
     needsPerson: v.needsPerson === true,
     needsClarification: v.needsClarification === true,
     clarificationQuestion:

@@ -1,3 +1,5 @@
+import { isOwnerPerspectiveError, renderOwnerPerspective } from '../shared/owner-perspective.js';
+
 /**
  * Workstream 3 — the one canonical staff-facing message builder for every
  * task-based owner decision (substitute review, proof-photo review).
@@ -11,7 +13,8 @@
  * a review note, or any other synthesized/internal text. That is what makes
  * this structurally leak-proof rather than merely filtered: staff can only
  * ever receive one of a small fixed set of sentences, or the owner's own
- * words verbatim under the "From the owner:" prefix.
+ * words under the "From the owner:" prefix — resolved through the shared
+ * owner-perspective boundary, never sent with an unresolved "I"/"me".
  */
 
 // Single-spaced, not newline-separated: both send pipelines strip
@@ -30,11 +33,40 @@ const REJECTED_MESSAGE =
 const APPROVED_DECISIONS = new Set(['approved', 'approved_alternative']);
 const REJECTED_DECISIONS = new Set(['rejected', 'rejected_alternative']);
 
-export function buildCanonicalStaffDecisionMessage({ decision, instructionText, confirmationUrl } = {}) {
+export function buildCanonicalStaffDecisionMessage({ decision, instructionText, confirmationUrl, ownerName = null, staffName = null } = {}) {
   const base = APPROVED_DECISIONS.has(decision)
     ? APPROVED_MESSAGE
     : REJECTED_DECISIONS.has(decision)
     ? REJECTED_MESSAGE
-    : `From the owner: ${String(instructionText || '').trim() || 'please see instructions.'}`;
+    : `From the owner: ${resolveStaffAnswerText(instructionText, { ownerName, staffName }) || 'please see instructions.'}`;
   return confirmationUrl ? `${base}\n\n${confirmationUrl}` : base;
+}
+
+/**
+ * The owner's own answer words as the staff member reads them, through the
+ * single owner-perspective boundary (shared/owner-perspective.js) — the
+ * "From the owner:" framing does not excuse an unresolved "I"/"me"/"my".
+ * Throws OwnerPerspectiveError (nothing may be sent) when perspective cannot
+ * be resolved safely: owner first person with no owner name, reported speech,
+ * the staff member named as a third party in their own message, or Arabic /
+ * Turkish words that cannot be verified on this no-model path.
+ */
+export function resolveStaffAnswerText(text, { ownerName = null, staffName = null } = {}) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  return renderOwnerPerspective(trimmed, { ownerName, recipientName: staffName, voice: 'owner_to_recipient' });
+}
+
+/**
+ * Resolve with no owner name first (no profile read); only text that really
+ * refers to the owner needs the name, fetched once via loadOwnerName.
+ */
+export async function withOwnerNameWhenNeeded(build, loadOwnerName) {
+  try {
+    return { text: build(null), ownerName: null };
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err) || err.reason !== 'no_owner_name') throw err;
+    const ownerName = (await loadOwnerName()) || null;
+    return { text: build(ownerName), ownerName };
+  }
 }

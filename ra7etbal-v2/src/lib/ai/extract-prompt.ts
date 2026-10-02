@@ -171,7 +171,8 @@ Example E. Input: "Tell my friend Sarah I'm running late."
     type: "message"
     assignedTo: "Sarah"
     description: "Tell Sarah I'm running late."
-    suggestedMessage: "Sarah, I'm running late."
+    suggestedMessage: "${ownerRef} is running late."
+    ownerPerspective: "rendered"
 
 Example F. Input: "Order more rice." People includes Ghulam (Driver).
   Output (correct):
@@ -205,7 +206,8 @@ Example I. Input: "Tell Loulya I love her."
     type: "message"
     assignedTo: "Loulya"
     description: "Tell Loulya I love her."
-    suggestedMessage: "Loulya, I love you."
+    suggestedMessage: "${ownerRef} loves you."
+    ownerPerspective: "rendered"
   Reasoning: Loulya is receiving a personal message, not being asked to
   perform an action.
 
@@ -552,6 +554,31 @@ Input: "Remind me 3 days before the school registration deadline."
     clarificationQuestion: "Deadline date not given."
 
 ================================================================
+OWNER PERSPECTIVE (applies to every item, in every language)
+================================================================
+
+The recipient reads suggestedMessage, personalNote and a delegation's
+description exactly as written, sent from Ra7etBal — not from ${ownerRef}'s
+own phone. So write them as the RECIPIENT reads them:
+  - ${ownerRef} (the user) is always named: "${ownerRef}", never "I", "me",
+    "my", "mine", "myself" — and never the first-person form of any other
+    language (Arabic, Turkish, …). Use ${ownerRef}'s name with correct
+    grammar in the language the user wrote in.
+  - The recipient is "you" (or addressed by name with a comma: "Grace, …").
+    Never refer to the recipient in the third person in their own message
+    ("Tell Sarah …", "Sana loves her" sent to that same her).
+  - Other people stay third parties, exactly as the user meant them.
+  - Words the user quoted stay inside quotes, unchanged, with who said them.
+  - Keep the user's language. Do not translate.
+
+Then set ownerPerspective for the item:
+  - "rendered" when every reference above is certain.
+  - "unclear" when you cannot tell who an "I"/"me"/"my" (or its equivalent
+    in another language) refers to — e.g. unquoted reported speech such as
+    "Tell Grace Ali said I'd come" — or who a he/she means. Ra7etBal then
+    asks the user to rephrase instead of guessing. Never guess.
+
+================================================================
 OUTPUT SHAPE
 ================================================================
 
@@ -569,6 +596,7 @@ Ra7etBal generates the review subtitle on the client.
       "dueAt": "ISO 8601 timestamp for reminders, or null",
       "suggestedMessage": "short natural message if this involves another person, otherwise null",
       "personalNote": "personal/emotional/status note to include in message body but NOT as a separate task — see RULE 2. null when no note is present.",
+      "ownerPerspective": "rendered|unclear — see OWNER PERSPECTIVE",
       "needsPerson": false,
       "needsClarification": false,
       "clarificationQuestion": "SHORT NOTE (3-6 words) naming a missing practical detail, or null. NEVER a full question. See examples below."

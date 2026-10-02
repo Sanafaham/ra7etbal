@@ -22,6 +22,16 @@
  *          no-response re-asks). First person is the owner. Second person is
  *          ambiguous in a stored record (older rows used "you" for the owner,
  *          newer rows for the assignee), so it fails closed.
+ *        - "composed": text an EXISTING model call (Carson's extraction)
+ *          already wrote in recipient perspective, in any language, with an
+ *          explicit declared status. The declaration is not proof: the text
+ *          is verified, never rewritten. Anything but declared "rendered"
+ *          fails closed, and so does output that contradicts the claim —
+ *          owner first person outside quotes, the recipient named as a third
+ *          party, or an English he/she with no possible antecedent.
+ *      In every voice the recipient must never be named as a third party in
+ *      their own message ("Hi Sarah, could you tell Sarah …") — only as the
+ *      addressee ("Sarah, …", "Hi Sarah, …").
  *   2. RENDERING. Only after every role is resolved is the text rendered for
  *      the recipient: owner references become the owner's name with correct
  *      English verb agreement; recipient references become "you".
@@ -34,14 +44,16 @@
  * caller then fails closed into its existing clarification path; nothing is
  * sent.
  *
- * Language: roles are language-independent; detection uses small, bounded
- * per-language tables (data, not rewriting rules). Only English is rendered.
- * Arabic and Turkish owner first person is detected — pronouns, first-person
- * verb forms and suffixes, my-possessives — and always fails closed; it is
- * never rewritten. A stored task record in Arabic or Turkish is never quoted
- * (its perspective cannot be verified), so follow-ups use the neutral line.
- * Detection is conservative and bounded, not general morphology: see the
- * tables below for exactly what is and is not recognised.
+ * Language: only English is rendered or verified deterministically.
+ * Arabic/Turkish recipient text is accepted ONLY in the "composed" voice,
+ * where the model call that already wrote it declared its perspective. In
+ * every deterministic voice (the owner's own words on paths with no model
+ * call) unquoted Arabic/Turkish fails closed — it cannot be verified, and it
+ * is never routed into a model call to make it verifiable. A stored task
+ * record in Arabic or Turkish is never quoted, so follow-ups use the neutral
+ * line. The Arabic/Turkish first-person tables below are FROZEN defense in
+ * depth (they catch model slips and owner-typed text); the architecture does
+ * not depend on enumerating either language and they must not grow.
  *
  * Text with no owner reference is returned byte-for-byte unchanged, so the
  * boundary is idempotent: rendered text passes through it again unchanged.
@@ -274,6 +286,92 @@ function turkishFirstPerson(text, turkish) {
   return TR_TURKISH_ONLY_SUFFIXES.test(w) && w.length >= 5;
 }
 
+/** Words that open a greeting or reply, after which a name is the addressee ("Hi Sarah,"). */
+const ADDRESS_OPENERS = new Set(['hi', 'hello', 'hey', 'dear', 'thanks', 'thank', 'ok', 'okay', 'yes', 'no', 'morning',
+  'evening', 'please', 'salam', 'marhaba', 'merhaba', 'good']);
+
+/**
+ * True when the recipient's name appears, unquoted, as anything but the
+ * addressee: "tell Sarah …", "Sarah's room", "Sana loves Loulya". A name is
+ * the addressee only when it is set off at the start of a sentence or after
+ * a greeting/comma and followed by punctuation or the end ("Sarah, …",
+ * "Hi Sarah, …", "Thanks, Sarah.").
+ */
+function recipientNamedAsThirdParty(tokens, words, recipient) {
+  const nameWords = recipient.split(/\s+/).filter(Boolean);
+  if (!nameWords.length) return false;
+  const sep = (from, to) => tokens.slice(from, to).map((t) => t.text).join('');
+  for (let k = 0; k < words.length; k += 1) {
+    const i = words[k];
+    const t = tokens[i];
+    if (t.quoted) continue;
+    const possessive = t.lower === `${nameWords[0]}'s` || t.lower === `${nameWords[0]}'`;
+    if (t.lower !== nameWords[0] && !possessive) continue;
+    if (possessive) return true;
+    let last = k;
+    for (let n = 1; n < nameWords.length; n += 1) {
+      if (words[last + 1] !== undefined && tokens[words[last + 1]].lower === nameWords[n]) last += 1;
+    }
+    const lastIdx = words[last];
+    const nextIdx = words[last + 1];
+    const after = sep(lastIdx + 1, nextIdx === undefined ? tokens.length : nextIdx);
+    const setOffAfter = nextIdx === undefined || /^\s*[,!?:.;]/.test(after);
+    const prevIdx = words[k - 1];
+    const before = prevIdx === undefined ? '' : sep(prevIdx + 1, i);
+    const setOffBefore = t.sentenceStart || prevIdx === undefined || /[,;:]\s*$/.test(before) ||
+      (ADDRESS_OPENERS.has(tokens[prevIdx].lower) && (tokens[prevIdx].sentenceStart || words[k - 2] === undefined));
+    if (!(setOffBefore && setOffAfter)) return true;
+    k = last;
+  }
+  return false;
+}
+
+/** Sentence-initial words that are not names and so cannot be an antecedent. */
+const NON_NAME_STARTERS = new Set([...IMPERATIVE_STARTS, ...SENTENCE_LEADERS, ...ADDRESS_OPENERS, 'could', 'can',
+  'would', 'will', 'should', 'may', 'might', 'must', 'do', 'does', 'did', 'is', 'are', 'was', 'were', 'the', 'a', 'an',
+  'this', 'that', 'these', 'those', 'it', "it's", 'there', 'here', 'we', 'you', 'they', 'if', 'when', 'what', 'where',
+  'how', 'why', 'who', 'just', 'also', 'sorry', 'sure', 'great', 'today', 'tomorrow', 'tonight', 'now', 'dinner', 'lunch',
+  'breakfast', 'everything', 'nothing', 'all', 'your', 'our', 'their']);
+
+/**
+ * In composed (model-written) English, a he/she pronoun must have someone it
+ * can refer to. The recipient is "you", so a pronoun whose only candidate is
+ * the recipient — or the owner as the object of the owner's own verb
+ * ("Sana loves her") — means the model lost track of who is who.
+ */
+function composedPronounWithoutAntecedent(tokens, words, recipient, ownerLower) {
+  const nameFirst = recipient.split(/\s+/)[0] || '';
+  for (const i of words) {
+    const t = tokens[i];
+    if (t.quoted || !EN_THIRD_PERSON.has(t.lower)) continue;
+    const k = words.indexOf(i);
+    const nextIdx = words[k + 1];
+    const next = nextIdx === undefined || /[.!?,;:]/.test(tokens.slice(i + 1, nextIdx).map((x) => x.text).join(''))
+      ? null : tokens[nextIdx].lower;
+    // "her" is an object only when nothing it could possess follows ("loves her." / "call her back").
+    const objectForm = t.lower === 'him' || t.lower === 'himself' || t.lower === 'herself' ||
+      (t.lower === 'her' && (next === null || OBJECT_FOLLOWERS.has(next)));
+    const candidate = words.some((j) => {
+      if (j >= i || tokens[j].quoted) return false;
+      const w = tokens[j];
+      const bare = w.lower.replace(/'s?$/, '');
+      if (EN_THIRD_PERSON.has(w.lower) || EN_SECOND_PERSON.has(w.lower) || bare === nameFirst) return false;
+      if (bare === ownerLower) {
+        if (!objectForm || w.sentence !== t.sentence) return true;
+        const between = words.filter((m) => m > j && m < i);
+        const sameClause = !between.some((m) => SUBORDINATORS.has(tokens[m].lower)) &&
+          !/[,;:]/.test(tokens.slice(j + 1, i).map((x) => x.text).join(''));
+        return !sameClause; // "Sana loves her": her cannot be Sana
+      }
+      if (PERSON_NOUNS.has(bare)) return true;
+      if (!/^\p{Lu}/u.test(w.text)) return false;
+      return !w.sentenceStart || !NON_NAME_STARTERS.has(w.lower);
+    });
+    if (!candidate) return true;
+  }
+  return false;
+}
+
 function thirdPersonForm(word) {
   if (IRREGULAR[word]) return IRREGULAR[word];
   if (INVARIANT.has(word)) return word;
@@ -290,14 +388,14 @@ function matchCase(original, replacement) {
 
 /**
  * @param {string} text
- * @param {{ ownerName?: string | null, recipientName?: string | null, voice: 'owner_to_recipient' | 'task_text' | 'task_record' }} options
+ * @param {{ ownerName?: string | null, recipientName?: string | null, voice: 'owner_to_recipient' | 'task_text' | 'task_record' | 'composed', declared?: 'rendered' | 'unclear' }} options
  * @returns {{ status: 'unchanged' | 'rendered' | 'needs_composition', text: string, reason: string | null, language: string[] }}
  */
-export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice }) {
+export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined }) {
   const input = String(text ?? '');
   const owner = String(ownerName || '').trim();
   const recipient = String(recipientName || '').trim().toLowerCase();
-  if (!['owner_to_recipient', 'task_text', 'task_record'].includes(voice)) throw new Error('resolveOwnerPerspective: unknown voice');
+  if (!['owner_to_recipient', 'task_text', 'task_record', 'composed'].includes(voice)) throw new Error('resolveOwnerPerspective: unknown voice');
   const recordVoice = voice !== 'owner_to_recipient';
 
   const tokens = annotate(tokenize(input));
@@ -309,6 +407,14 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
   if (turkish) language.push('tr');
 
   const fail = (reason) => ({ status: 'needs_composition', text: input, reason, language });
+
+  // Model-composed text carries its own declared status; missing, invalid or
+  // "unclear" is never safe to send.
+  if (voice === 'composed' && declared !== 'rendered') {
+    return fail(declared === 'unclear' ? 'composition_unclear' : 'composition_status_missing');
+  }
+  // The recipient is the addressee, never a third party in their own message.
+  if (recipientNamedAsThirdParty(tokens, words, recipient)) return fail('recipient_named_as_third_party');
 
   // ── 1. Roles ────────────────────────────────────────────────────────────
   // Arabic / Turkish owner first person: detected, never rendered.
@@ -325,6 +431,19 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
   // quoted: its perspective cannot be verified, so the follow-up stays neutral.
   if (voice === 'task_record' && (language.includes('ar') || language.includes('tr'))) {
     return fail('unverifiable_language_in_task_record');
+  }
+  // The owner's own Arabic/Turkish words on a path with no model call cannot
+  // be verified deterministically: fail closed (never guess, never add a call).
+  const unquoted = words.filter((i) => !tokens[i].quoted);
+  const unquotedArabic = unquoted.some((i) => ARABIC.test(tokens[i].text));
+  if (voice !== 'composed' && (unquotedArabic || (turkish && isTurkishText(unquoted, tokens)))) return fail('unverifiable_language');
+
+  if (voice === 'composed') {
+    // Verify, never rewrite: the claim "rendered" must hold structurally.
+    if (words.some((i) => !tokens[i].quoted && EN_FIRST_PERSON.has(tokens[i].lower))) return fail('composed_owner_first_person');
+    const orphan = composedPronounWithoutAntecedent(tokens, words, recipient, owner.toLowerCase());
+    if (orphan) return fail('composed_pronoun_without_antecedent');
+    return { status: 'unchanged', text: input, reason: null, language };
   }
 
   if (voice === 'task_record' && words.some((i) => !tokens[i].quoted && EN_SECOND_PERSON.has(tokens[i].lower))) {

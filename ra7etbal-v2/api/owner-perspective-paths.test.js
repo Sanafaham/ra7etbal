@@ -85,6 +85,36 @@ describe('WhatsApp owner command — owner perspective', () => {
   });
 });
 
+describe('WhatsApp owner command — no model call; unverifiable non-English bodies fail closed', () => {
+  it.each([
+    ['Text Loulya الغدا جاهز', 'unverifiable_language'],
+    ['Text Loulya akşam yemeği hazır', 'unverifiable_language'],
+    ['Text Loulya بروح السوق', 'arabic_owner_first_person'],
+    ['Ask Grace to bring the bags, eve geliyorum', 'turkish_owner_first_person'],
+  ])('"%s" sends nothing and ends terminal (%s), with zero model calls', async (body, reason) => {
+    const isGrace = body.includes('Grace');
+    const calls = stubFetch(isGrace
+      ? { id: 'p-g', name: 'Grace', phone: '+971500000002', whatsapp_opted_in: true, is_family: false }
+      : { id: 'p-l', name: 'Loulya', phone: '+971500000009', whatsapp_opted_in: true, is_family: true });
+    const result = await run(body);
+    expect(result.kind).toBe('terminal_failed');
+    expect(result.acknowledgement).toBe(ownerPerspectiveClarification(isGrace ? 'Grace' : 'Loulya'));
+    expect(posted(calls, 'tasks')).toEqual([]);
+    expect(posted(calls, 'messages')).toEqual([]);
+    expect(sendWhatsappTask).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.url.includes('anthropic'))).toBe(false);
+    const update = calls.find((c) => c.url.includes('/owner_whatsapp_reply_receipts?') && JSON.parse(c.options.body).execution_status);
+    expect(JSON.parse(update.options.body)).toMatchObject({ execution_status: 'terminal_failed', execution_error: `owner_perspective_unresolved:${reason}` });
+  });
+
+  it('existing English behavior is unchanged', async () => {
+    const calls = stubFetch({ id: 'p-l', name: 'Loulya', phone: '+971500000009', whatsapp_opted_in: true, is_family: true });
+    const result = await run('Text Loulya dinner is at 8');
+    expect(result.kind).toBe('completed');
+    expect(posted(calls, 'messages')[0].content).toBe('dinner is at 8');
+  });
+});
+
 describe('Follow-up and no-response re-ask — owner perspective of the stored task record', () => {
   it.each([
     ['put it in my room', "Following up: put it in Sana's room"],
@@ -104,7 +134,9 @@ describe('Follow-up and no-response re-ask — owner perspective of the stored t
   it('follow-up fails closed to a neutral line that does not quote an unresolvable task', () => {
     // Includes the retired rule's own example: "you" in a stored record is ambiguous.
     for (const description of ['I did it myself', 'Grace said I would call back', 'اتصلي فيني', 'Call me and tell her the plan', 'text you in one minute',
-      'بروح السوق', 'الغدا جاهز', 'Eve geliyorum', 'Akşam yemeği hazır']) {
+      'بروح السوق', 'الغدا جاهز', 'Eve geliyorum', 'Akşam yemeği hazır',
+      // the assignee named as a third party in their own follow-up (stored by the retired path)
+      'Tell Grace Sana is running late']) {
       expect(buildFollowUpMessageText({ description, ownerName: 'Sana', assignedTo: 'Grace' }), description).toBe('Following up on the task Sana sent you.');
     }
   });

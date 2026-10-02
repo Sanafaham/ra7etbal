@@ -110,7 +110,9 @@ describe("owner perspective — retired 'leave unchanged' pins, replaced by the 
   // reported speech without quote marks "I" may be Grace or the owner, so the
   // contract fails closed instead of sending either reading.
   it("reported speech with first person fails closed (Grace said I would call back.)", () => {
-    expect(render("Grace said I would call back.")).toBe(NEEDS("reported_speech_first_person"));
+    // Recipient Loulya: sent to Grace herself it fails earlier, as the
+    // recipient named as a third party (see "recipient is never a third party").
+    expect(render("Grace said I would call back.", "Sana", "Loulya")).toBe(NEEDS("reported_speech_first_person"));
   });
 
   // RETIRED PIN: "she mentioned it to me yesterday." → unchanged (raw "me"
@@ -123,8 +125,8 @@ describe("owner perspective — retired 'leave unchanged' pins, replaced by the 
   // RETIRED PIN: "I need Grace to call me." → unchanged, chosen only to avoid
   // the old mixed output. The new contract renders the whole sentence
   // consistently, with verb agreement.
-  it('renders "I need Grace to call me." consistently in third person', () => {
-    expect(render("I need Grace to call me.")).toBe("Sana needs Grace to call Sana.");
+  it('renders "I need Grace to call me." consistently in third person (to someone other than Grace)', () => {
+    expect(render("I need Grace to call me.", "Sana", "Loulya")).toBe("Sana needs Grace to call Sana.");
   });
 
   // RETIRED PIN: "My driver is waiting. Tell him I'm coming." →
@@ -245,13 +247,20 @@ describe("owner perspective — task-record voice (stored descriptions quoted by
   });
 });
 
-describe("owner perspective — Arabic (detected, never rendered: fail closed)", () => {
-  // Explicit first-person markers (already covered before this slice).
+// Composed (model-written) text, verified — never rewritten.
+function composed(text: string, declared: "rendered" | "unclear" | undefined = "rendered", recipientName = "Grace", ownerName: string | null = "Sana") {
+  const r = resolveOwnerPerspective(text, { ownerName, recipientName, voice: "composed", declared });
+  return r.status === "needs_composition" ? NEEDS(r.reason ?? "") : r.text;
+}
+
+describe("owner perspective — Arabic: frozen defense-in-depth tables (detected, never rendered)", () => {
+  // The tables are a backstop, not the architecture: they run in every voice
+  // and catch owner first person both in the owner's own words and in a
+  // model's composed text that claims "rendered".
   it.each(["اتصلي فيني", "قول للوليا إني أبغاها تتصل فيني", "وأنا جاي"])("explicit marker fails closed: %s", (t) => {
     expect(render(t)).toBe(NEEDS("arabic_owner_first_person"));
+    expect(composed(t)).toBe(NEEDS("arabic_owner_first_person"));
   });
-  // Owner first person carried only by the verb form, an object suffix or a
-  // possessive — the gap this slice closes.
   it.each([
     "بروح السوق بعدين",      // future first person (ب + stem)
     "باتصل فيك الحين",
@@ -269,10 +278,12 @@ describe("owner perspective — Arabic (detected, never rendered: fail closed)",
     "سيارتي برا",
   ])("verb/suffix-only first person fails closed: %s", (t) => {
     expect(render(t)).toBe(NEEDS("arabic_owner_first_person"));
+    expect(composed(t)).toBe(NEEDS("arabic_owner_first_person"));
   });
-  // Negative controls: imperatives that look like first-person forms,
-  // third-person and owner-named text, and nouns ending like "me".
-  it.each([
+  // Negative controls: the tables do not flag imperatives that look like
+  // first-person forms, third-person and owner-named text, or nouns ending
+  // like "me" — proven in composed voice, where Arabic is accepted.
+  const AR_NEGATIVE = [
     "الغدا جاهز",
     "تعالي بكرة الساعة ٥",
     "سنا تبغاك تتصل عليها",
@@ -288,20 +299,27 @@ describe("owner perspective — Arabic (detected, never rendered: fail closed)",
     "الثاني على اليمين",
     "أحمد جاي",
     "التوصيل مجاني",
-  ])("negative control passes unchanged: %s", (t) => {
-    expect(render(t)).toBe(t);
+  ];
+  it.each(AR_NEGATIVE)("tables do not flag (composed, declared rendered → unchanged): %s", (t) => {
+    expect(composed(t)).toBe(t);
   });
-  it("quoted Arabic first person is reported speech and is not treated as the owner", () => {
+  // No model call on deterministic paths: the owner's own Arabic words cannot
+  // be verified, so they fail closed instead of being guessed at.
+  it.each(AR_NEGATIVE)("deterministic voices fail closed on unverifiable Arabic: %s", (t) => {
+    expect(render(t)).toBe(NEEDS("unverifiable_language"));
+    expect(render(t, "Sana", "Grace", "task_text")).toBe(NEEDS("unverifiable_language"));
+  });
+  it("quoted Arabic is reported speech: not treated as the owner, and not unverifiable", () => {
     expect(render("Tell her «بروح السوق»")).toBe("Tell her «بروح السوق»");
     expect(render('He wrote "ابغاك تجي" yesterday')).toBe('He wrote "ابغاك تجي" yesterday');
   });
 });
 
-describe("owner perspective — Turkish (detected, never rendered: fail closed)", () => {
+describe("owner perspective — Turkish: frozen defense-in-depth tables (detected, never rendered)", () => {
   it.each(["Beni ara lütfen", "Bana haber ver", "Ben eve geliyorum ve çok yorgunum"])("explicit marker fails closed: %s", (t) => {
     expect(render(t)).toBe(NEEDS("turkish_owner_first_person"));
+    expect(composed(t)).toBe(NEEDS("turkish_owner_first_person"));
   });
-  // First person carried only by a verb suffix or possessive — the gap this slice closes.
   it.each([
     "Eve geliyorum",          // -yorum, present continuous
     "geliyorum",
@@ -321,8 +339,9 @@ describe("owner perspective — Turkish (detected, never rendered: fail closed)"
     "Arabami getir",
   ])("suffix-only first person fails closed: %s", (t) => {
     expect(render(t)).toBe(NEEDS("turkish_owner_first_person"));
+    expect(composed(t)).toBe(NEEDS("turkish_owner_first_person"));
   });
-  it.each([
+  const TR_NEGATIVE = [
     "Akşam yemeği hazır",
     "Tamam",
     "Lütfen kapıyı kapat",
@@ -333,11 +352,16 @@ describe("owner perspective — Turkish (detected, never rendered: fail closed)"
     "Program yarın",
     "Lütfen Sana'yı ara",
     "Sana bir mesaj var",
-  ])("negative control passes unchanged: %s", (t) => {
-    expect(render(t)).toBe(t);
+  ];
+  it.each(TR_NEGATIVE)("tables do not flag (composed, declared rendered → unchanged): %s", (t) => {
+    expect(composed(t)).toBe(t);
   });
+  it.each(TR_NEGATIVE.filter((t) => t !== "Durum nedir" && t !== "Yorum yap"))(
+    "deterministic voices fail closed on unverifiable Turkish: %s", (t) => {
+      expect(render(t)).toBe(NEEDS("unverifiable_language"));
+    });
   it.each(["Ben will drive you.", "Dim the lights.", "The victim of an interim plan.", "Tim is here.", "Park the car at the deli.", "Give the parameter."])(
-    "English words that end like Turkish first person are not flagged: %s", (t) => {
+    "English words that end like Turkish first person are neither flagged nor treated as Turkish: %s", (t) => {
       expect(render(t)).toBe(t);
     });
   it("quoted Turkish first person is reported speech and is not treated as the owner", () => {
@@ -346,13 +370,18 @@ describe("owner perspective — Turkish (detected, never rendered: fail closed)"
 });
 
 describe("owner perspective — mixed language", () => {
-  it("English owner references render when no Arabic/Turkish owner first person is present", () => {
-    expect(render("Ask Ghulam يغسل السيارة before 5 and tell me")).toBe("Ask Ghulam يغسل السيارة before 5 and tell Sana");
+  it("the owner's own mixed English/Arabic words fail closed on deterministic paths (never guessed)", () => {
+    expect(render("Ask Ghulam يغسل السيارة before 5 and tell me")).toBe(NEEDS("unverifiable_language"));
+    expect(render("Please tell her geliyorum", "Sana", "Loulya")).toBe(NEEDS("turkish_owner_first_person"));
   });
-  it.each(["call me, اتصل فيني", "Ask Ghulam to wash the car, بروح بعدين", "Call me, ابغاك تجي", "Please tell Grace geliyorum"])(
-    "unresolved Arabic/Turkish first person inside English text fails the whole text closed: %s", (t) => {
+  it.each(["call me, اتصل فيني", "Ask Ghulam to wash the car, بروح بعدين", "Call me, ابغاك تجي", "Please tell Loulya geliyorum"])(
+    "Arabic/Turkish first person inside English text fails the whole text closed: %s", (t) => {
       expect(render(t)).toMatch(/^NEEDS_COMPOSITION:(arabic|turkish)_owner_first_person$/);
     });
+  it("composed mixed text the model declared rendered is accepted only when no owner first person remains", () => {
+    expect(composed("Sana says الغدا جاهز at 8.")).toBe("Sana says الغدا جاهز at 8.");
+    expect(composed("Sana is late, بروح بعدين")).toBe(NEEDS("arabic_owner_first_person"));
+  });
 });
 
 describe("owner perspective — stored task records in Arabic or Turkish", () => {
@@ -360,6 +389,72 @@ describe("owner perspective — stored task records in Arabic or Turkish", () =>
     for (const t of ["الغدا جاهز", "Akşam yemeği hazır"]) {
       expect(render(t, "Sana", "Grace", "task_record")).toBe(NEEDS("unverifiable_language_in_task_record"));
     }
+  });
+});
+
+describe("owner perspective — recipient is never a third party in their own message", () => {
+  // Demonstrated defect: Clear My Head's message item "Tell Sarah I'm running
+  // late." became "Hi Sarah, could you tell Sarah Sana is running late?".
+  it.each([
+    ["Hi Sarah, could you tell Sarah Sana is running late? Let Sana know when done.", "Sarah"],
+    ["Tell Sarah I'm running late.", "Sarah"],
+    ["Tell Loulya I love her.", "Loulya"],
+    ["Hi Loulya, could you tell Loulya Sana loves her? Let Sana know when done.", "Loulya"],
+    ["Put it in Grace's room.", "Grace"],
+    ["I need Grace to call me.", "Grace"],
+    ["Grace said I would call back.", "Grace"],
+  ])("fails closed in every voice: %s", (t, recipient) => {
+    for (const voice of ["owner_to_recipient", "task_text", "task_record"] as const) {
+      expect(render(t, "Sana", recipient, voice)).toBe(NEEDS("recipient_named_as_third_party"));
+    }
+    expect(composed(t, "rendered", recipient)).toBe(NEEDS("recipient_named_as_third_party"));
+  });
+  it.each([
+    ["Sarah, Sana is running late.", "Sarah"],
+    ["Hi Sarah, Sana is running late tonight.", "Sarah"],
+    ["Thanks, Grace.", "Grace"],
+    ["Hi Grace, could you buy flowers? Let Sana know when done.", "Grace"],
+    ["Loulya, Sana loves you.", "Loulya"],
+  ])("the recipient as addressee is allowed: %s", (t, recipient) => {
+    expect(composed(t, "rendered", recipient)).toBe(t);
+    expect(render(t, "Sana", recipient)).toBe(t);
+  });
+  it("other people stay third parties", () => {
+    expect(render("Take Loulya to her appointment and call me after.", "Sana", "Grace", "task_text"))
+      .toBe("Take Loulya to her appointment and call Sana after.");
+  });
+});
+
+describe("owner perspective — composed voice (existing extraction call, declared status)", () => {
+  it("missing, invalid or unclear status fails closed even for clean text", () => {
+    const missing = resolveOwnerPerspective("Sana is running late.", { ownerName: "Sana", recipientName: "Grace", voice: "composed" });
+    expect(missing).toMatchObject({ status: "needs_composition", reason: "composition_status_missing" });
+    expect(composed("Sana is running late.", "unclear")).toBe(NEEDS("composition_unclear"));
+    expect(composed("Sana is running late.", "maybe" as never)).toBe(NEEDS("composition_status_missing"));
+  });
+  it("the declaration is not proof: owner first person left in 'rendered' text fails closed", () => {
+    expect(composed("I'm running late.")).toBe(NEEDS("composed_owner_first_person"));
+    expect(composed("Call me when you're done.")).toBe(NEEDS("composed_owner_first_person"));
+  });
+  it("Loulya class: a he/she whose only possible referent is the recipient fails closed", () => {
+    expect(composed("Sana loves her.", "rendered", "Loulya")).toBe(NEEDS("composed_pronoun_without_antecedent"));
+    expect(composed("Hi Loulya, Sana misses her.", "rendered", "Loulya")).toBe(NEEDS("composed_pronoun_without_antecedent"));
+    expect(composed("Please call her back.", "rendered", "Loulya")).toBe(NEEDS("composed_pronoun_without_antecedent"));
+  });
+  it("is verified, never rewritten: owner, recipient and third parties keep their referents", () => {
+    for (const t of [
+      "Sana loves you.",
+      "Sana is running late tonight.",
+      "Sana is on her way.",
+      "Sana misses you and would love to hear from you. Could you give her a call?",
+      "Take Loulya to her appointment and call Sana after.",
+      "Your mother called; please call her back.",
+      "Ali said: \"I will come at 5.\"",
+    ]) expect(composed(t, "rendered", "Grace")).toBe(t);
+  });
+  it("quoted speech keeps its speaker; unquoted reported speech the model marks unclear fails closed", () => {
+    expect(composed("Ali said: “I'll come at 5.”")).toBe("Ali said: “I'll come at 5.”");
+    expect(composed("Ali said Sana would come.", "unclear")).toBe(NEEDS("composition_unclear"));
   });
 });
 

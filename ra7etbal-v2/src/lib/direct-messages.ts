@@ -1,6 +1,6 @@
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
 import { preserveDirectMessageReplyIntent } from "./direct-message-reply-intent";
-import { isOwnerPerspectiveError, ownerPerspectiveClarification, resolveOwnerPerspective, OwnerPerspectiveError } from "./direct-message-owner-normalization";
+import { isOwnerPerspectiveError, ownerPerspectiveClarification, resolveOwnerPerspective, OwnerPerspectiveError, type DeclaredOwnerPerspective } from "./direct-message-owner-normalization";
 import type { Message } from "../types/message";
 import type { MessageDraft } from "../types/message";
 
@@ -56,6 +56,12 @@ export interface CreateDirectMessageInput {
    * supplied only the quoted reply text as messageText.
    */
   ownerInstruction?: string | null;
+  /**
+   * Set only when messageText was composed by the extraction model call with
+   * a declared perspective status; it is then verified in the boundary's
+   * "composed" voice (never rewritten). Absent = the owner's own words.
+   */
+  declaredPerspective?: DeclaredOwnerPerspective;
   createMessageFn?: CreateMessageFn;
 }
 
@@ -83,6 +89,7 @@ export async function createDirectMessageRecord({
   messageText,
   ownerName,
   ownerInstruction,
+  declaredPerspective,
   createMessageFn,
 }: CreateDirectMessageInput): Promise<Message> {
   void source;
@@ -99,11 +106,9 @@ export async function createDirectMessageRecord({
   // perspective. The verbatim owner instruction is authoritative, so this
   // repairs either a raw first-person tool payload or one the model has
   // already rewritten, while ordinary direct messages keep the resolved text.
-  const perspective = resolveOwnerPerspective(messageText, {
-    ownerName,
-    recipientName: cleanRecipient,
-    voice: "owner_to_recipient",
-  });
+  const perspective = resolveOwnerPerspective(messageText, declaredPerspective === undefined
+    ? { ownerName, recipientName: cleanRecipient, voice: "owner_to_recipient" }
+    : { ownerName, recipientName: cleanRecipient, voice: "composed", declared: declaredPerspective });
   let cleanMessage: string;
   if (perspective.status === "needs_composition") {
     // Fail closed: nothing is created or sent — unless the owner's own

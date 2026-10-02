@@ -1,4 +1,4 @@
-import { renderOwnerPerspective } from "./direct-message-owner-normalization";
+import { renderOwnerPerspective, type DeclaredOwnerPerspective } from "./direct-message-owner-normalization";
 
 /**
  * Personal-note helpers
@@ -42,6 +42,8 @@ export function normalizePersonalNote(
   note: string,
   ownerName: string | null | undefined,
   recipientName?: string | null,
+  /** Set when the note came from the extraction model with its declared perspective. */
+  declared?: DeclaredOwnerPerspective,
 ): string {
   const raw = note?.trim();
   if (!raw) return raw ?? "";
@@ -64,8 +66,12 @@ export function normalizePersonalNote(
   // The note is the owner's own words to the recipient. Owner perspective is
   // resolved through the single contract (shared/owner-perspective.js);
   // OwnerPerspectiveError fails the delegation closed when it cannot be.
+  // A model-composed note (declared status present) is verified, never
+  // rewritten, in the boundary's "composed" voice.
   const resolve = (value: string) =>
-    renderOwnerPerspective(value, { ownerName: ownerName?.trim() || "the sender", recipientName, voice: "owner_to_recipient" });
+    renderOwnerPerspective(value, declared === undefined
+      ? { ownerName: ownerName?.trim() || "the sender", recipientName, voice: "owner_to_recipient" }
+      : { ownerName: ownerName?.trim() || "the sender", recipientName, voice: "composed", declared });
 
   if (hasSubject) {
     // Well-formed — resolve owner perspective, normalise capitalisation, add period.

@@ -145,6 +145,7 @@
         "api/owner-whatsapp-decision-golden-contract.test.js",
         "api/staff-decision-golden-contract.test.js",
         "api/_staff-decision-message.test.js",
+        "api/staff-answer-owner-perspective.test.js",
         "api/_quality-review.test.js",
         "api/alternative-review-golden-contract.test.js",
         "api/photo-workflow-golden-contract.test.js",

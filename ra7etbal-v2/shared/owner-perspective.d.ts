@@ -1,9 +1,13 @@
-export type OwnerPerspectiveVoice = "owner_to_recipient" | "task_text" | "task_record";
+export type OwnerPerspectiveVoice = "owner_to_recipient" | "task_text" | "task_record" | "composed";
+
+/** Perspective status declared by the existing model call that composed the text. */
+export type DeclaredOwnerPerspective = "rendered" | "unclear";
 
 export interface OwnerPerspectiveOptions {
   ownerName?: string | null;
   recipientName?: string | null;
   voice: OwnerPerspectiveVoice;
+  declared?: DeclaredOwnerPerspective | null;
 }
 
 export interface OwnerPerspectiveResult {

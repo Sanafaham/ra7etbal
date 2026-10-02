@@ -20,10 +20,14 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./tasks", () => ({ createTask: mocks.createTask }));
 vi.mock("./messages", () => ({ createMessage: mocks.createMessage }));
 vi.mock("./qstash-escalation", () => ({ scheduleEscalationMessages: mocks.scheduleEscalationMessages }));
-vi.mock("./ai/compose-message", () => ({ composeMergedMessage: vi.fn().mockResolvedValue(null) }));
+const compose = vi.hoisted(() => ({ composeMergedMessage: vi.fn() }));
+vi.mock("./ai/compose-message", () => compose);
 vi.mock("./delivery", () => ({ deliverTaskMessage: vi.fn() }));
+// Proof that no deterministic path falls back to a model call to verify text.
+const anthropic = vi.hoisted(() => ({ callAnthropicProxy: vi.fn() }));
+vi.mock("./anthropic-client", () => anthropic);
 
-import { createDirectMessageRecord, directMessageFailureResponse, DirectMessageBoundaryError } from "./direct-messages";
+import { createAndSendDirectMessage, createDirectMessageRecord, directMessageFailureResponse, DirectMessageBoundaryError } from "./direct-messages";
 import { executeDirectMessageFastPath } from "./direct-message-fast-path";
 import { createDelegationTaskAndMessage } from "./delegations";
 import { normalizePersonalNote } from "./personal-note";
@@ -33,6 +37,7 @@ import { ownerPerspectiveClarification, ownerPerspectiveDetail } from "./direct-
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.scheduleEscalationMessages.mockResolvedValue(undefined);
+  compose.composeMergedMessage.mockResolvedValue(null);
   mocks.createMessage.mockImplementation(async (draft: Partial<Message>) => ({ id: "message-1", ...draft }) as Message);
   mocks.createTask.mockImplementation(async (draft: Partial<Task>) => ({ created_at: "2026-10-02T08:00:00.000Z", ...draft }) as Task);
 });
@@ -108,6 +113,65 @@ describe("Typed fast path — parity with Talk and fail-closed clarification", (
   });
 });
 
+describe("Deterministic no-model paths — Arabic/Turkish bodies fail closed (never guessed, never sent to a model)", () => {
+  const deps = () => ({
+    createMessageFn: vi.fn(async (draft: any) => ({ id: "message-1", ...draft })),
+    deliverTaskMessageFn: vi.fn().mockResolvedValue({ success: true, channel: "whatsapp", deliveryId: "d1", messageId: "wamid.1" }),
+  });
+  const ctx = { userId: "user-1", displayName: "Sana", people: [loulya()] };
+
+  it("existing safe English still sends; ambiguous English still fails closed", async () => {
+    const ok = deps();
+    await executeDirectMessageFastPath("Tell Loulya I miss you.", { ...ctx, normalizeOwnerReference: true }, ok);
+    expect(ok.createMessageFn.mock.calls[0][0].content).toBe("Sana misses you.");
+    const ambiguous = deps();
+    const result = await executeDirectMessageFastPath("Tell Loulya Grace said I would call back.", { ...ctx, normalizeOwnerReference: true }, ambiguous);
+    expect(result).toMatchObject({ handled: true, status: "blocked", reason: "owner_perspective_unresolved" });
+    expect(ambiguous.createMessageFn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Tell Loulya الغدا جاهز", "Arabic, no first-person marker"],
+    ["Tell Loulya بروح السوق", "Arabic first person (frozen backstop)"],
+    ["Tell Loulya akşam yemeği hazır", "Turkish, no first-person marker"],
+    ["Tell Loulya eve geliyorum", "Turkish first person (frozen backstop)"],
+  ])("%s (%s): Type and Talk send nothing and answer with the rephrase request", async (input) => {
+    for (const normalizeOwnerReference of [true, false]) {
+      const d = deps();
+      const result = await executeDirectMessageFastPath(input, { ...ctx, normalizeOwnerReference }, d);
+      expect(result, `${input} normalize=${normalizeOwnerReference}`).toMatchObject({ handled: true, response: ownerPerspectiveClarification("Loulya") });
+      expect(d.createMessageFn).not.toHaveBeenCalled();
+      expect(d.deliverTaskMessageFn).not.toHaveBeenCalled();
+    }
+    expect(anthropic.callAnthropicProxy).not.toHaveBeenCalled();
+  });
+
+  it("Talk's send_direct_whatsapp_message boundary: model-written Arabic/Turkish with no declared status fails closed (C-01 parity)", async () => {
+    for (const messageText of ["الغدا جاهز", "Akşam yemeği hazır"]) {
+      const d = deps();
+      let caught: unknown;
+      try {
+        await createAndSendDirectMessage({ source: "send_direct_whatsapp_message", userId: "user-1", recipient: "Loulya",
+          messageText, phone: "+971500000009", ownerName: "Sana", createMessageFn: d.createMessageFn, deliverTaskMessageFn: d.deliverTaskMessageFn });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(DirectMessageBoundaryError);
+      expect(directMessageFailureResponse(caught, "Loulya")).toBe(ownerPerspectiveClarification("Loulya"));
+      expect(d.createMessageFn).not.toHaveBeenCalled();
+      expect(d.deliverTaskMessageFn).not.toHaveBeenCalled();
+    }
+    expect(anthropic.callAnthropicProxy).not.toHaveBeenCalled();
+  });
+
+  it("the same Arabic text IS accepted from the existing extraction call when it declared 'rendered' (composed voice)", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    await createDirectMessageRecord({ source: "save", userId: "user-1", recipient: "Loulya", messageText: "الغدا جاهز",
+      ownerName: "Sana", declaredPerspective: "rendered", createMessageFn });
+    expect(createMessageFn).toHaveBeenCalledWith(expect.objectContaining({ content: "الغدا جاهز" }));
+  });
+});
+
 describe("Tracked delegation — message, stored description and personal note", () => {
   const delegate = (taskText: string, note: string | null = null, name = "Grace") =>
     createDelegationTaskAndMessage({ source: "test", userId: "user-1", assignee: { id: "p-g", name, notes: null } as Person, taskText, note, ownerName: "Sana" });
@@ -138,6 +202,39 @@ describe("Tracked delegation — message, stored description and personal note",
     expect(normalizePersonalNote("call me back", "Sana", "Loulya")).toBe("Sana says call Sana back.");
     const created = await delegate("bring the flowers", "I'd love to see you", "Loulya");
     expect(created.messageText).toContain("Sana would love to see you.");
+  });
+
+  it("the existing note-merge model call's output is used only when nothing in it needs resolving; otherwise the verified parts are used", async () => {
+    compose.composeMergedMessage.mockResolvedValueOnce("Hi Loulya, Sana would love to see you. Could you bring the flowers?");
+    expect((await delegate("bring the flowers", "I'd love to see you", "Loulya")).messageText)
+      .toBe("Hi Loulya, Sana would love to see you. Could you bring the flowers?");
+    // Deterministic message built only from the verified task and note.
+    const deterministic = (await delegate("bring the flowers", "I'd love to see you", "Loulya")).messageText;
+    for (const merged of ["Hi Loulya, I'd love to see you. Could you bring the flowers?", "Hi Loulya, could you tell Loulya to bring the flowers?", "مرحبا لوليا، جيبي الورد"]) {
+      compose.composeMergedMessage.mockResolvedValueOnce(merged);
+      const created = await delegate("bring the flowers", "I'd love to see you", "Loulya");
+      // The merge lost track of who is who: its output is discarded, never repaired.
+      expect(created.messageText, merged).toBe(deterministic);
+    }
+    expect(deterministic).toContain("Sana would love to see you.");
+  });
+
+  it("Talk/Type parity: the delegation fast path (owner's own words, no declared status) and the extraction path (declared) store the same text", async () => {
+    const fast = await delegate("call me after the appointment");
+    vi.clearAllMocks();
+    const extracted = await createDelegationTaskAndMessage({ source: "save", userId: "user-1", assignee: { id: "p-g", name: "Grace", notes: null } as Person,
+      taskText: "call Sana after the appointment", ownerName: "Sana", ownerPerspective: "rendered" });
+    expect(fast.task.description).toBe("call Sana after the appointment");
+    expect(extracted.task.description).toBe(fast.task.description);
+    expect(extracted.messageText).toBe(fast.messageText);
+  });
+
+  it("an Arabic delegation in the owner's own words (no model call) fails closed; declared extraction text is stored", async () => {
+    await expect(delegate("جيبي الاغراض")).rejects.toMatchObject({ code: "owner_perspective_unresolved" });
+    expect(mocks.createTask).not.toHaveBeenCalled();
+    const created = await createDelegationTaskAndMessage({ source: "save", userId: "user-1", assignee: { id: "p-g", name: "Grace", notes: null } as Person,
+      taskText: "جيبي الاغراض لسنا", ownerName: "Sana", ownerPerspective: "rendered" });
+    expect(created.task.description).toBe("جيبي الاغراض لسنا");
   });
 
   it("fails closed before anything is created, with a clarification the owner sees (widget sanitizer, Inbox/Todos)", async () => {

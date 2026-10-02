@@ -1,3 +1,4 @@
+import type { DeclaredOwnerPerspective } from "../../shared/owner-perspective.js";
 /**
  * AI extraction types — mirror the JSON shape the model returns.
  *
@@ -55,6 +56,18 @@ export interface ExtractedItem {
    * the closing confirmation line.
    */
   personalNote: string | null;
+  /**
+   * Owner-perspective status declared by the extraction model call itself for
+   * this item's recipient-facing text (description for delegations,
+   * suggestedMessage for messages, personalNote): "rendered" means it is
+   * written as the recipient reads it (owner by name, recipient as "you",
+   * quotes kept with their speaker); "unclear" means the model could not tell
+   * who an "I"/"me" refers to. Set on EVERY extraction item (missing/invalid →
+   * "unclear"); absent only on items built without the extraction model.
+   * The declaration is never proof: the shared owner-perspective boundary
+   * still verifies the text, and anything but "rendered" fails closed.
+   */
+  ownerPerspective?: DeclaredOwnerPerspective;
   needsPerson: boolean;
   needsClarification: boolean;
   clarificationQuestion: string | null;

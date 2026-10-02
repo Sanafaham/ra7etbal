@@ -92,3 +92,22 @@ describe("RULE 2B — owner → assistant management language is not the recipie
     expect(r3).toBeGreaterThan(r2b);
   });
 });
+
+describe("OWNER PERSPECTIVE — the existing extraction call declares recipient perspective (no extra model call)", () => {
+  const prompt = buildExtractionPrompt("Tell Sarah I'm running late tonight.", [], "Sana");
+
+  it("asks for recipient-perspective text in the user's language plus an explicit rendered/unclear status", () => {
+    expect(prompt).toMatch(/OWNER PERSPECTIVE \(applies to every item, in every language\)/);
+    expect(prompt).toMatch(/"ownerPerspective": "rendered\|unclear/);
+    expect(prompt).toMatch(/Never refer to the recipient in the third person in their own message/);
+    expect(prompt).toMatch(/Keep the user's language\. Do not translate\./);
+    expect(prompt).toMatch(/"unclear" when you cannot tell who an "I"\/"me"\/"my"/);
+  });
+
+  it("no worked example teaches owner first person in a recipient's message any more", () => {
+    expect(prompt).not.toMatch(/suggestedMessage: "Sarah, I'm running late\."/);
+    expect(prompt).not.toMatch(/suggestedMessage: "Loulya, I love you\."/);
+    expect(prompt).toMatch(/suggestedMessage: "Sana is running late\."/);
+    expect(prompt).toMatch(/suggestedMessage: "Sana loves you\."/);
+  });
+});

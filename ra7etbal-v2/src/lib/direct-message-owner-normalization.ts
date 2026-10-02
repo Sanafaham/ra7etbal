@@ -16,4 +16,4 @@ export {
   renderOwnerPerspective,
   resolveOwnerPerspective,
 } from "../../shared/owner-perspective.js";
-export type { OwnerPerspectiveOptions, OwnerPerspectiveResult, OwnerPerspectiveVoice } from "../../shared/owner-perspective.js";
+export type { DeclaredOwnerPerspective, OwnerPerspectiveOptions, OwnerPerspectiveResult, OwnerPerspectiveVoice } from "../../shared/owner-perspective.js";

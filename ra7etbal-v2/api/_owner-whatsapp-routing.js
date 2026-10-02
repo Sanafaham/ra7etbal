@@ -4,6 +4,7 @@ import {
   resolveAndDeliverEscalationAnswer,
 } from './task-confirm.js';
 import { sendMetaMessage } from './send-whatsapp-task.js';
+import { OWNER_PERSPECTIVE_UNRESOLVED } from '../shared/owner-perspective.js';
 import { persistAndExecuteOwnerCommand, recordOwnerInbound, updateCommand } from './_owner-command-executor.js';
 import { classifyOwnerWhatsAppIntent, isExecutionDomain } from './_carson-intent-classifier.js';
 import { runOwnerConversationalTurn } from './_carson-agent-turn.js';
@@ -737,6 +738,47 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       route: 'quoted_escalation',
       reason: 'staff_delivery_failed',
       staffDelivery: 'processing_error',
+    };
+  }
+
+  if (result.kind === OWNER_PERSPECTIVE_UNRESOLVED) {
+    // The answer's owner perspective could not be resolved safely: nothing
+    // was sent to staff. Ask the owner to rephrase; terminal, never retried
+    // (a retry would hit the same text).
+    const clarification = result.message;
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === clarification
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: effectiveMsg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: clarification,
+        });
+    if (!ack.ok) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'quoted_escalation', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        execution_status: 'terminal_failed',
+        execution_error: `${OWNER_PERSPECTIVE_UNRESOLVED}:${result.reason || 'unresolved'}`,
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: clarification,
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'clarification_sent', escalationId: escalation.id,
+    });
+    return {
+      isOwner: true,
+      handled: completed,
+      route: 'quoted_escalation',
+      reason: completed ? OWNER_PERSPECTIVE_UNRESOLVED : 'receipt_complete_failed',
     };
   }
 
