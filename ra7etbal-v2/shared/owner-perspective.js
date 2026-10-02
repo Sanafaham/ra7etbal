@@ -35,10 +35,13 @@
  * sent.
  *
  * Language: roles are language-independent; detection uses small, bounded
- * per-language marker tables. Only English is rendered deterministically.
- * Arabic and Turkish owner first person is detected (bounded markers) and
- * always fails closed. Arabic/Turkish first person carried only inside a
- * verb's ending is not detectable here.
+ * per-language tables (data, not rewriting rules). Only English is rendered.
+ * Arabic and Turkish owner first person is detected — pronouns, first-person
+ * verb forms and suffixes, my-possessives — and always fails closed; it is
+ * never rewritten. A stored task record in Arabic or Turkish is never quoted
+ * (its perspective cannot be verified), so follow-ups use the neutral line.
+ * Detection is conservative and bounded, not general morphology: see the
+ * tables below for exactly what is and is not recognised.
  *
  * Text with no owner reference is returned byte-for-byte unchanged, so the
  * boundary is idempotent: rendered text passes through it again unchanged.
@@ -75,12 +78,68 @@ const EN_SECOND_PERSON = new Set(['you', 'your', 'yours', 'yourself', "you're", 
 const EN_THIRD_PERSON = new Set(['he', 'she', 'him', 'her', 'his', 'hers', 'himself', 'herself']);
 const FEMININE = new Set(['she', 'her', 'hers', 'herself']);
 
-/** Arabic owner first-person markers, compared after normalizeArabic. */
-const AR_FIRST_PERSON = new Set(['انا', 'اني', 'انني', 'فيني', 'عندي', 'معي', 'ابغي', 'ابغاها', 'ابغاه', 'ابغاك', 'اريد']);
+// ── Arabic owner first person (compared after normalizeArabic) ──────────
+// Only forms that cannot be read as an instruction to the recipient. Many
+// Arabic first-person present forms are identical to the imperative staff
+// messages use constantly ("اتصل" = "I call" and "Call!"), so those are
+// deliberately NOT listed; Gulf imperatives drop the alef (روح، جيب، سوي،
+// قول، شوف، كلم), which is what makes the forms below unambiguous.
+const AR_FIRST_PERSON_WORDS = new Set(['انا', 'اني', 'انني', 'فيني', 'عندي', 'معي', 'لي', 'مني', 'نفسي', 'ابوي', 'امي',
+  // "I / you" past forms that a third-person feminine subject would not use (she: راحت، جات، سوت، قالت، شافت، خلت)
+  'رحت', 'جيت', 'سويت', 'قلت', 'شفت', 'خليت']);
+/** First-person singular present (Gulf / MSA), unambiguous with the imperative. */
+const AR_FIRST_PERSON_VERBS = ['ابغي', 'ابغا', 'ابي', 'اريد', 'احتاج', 'اقدر', 'اشوف', 'اكلم', 'اكون', 'اخلص',
+  'اسوي', 'اقول', 'اظن', 'احب', 'اتمني', 'اجيب', 'اجي', 'اروح', 'انام', 'افكر', 'احس', 'ارجو', 'اتوقع', 'اوعدك'];
+/** Object suffixes a first-person verb can carry (اكلمك، ابغاها، ابيه). */
+const AR_OBJECT_SUFFIXES = ['', 'ك', 'كي', 'ه', 'ها', 'هم', 'كم'];
+/** Gulf future "ب" + stem is first person singular (بروح = I'll go; he/you/we would add ي/ت/ن). */
+const AR_FUTURE_STEMS = ['روح', 'جي', 'اجي', 'كلم', 'اتصل', 'رجع', 'طلع', 'وصل', 'خلص', 'سوي', 'قول', 'شوف', 'جيب', 'نام', 'ارسل', 'دفع', 'انتظر'];
+/** "My <noun>" — household nouns with the first-person possessive ي. */
+const AR_MY_NOUNS = new Set(['بيتي', 'غرفتي', 'سيارتي', 'ولدي', 'بنتي', 'اختي', 'اخوي', 'زوجي', 'زوجتي', 'جوالي', 'تلفوني',
+  'مكتبي', 'شنطتي', 'مفاتيحي', 'فلوسي', 'شغلي', 'عيالي', 'اغراضي', 'ملابسي', 'اوراقي', 'موعدي', 'حجزي', 'اهلي', 'ضيوفي']);
+/** Words ending in "ني" that are not "me" (يعني = "I mean"/filler, ثاني = second, …). */
+const AR_NI_NOT_ME = new Set(['يعني', 'ثاني', 'بني', 'اغاني', 'ثواني', 'معاني', 'مباني', 'تهاني', 'اماني', 'اواني', 'حسني', 'ثماني', 'عثماني', 'لبناني', 'روحاني', 'مجاني']);
+
+const AR_FIRST_PERSON_FORMS = (() => {
+  const forms = new Set(AR_FIRST_PERSON_WORDS);
+  for (const v of AR_FIRST_PERSON_VERBS) {
+    for (const suffix of AR_OBJECT_SUFFIXES) {
+      forms.add(v + suffix);
+      if (suffix && /ي$/.test(v)) forms.add(v.slice(0, -1) + 'ا' + suffix); // ابغي + ك → ابغاك
+    }
+  }
+  for (const stem of AR_FUTURE_STEMS) forms.add('ب' + stem);
+  for (const n of AR_MY_NOUNS) forms.add(n);
+  return forms;
+})();
+
+/** True when one normalized Arabic token is an owner first-person form. */
+function arabicFirstPerson(token) {
+  const candidates = [token];
+  if (/^[وف]/.test(token) && token.length > 2) candidates.push(token.slice(1)); // one leading conjunction
+  return candidates.some((t) =>
+    AR_FIRST_PERSON_FORMS.has(t) ||
+    (t.length >= 4 && t.endsWith('ني') && !t.startsWith('ال') && !AR_NI_NOT_ME.has(t))); // object "me": كلمني، خبرني، عطني
+}
+
+// ── Turkish owner first person ─────────────────────────────────────────────
 /** Turkish owner first-person pronouns. "ben" counts only in Turkish text (it is also an English name). */
-const TR_FIRST_PERSON = new Set(['beni', 'bana', 'benim', 'benimle', 'bende', 'benden', 'kendim', 'kendime', 'kendimi']);
+const TR_FIRST_PERSON = new Set(['beni', 'bana', 'benim', 'benimle', 'bende', 'benden', 'bence', 'kendim', 'kendime', 'kendimi']);
+/** First-person singular endings specific enough to count in any text. */
+const TR_SPECIFIC_SUFFIXES = /(?:[ıiuü]yorum|acağım|eceğim|acagim|ecegim|mışım|mişim|muşum|müşüm|malıyım|meliyim|[dt][ae]y[ıi]m)$/;
+/** Broader first-person singular endings (past, aorist, copula): only in Turkish text. */
+const TR_TURKISH_ONLY_SUFFIXES = /(?:dım|dim|dum|düm|tım|tim|tum|tüm|rım|rim|rum|rüm|yım|yim|yum|yüm)$/;
+/** Nouns that merely end like a first-person form. */
+const TR_SUFFIX_NOT_ME = new Set(['yorum', 'yardım', 'yardim', 'durum', 'forum', 'kurum', 'sürüm', 'dürüm', 'ürüm', 'kılım', 'program',
+  'yarım', 'yarim', 'giyim', 'deneyim', 'kaldırım']);
+/** "My <noun>" — common possessives; also counted with a case ending (annemde, odama, evimden). */
+const TR_MY_NOUNS = new Set(['annem', 'babam', 'eşim', 'esim', 'kocam', 'karım', 'kızım', 'oğlum', 'evim', 'odam', 'arabam',
+  'telefonum', 'çantam', 'anahtarım', 'param', 'işim', 'ofisim', 'adresim', 'numaram']);
+const TR_CASE_ENDINGS = ['', 'a', 'e', 'ı', 'i', 'u', 'ü', 'da', 'de', 'dan', 'den', 'la', 'le', 'ın', 'in', 'un', 'ün', 'ya', 'ye', 'yı', 'yi'];
 const TR_SIGNAL = /[çğışöüİ]/i;
-const TR_FUNCTION_WORDS = new Set(['ve', 'bir', 'bu', 'için', 'icin', 'ile', 'değil', 'degil', 'ama', 'çok', 'cok', 'lütfen', 'lutfen', 'ara', 'söyle', 'soyle']);
+/** Common Turkish words (incl. ASCII-typed forms, no English collisions): one is enough to treat the text as Turkish. */
+const TR_FUNCTION_WORDS = new Set(['ve', 'bir', 'bu', 'için', 'icin', 'ile', 'değil', 'degil', 'ama', 'çok', 'cok', 'lütfen', 'lutfen', 'ara', 'söyle', 'soyle',
+  'tamam', 'şimdi', 'simdi', 'yarın', 'yarin', 'bugün', 'bugun', 'sonra', 'hemen', 'nerede', 'neden', 'nasıl', 'nasil', 'merhaba', 'abi', 'abla', 'koy', 'getir', 'evde']);
 
 const ADVERBS = new Set(['really', 'also', 'just', 'still', 'already', 'never', 'always', 'only', 'actually', 'definitely',
   'honestly', 'kindly', 'truly', 'simply', 'probably', 'usually', 'often', 'sometimes', 'certainly', 'personally',
@@ -168,6 +227,8 @@ function annotate(tokens) {
       else if (ch === '”') inDouble = false;
       else if (ch === '‘') inSingle = true;
       else if (ch === '’') inSingle = false;
+      else if (ch === '«') inDouble = true;
+      else if (ch === '»') inDouble = false;
     }
     if (/[.!?]/.test(t.text) && (/\s/.test(t.text) || i === tokens.length - 1)) {
       const prev = tokens[i - 1];
@@ -187,9 +248,30 @@ function wordIndexes(tokens) {
   return tokens.map((t, i) => (t.isWord ? i : -1)).filter((i) => i >= 0);
 }
 
+function isTurkishMyNoun(w) {
+  for (const noun of TR_MY_NOUNS) {
+    if (w.startsWith(noun) && TR_CASE_ENDINGS.includes(w.slice(noun.length))) return true;
+  }
+  return false;
+}
+
 function isTurkishText(words, tokens) {
-  if (words.some((i) => TR_SIGNAL.test(tokens[i].text))) return true;
-  return words.filter((i) => TR_FUNCTION_WORDS.has(tokens[i].lower)).length >= 1 && words.some((i) => tokens[i].lower === 'ben');
+  return words.some((i) => {
+    const w = tokens[i].text.toLocaleLowerCase('tr');
+    return TR_SIGNAL.test(tokens[i].text) || TR_FUNCTION_WORDS.has(w) || TR_FIRST_PERSON.has(w) || isTurkishMyNoun(w) ||
+      (TR_SPECIFIC_SUFFIXES.test(w) && !TR_SUFFIX_NOT_ME.has(w));
+  });
+}
+
+/** True when one Turkish (Latin-script) token is an owner first-person form. */
+function turkishFirstPerson(text, turkish) {
+  const w = text.toLocaleLowerCase('tr');
+  if (TR_FIRST_PERSON.has(w) || (turkish && w === 'ben')) return true;
+  if (TR_SUFFIX_NOT_ME.has(w)) return false;
+  if (isTurkishMyNoun(w)) return true;
+  if (TR_SPECIFIC_SUFFIXES.test(w) && w.length >= 6) return true;
+  if (!turkish) return false;
+  return TR_TURKISH_ONLY_SUFFIXES.test(w) && w.length >= 5;
 }
 
 function thirdPersonForm(word) {
@@ -234,12 +316,15 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     const t = tokens[i];
     if (t.quoted) continue;
     if (ARABIC.test(t.text)) {
-      const n = normalizeArabic(t.text);
-      const bare = /^[وف]/.test(n) && AR_FIRST_PERSON.has(n.slice(1)) ? n.slice(1) : n;
-      if (AR_FIRST_PERSON.has(bare)) return fail('arabic_owner_first_person');
-    } else if (TR_FIRST_PERSON.has(t.lower) || (turkish && t.lower === 'ben')) {
+      if (arabicFirstPerson(normalizeArabic(t.text))) return fail('arabic_owner_first_person');
+    } else if (turkishFirstPerson(t.text, turkish)) {
       return fail('turkish_owner_first_person');
     }
+  }
+  // A stored task record in a language the boundary cannot render is never
+  // quoted: its perspective cannot be verified, so the follow-up stays neutral.
+  if (voice === 'task_record' && (language.includes('ar') || language.includes('tr'))) {
+    return fail('unverifiable_language_in_task_record');
   }
 
   if (voice === 'task_record' && words.some((i) => !tokens[i].quoted && EN_SECOND_PERSON.has(tokens[i].lower))) {

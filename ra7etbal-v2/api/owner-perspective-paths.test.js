@@ -103,7 +103,8 @@ describe('Follow-up and no-response re-ask — owner perspective of the stored t
 
   it('follow-up fails closed to a neutral line that does not quote an unresolvable task', () => {
     // Includes the retired rule's own example: "you" in a stored record is ambiguous.
-    for (const description of ['I did it myself', 'Grace said I would call back', 'اتصلي فيني', 'Call me and tell her the plan', 'text you in one minute']) {
+    for (const description of ['I did it myself', 'Grace said I would call back', 'اتصلي فيني', 'Call me and tell her the plan', 'text you in one minute',
+      'بروح السوق', 'الغدا جاهز', 'Eve geliyorum', 'Akşam yemeği hazır']) {
       expect(buildFollowUpMessageText({ description, ownerName: 'Sana', assignedTo: 'Grace' }), description).toBe('Following up on the task Sana sent you.');
     }
   });

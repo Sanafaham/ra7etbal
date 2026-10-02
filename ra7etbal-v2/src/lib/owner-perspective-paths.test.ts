@@ -64,7 +64,7 @@ describe("Direct message boundary (Talk and Type converge here)", () => {
   });
 
   it("fails closed: an unresolvable owner reference creates no message row", async () => {
-    for (const input of ["Grace said I would call back.", "I did it myself.", "اتصلي فيني", "Beni ara lütfen"]) {
+    for (const input of ["Grace said I would call back.", "I did it myself.", "اتصلي فيني", "Beni ara lütfen", "بروح السوق بعدين", "Eve geliyorum"]) {
       const { createMessageFn, promise } = create(input);
       await expect(promise, input).rejects.toMatchObject({ code: "owner_perspective_unresolved" });
       expect(createMessageFn).not.toHaveBeenCalled();

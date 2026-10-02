@@ -245,26 +245,121 @@ describe("owner perspective — task-record voice (stored descriptions quoted by
   });
 });
 
-describe("owner perspective — Arabic and Turkish (detected, never rendered: fail closed)", () => {
-  it("Arabic owner first person fails closed (V-AR7 / V-AR9 forms)", () => {
-    expect(render("اتصلي فيني")).toBe(NEEDS("arabic_owner_first_person"));
-    expect(render("قول للوليا إني أبغاها تتصل فيني")).toBe(NEEDS("arabic_owner_first_person"));
-    expect(render("وأنا جاي")).toBe(NEEDS("arabic_owner_first_person"));
+describe("owner perspective — Arabic (detected, never rendered: fail closed)", () => {
+  // Explicit first-person markers (already covered before this slice).
+  it.each(["اتصلي فيني", "قول للوليا إني أبغاها تتصل فيني", "وأنا جاي"])("explicit marker fails closed: %s", (t) => {
+    expect(render(t)).toBe(NEEDS("arabic_owner_first_person"));
   });
-  it("Arabic with the owner named is unchanged; 'اللي' and 'لي' are not owner markers", () => {
-    expect(render("اتصلي على سنا")).toBe("اتصلي على سنا");
-    expect(render("اللي في المطبخ")).toBe("اللي في المطبخ");
+  // Owner first person carried only by the verb form, an object suffix or a
+  // possessive — the gap this slice closes.
+  it.each([
+    "بروح السوق بعدين",      // future first person (ب + stem)
+    "باتصل فيك الحين",
+    "ابغاك تتصل علي",        // first-person verb + object suffix
+    "ابيك تجيب الاغراض",
+    "اكلمك بعدين",
+    "أحتاج المفاتيح",        // first-person present
+    "أرجو تنظيف المطبخ",     // "I request" is still the owner speaking
+    "كلمني لما توصل",        // object "me"
+    "خبرني اذا خلصت",
+    "جيبه لي",
+    "رحت البيت",             // I/you past (not third-person feminine)
+    "جيت متأخرة",
+    "حطيه في غرفتي",         // my-possessive
+    "سيارتي برا",
+  ])("verb/suffix-only first person fails closed: %s", (t) => {
+    expect(render(t)).toBe(NEEDS("arabic_owner_first_person"));
   });
-  it("Turkish owner first person fails closed; 'Ben' as an English name does not", () => {
-    expect(render("Beni ara lütfen")).toBe(NEEDS("turkish_owner_first_person"));
-    expect(render("Ben eve geliyorum ve çok yorgunum")).toBe(NEEDS("turkish_owner_first_person"));
-    expect(render("Bana haber ver")).toBe(NEEDS("turkish_owner_first_person"));
-    expect(render("Ben will drive you.")).toBe("Ben will drive you.");
-    expect(render("Lütfen Sana'yı ara")).toBe("Lütfen Sana'yı ara");
+  // Negative controls: imperatives that look like first-person forms,
+  // third-person and owner-named text, and nouns ending like "me".
+  it.each([
+    "الغدا جاهز",
+    "تعالي بكرة الساعة ٥",
+    "سنا تبغاك تتصل عليها",
+    "اتصل على سنا",
+    "ارسل الصور لسنا",
+    "انتظر عند الباب",
+    "اغسل السيارة",
+    "اعرف كم السعر",
+    "اوصل الاغراض للبيت",
+    "سنا وصلت البيت",
+    "اللي في المطبخ",
+    "يعني بكرة",
+    "الثاني على اليمين",
+    "أحمد جاي",
+    "التوصيل مجاني",
+  ])("negative control passes unchanged: %s", (t) => {
+    expect(render(t)).toBe(t);
   });
-  it("mixed English/Arabic: English owner references render; an Arabic owner marker fails the whole text closed", () => {
+  it("quoted Arabic first person is reported speech and is not treated as the owner", () => {
+    expect(render("Tell her «بروح السوق»")).toBe("Tell her «بروح السوق»");
+    expect(render('He wrote "ابغاك تجي" yesterday')).toBe('He wrote "ابغاك تجي" yesterday');
+  });
+});
+
+describe("owner perspective — Turkish (detected, never rendered: fail closed)", () => {
+  it.each(["Beni ara lütfen", "Bana haber ver", "Ben eve geliyorum ve çok yorgunum"])("explicit marker fails closed: %s", (t) => {
+    expect(render(t)).toBe(NEEDS("turkish_owner_first_person"));
+  });
+  // First person carried only by a verb suffix or possessive — the gap this slice closes.
+  it.each([
+    "Eve geliyorum",          // -yorum, present continuous
+    "geliyorum",
+    "Yarın geleceğim",        // -eceğim, future
+    "Geç kaldım",             // -dım, past
+    "Biraz geç kalmışım",     // -mışım, reported past
+    "Gitmeliyim",             // -meliyim, necessity
+    "Hazırım",                // -ım, "I am ready"
+    "Teşekkür ederim",        // "I thank" is still the owner speaking
+    "Evdeyim",                // -deyim, "I am at home"
+    "Yoldayim",               // ASCII-typed
+    "hazirim, simdi geliyorum",
+    "Iyiyim abi",
+    "Annem geliyor",          // my-possessive
+    "Araba annemde",          // my-possessive + case ending
+    "Odama koy",
+    "Arabami getir",
+  ])("suffix-only first person fails closed: %s", (t) => {
+    expect(render(t)).toBe(NEEDS("turkish_owner_first_person"));
+  });
+  it.each([
+    "Akşam yemeği hazır",
+    "Tamam",
+    "Lütfen kapıyı kapat",
+    "Yardım et lütfen",
+    "Durum nedir",
+    "Yorum yap",
+    "Yarım saat sonra gel",
+    "Program yarın",
+    "Lütfen Sana'yı ara",
+    "Sana bir mesaj var",
+  ])("negative control passes unchanged: %s", (t) => {
+    expect(render(t)).toBe(t);
+  });
+  it.each(["Ben will drive you.", "Dim the lights.", "The victim of an interim plan.", "Tim is here.", "Park the car at the deli.", "Give the parameter."])(
+    "English words that end like Turkish first person are not flagged: %s", (t) => {
+      expect(render(t)).toBe(t);
+    });
+  it("quoted Turkish first person is reported speech and is not treated as the owner", () => {
+    expect(render('She said "geliyorum" earlier')).toBe('She said "geliyorum" earlier');
+  });
+});
+
+describe("owner perspective — mixed language", () => {
+  it("English owner references render when no Arabic/Turkish owner first person is present", () => {
     expect(render("Ask Ghulam يغسل السيارة before 5 and tell me")).toBe("Ask Ghulam يغسل السيارة before 5 and tell Sana");
-    expect(render("call me, اتصل فيني")).toBe(NEEDS("arabic_owner_first_person"));
+  });
+  it.each(["call me, اتصل فيني", "Ask Ghulam to wash the car, بروح بعدين", "Call me, ابغاك تجي", "Please tell Grace geliyorum"])(
+    "unresolved Arabic/Turkish first person inside English text fails the whole text closed: %s", (t) => {
+      expect(render(t)).toMatch(/^NEEDS_COMPOSITION:(arabic|turkish)_owner_first_person$/);
+    });
+});
+
+describe("owner perspective — stored task records in Arabic or Turkish", () => {
+  it("are never quoted, even without a detected marker (perspective cannot be verified)", () => {
+    for (const t of ["الغدا جاهز", "Akşam yemeği hazır"]) {
+      expect(render(t, "Sana", "Grace", "task_record")).toBe(NEEDS("unverifiable_language_in_task_record"));
+    }
   });
 });
 
