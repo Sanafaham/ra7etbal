@@ -365,7 +365,9 @@
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
-        "api/send-whatsapp-task.js"
+        "api/send-whatsapp-task.js",
+        "api/_automation-recipient-text.js",
+        "shared/owner-perspective.js"
       ],
       "db": {
         "tables": [
