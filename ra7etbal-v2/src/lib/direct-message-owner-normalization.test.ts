@@ -547,6 +547,27 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
   });
 
+  it.each([
+    ["I need you to pick up the kids and bring them home.", "Sana needs you to pick up the kids and bring them home."],
+    ["I want you to wait and call me later.", "Sana wants you to wait and call Sana later."],
+    ["I need you to come at 5 and wait outside.", "Sana needs you to come at 5 and wait outside."],
+    ["I want you to clean the kitchen and take out the trash.", "Sana wants you to clean the kitchen and take out the trash."],
+    ["I would like her to call me and tell me.", "Sana would like you to call Sana and tell Sana."],
+    ["I am late, please start and call me.", "Sana is late, please start and call Sana."],
+    ["I am late and you need to start dinner.", "Sana is late and you need to start dinner."],
+  ])("M-1b (final review): %j — verbs after 'to' or in another clause are not the owner's; renders %j", (input, expected) => {
+    expect(render(input, "Sana", input.includes("her") ? "Loulya" : "Grace")).toBe(expected);
+  });
+
+  it("M-1b: task text keeps the recipient's coordinated verbs", () => {
+    expect(render("I need you to buy milk and bring it home.", "Sana", "Grace", "task_text")).toBe("Sana needs you to buy milk and bring it home.");
+  });
+
+  it.each(["I love you but hate the noise.", "I know it and accept it.", "I need it and want it now."])(
+    "M-1: %j — a second owner verb in the owner's own clause still fails closed", (input) => {
+      expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
+    });
+
   it("M-1: coordination that needs no second agreement still renders", () => {
     expect(render("I need milk and bread.")).toBe("Sana needs milk and bread.");
     expect(render("I'll come and see you.")).toBe("Sana will come and see you.");

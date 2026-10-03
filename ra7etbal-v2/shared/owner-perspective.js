@@ -608,13 +608,25 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
   // "I love you and miss you": only the first verb would be re-agreed, so a
   // second owner verb after and/or/but that would also need to change fails
   // closed rather than sending "Sana loves you and miss you".
-  const coordinatedVerbNeedsAgreement = (i) => words.some((j, k) => {
-    if (j <= i || tokens[j].sentence !== tokens[i].sentence || !['and', 'or', 'but'].includes(tokens[j].lower)) return false;
-    const next = words.slice(k + 1).find((n) => tokens[n].sentence === tokens[j].sentence && !ADVERBS.has(tokens[n].lower));
-    if (next === undefined) return false;
-    const form = thirdPersonForm(tokens[next].lower);
-    return form !== null && form !== tokens[next].lower;
-  });
+  // Only the owner's own clause counts: scanning stops at "to" (the verbs
+  // after it belong to someone else: "I need you to pick up the kids and bring
+  // them home"), at a comma/semicolon/colon, or at a subordinate clause.
+  const coordinatedVerbNeedsAgreement = (i) => {
+    let prev = i;
+    for (const j of words.filter((x) => x > i && tokens[x].sentence === tokens[i].sentence)) {
+      if (/[,;:]/.test(tokens.slice(prev + 1, j).map((t) => t.text).join(''))) return false;
+      prev = j;
+      const w = tokens[j].lower;
+      const coordinator = w === 'and' || w === 'or' || w === 'but';
+      if (!coordinator && (w === 'to' || SUBORDINATORS.has(w))) return false;
+      if (!coordinator) continue;
+      const next = words.find((n) => n > j && tokens[n].sentence === tokens[j].sentence && !ADVERBS.has(tokens[n].lower));
+      if (next === undefined) return false;
+      const form = thirdPersonForm(tokens[next].lower);
+      if (form !== null && form !== tokens[next].lower) return true;
+    }
+    return false;
+  };
   for (const i of ownerRefs) {
     const t = tokens[i];
     const w = t.lower;
