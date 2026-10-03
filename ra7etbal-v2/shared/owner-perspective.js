@@ -605,6 +605,16 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
   const possessive = `${owner}'s`;
   const nextVerb = (i) => words.find((j) => j > i && !ADVERBS.has(tokens[j].lower) && tokens[j].sentence === tokens[i].sentence);
 
+  // "I love you and miss you": only the first verb would be re-agreed, so a
+  // second owner verb after and/or/but that would also need to change fails
+  // closed rather than sending "Sana loves you and miss you".
+  const coordinatedVerbNeedsAgreement = (i) => words.some((j, k) => {
+    if (j <= i || tokens[j].sentence !== tokens[i].sentence || !['and', 'or', 'but'].includes(tokens[j].lower)) return false;
+    const next = words.slice(k + 1).find((n) => tokens[n].sentence === tokens[j].sentence && !ADVERBS.has(tokens[n].lower));
+    if (next === undefined) return false;
+    const form = thirdPersonForm(tokens[next].lower);
+    return form !== null && form !== tokens[next].lower;
+  });
   for (const i of ownerRefs) {
     const t = tokens[i];
     const w = t.lower;
@@ -626,6 +636,7 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
       out[i] = t.sentenceStart ? `${name}'s` : possessive;
       continue;
     }
+    if ((w === 'i' || w === "i'm" || w === "i've") && coordinatedVerbNeedsAgreement(i)) return fail('unresolved_owner_verb');
     if (w === "i'm") { out[i] = `${name} is`; continue; }
     if (w === "i've") { out[i] = `${name} has`; continue; }
     if (w === "i'll") { out[i] = `${name} will`; continue; }

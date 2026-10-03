@@ -537,6 +537,22 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
   });
 
+  it.each([
+    "I love you and miss you.", // was "Sana loves you and miss you."
+    "I am home and need dinner.", // was "Sana is home and need dinner."
+    "I don't know and don't care.", // was "Sana doesn't know and don't care."
+    "I get home at 5 and leave at 6.", // was "…and leave at 6."
+    "I'm home and need dinner.",
+  ])("M-1 (third review): %j — a second owner verb after and/or/but that needs agreement fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
+  });
+
+  it("M-1: coordination that needs no second agreement still renders", () => {
+    expect(render("I need milk and bread.")).toBe("Sana needs milk and bread.");
+    expect(render("I'll come and see you.")).toBe("Sana will come and see you.");
+    expect(render("I miss you and Loulya.")).toBe("Sana misses you and Loulya.");
+  });
+
   it("M2: one Turkish-looking name in clearly English text does not make it Turkish", () => {
     expect(render("Please give the keys to Gökhan.")).toBe("Please give the keys to Gökhan.");
     const composed = resolveOwnerPerspective("Sana is running late tonight.", {
