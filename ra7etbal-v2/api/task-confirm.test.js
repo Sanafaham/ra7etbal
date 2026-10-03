@@ -6,6 +6,11 @@ import webpush from 'web-push';
 import { verifyReminderReceipt } from './_reminder-delivery.js';
 import qstashReminderHandler from './qstash-reminder.js';
 
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
+
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
 // Christopher substitution / alternative-selection defect fix: mocked
