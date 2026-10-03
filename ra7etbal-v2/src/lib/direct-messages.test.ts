@@ -411,18 +411,32 @@ describe("direct message boundary — owner-reference normalization", () => {
     expect(message.content).toBe("call Sana now.");
   });
 
-  it("is unaffected when no owner name is available — behaves exactly as before", async () => {
+  // Retired pin: "no owner name → send 'call me now.' unchanged" delivered
+  // raw owner first person to the recipient — the defect itself. Under the
+  // owner-perspective contract an owner reference with no owner name to
+  // render it fails closed: nothing is created or sent.
+  it("fails closed when an owner reference cannot be rendered because no owner name is available", async () => {
     const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
-    await createDirectMessageRecord({
+    await expect(createDirectMessageRecord({
       source: "test",
       userId: "user-1",
       recipient: "Grace",
       messageText: "call me now.",
       createMessageFn,
+    })).rejects.toMatchObject({ code: "owner_perspective_unresolved" });
+    expect(createMessageFn).not.toHaveBeenCalled();
+  });
+
+  it("still sends text with no owner reference unchanged when no owner name is available", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    await createDirectMessageRecord({
+      source: "test",
+      userId: "user-1",
+      recipient: "Grace",
+      messageText: "The car is outside.",
+      createMessageFn,
     });
-    expect(createMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ content: "call me now." }),
-    );
+    expect(createMessageFn).toHaveBeenCalledWith(expect.objectContaining({ content: "The car is outside." }));
   });
 });
 

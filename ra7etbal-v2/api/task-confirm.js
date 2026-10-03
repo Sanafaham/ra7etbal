@@ -60,7 +60,8 @@ import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailur
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { NO_RESPONSE_REVIEW_TYPE, executeNoResponseChoice } from './_no-response-handoff.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
-import { buildCanonicalStaffDecisionMessage } from './_staff-decision-message.js';
+import { buildCanonicalStaffDecisionMessage, resolveStaffAnswerText, savedAnswerUndeliverableMessage, withOwnerNameWhenNeeded } from './_staff-decision-message.js';
+import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED } from '../shared/owner-perspective.js';
 import {
   loadCanonicalConfirmedTask,
   synchronizeAutomationRunFromConfirmedTask,
@@ -988,6 +989,22 @@ async function handleOwnerDecision(req, res) {
       return res.status(403).json({ error: 'Not authorized for this task.' });
     }
 
+    // Owner perspective of a custom instruction is resolved BEFORE the
+    // decision is claimed: an unresolvable "I"/"me" is refused with a
+    // rephrase request and nothing is saved or sent.
+    let customInstructionOwnerName = null;
+    if (decision === 'custom_instruction') {
+      try {
+        ({ ownerName: customInstructionOwnerName } = await withOwnerNameWhenNeeded(
+          (ownerName) => resolveStaffAnswerText(instructionText, { ownerName, staffName: task.assigned_to }),
+          () => fetchOwnerDisplayName(supabaseUrl, serviceKey, userId),
+        ));
+      } catch (err) {
+        if (!isOwnerPerspectiveError(err)) throw err;
+        return res.status(422).json({ error: err.message, code: OWNER_PERSPECTIVE_UNRESOLVED });
+      }
+    }
+
     const claim = await callRpcSingle(supabaseUrl, serviceKey, 'claim_substitute_decision', {
       p_task_id: taskId,
       p_user_id: userId,
@@ -1022,7 +1039,9 @@ async function handleOwnerDecision(req, res) {
     // never receives Quality Intelligence reasoning, review notes, or any
     // other synthesized/internal text; only the owner's own instructionText
     // (for custom_instruction) or a fixed operational sentence.
-    const messageContent = buildCanonicalStaffDecisionMessage({ decision, instructionText });
+    const messageContent = buildCanonicalStaffDecisionMessage({
+      decision, instructionText, ownerName: customInstructionOwnerName, staffName: task.assigned_to,
+    });
     const workerConfirmationUrl = buildFreshWorkerConfirmationUrl(task.id || taskId);
 
     const reserveFn = decision === 'rejected_alternative' ? 'reserve_rejected_alternative' : 'reserve_custom_instruction';
@@ -1361,6 +1380,9 @@ async function handleEscalationAnswer(req, res) {
     });
     if (result.kind === 'rpc_error') return respondRpcError(res, result.error);
     if (result.kind === 'validation_error') return res.status(400).json({ error: result.message });
+    if (result.kind === OWNER_PERSPECTIVE_UNRESOLVED) {
+      return res.status(422).json({ error: result.message, code: OWNER_PERSPECTIVE_UNRESOLVED });
+    }
     if (result.kind === 'config_error') return res.status(500).json({ error: result.message });
     if (result.kind === 'send_error') return res.status(502).json({ error: 'Could not send the message. Please retry.' });
     return res.status(200).json({
@@ -1401,6 +1423,9 @@ async function failEscalationDeliveryLease(supabaseUrl, serviceKey, escalationId
  * callers translate `kind` into whatever response shape (HTTP JSON, plain
  * return value, etc.) fits their own context:
  *   { kind: 'validation_error', message }         — bad decision/instructionText (open-escalation path only)
+ *   { kind: 'owner_perspective_unresolved', message, persisted } — the answer's owner perspective cannot be
+ *                                                   resolved safely; nothing was sent. persisted=false when it
+ *                                                   was refused before the answer was saved.
  *   { kind: 'rpc_error', error }                  — answer/claim RPC failed; caller should use respondRpcError-equivalent handling
  *   { kind: 'config_error', message }              — WhatsApp not configured, or the stored reply text is empty
  *   { kind: 'send_error' }                         — Meta rejected the send or the network call failed
@@ -1452,6 +1477,22 @@ export async function resolveAndDeliverEscalationAnswer({
         : decision === 'approved'
         ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
         : instructionText;
+
+    // The exact staff-facing text is resolved through the owner-perspective
+    // boundary BEFORE the answer is saved: an unresolvable answer is refused
+    // with a rephrase request, and nothing is saved or sent.
+    try {
+      await withOwnerNameWhenNeeded(
+        (ownerName) => buildStaffAnswerMessageText({
+          decision, replyText: submittedReplyText, staffName: staffMessage.staff_name, ownerName,
+          isTaskBasedDecision: Boolean(escalationTaskId), confirmationUrl: null,
+        }),
+        () => fetchOwnerDisplayName(supabaseUrl, serviceKey, userId),
+      );
+    } catch (err) {
+      if (!isOwnerPerspectiveError(err)) throw err;
+      return { kind: OWNER_PERSPECTIVE_UNRESOLVED, message: err.message, reason: err.reason, persisted: false };
+    }
 
     const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
       p_deep_link_token: deepLinkToken,
@@ -1554,13 +1595,30 @@ export async function resolveAndDeliverEscalationAnswer({
   const confirmationUrl = isTaskBasedDecision
     ? buildFreshWorkerConfirmationUrl(escalationTaskId)
     : null;
-  const recipientBoundReply = normalizeOwnerReplyForRecipient(
-    claimResult.reply_text,
-    staffMessage.staff_name,
-  );
-  const messageText = isTaskBasedDecision
-    ? buildCanonicalStaffDecisionMessage({ decision, instructionText: recipientBoundReply, confirmationUrl })
-    : recipientBoundReply;
+  let messageText;
+  try {
+    ({ text: messageText } = await withOwnerNameWhenNeeded(
+      (ownerName) => buildStaffAnswerMessageText({
+        decision, replyText: claimResult.reply_text, staffName: staffMessage.staff_name, ownerName,
+        isTaskBasedDecision, confirmationUrl,
+      }),
+      () => fetchOwnerDisplayName(supabaseUrl, serviceKey, userId),
+    ));
+  } catch (err) {
+    if (!isOwnerPerspectiveError(err)) throw err;
+    // Only reachable for an answer saved before this boundary existed. The
+    // saved answer is first-write-wins, so asking the owner to rephrase would
+    // be untrue: say it was not sent and cannot be replaced here.
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, OWNER_PERSPECTIVE_UNRESOLVED,
+    );
+    return {
+      kind: OWNER_PERSPECTIVE_UNRESOLVED,
+      message: savedAnswerUndeliverableMessage(staffMessage.staff_name),
+      reason: err.reason,
+      persisted: true,
+    };
+  }
   if (!messageText) {
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
@@ -1670,6 +1728,37 @@ export function derivePersistedEscalationDecision({
     return 'rejected_alternative';
   }
   return 'custom_instruction';
+}
+
+/**
+ * The exact text a staff member receives for an owner's answer. Recipient
+ * certainty ("he can" → "you can") comes from normalizeOwnerReplyForRecipient;
+ * owner perspective then goes through the single shared boundary — for the
+ * canonical "From the owner:" builder and the plain staff_escalation reply
+ * alike. Throws OwnerPerspectiveError when it cannot be resolved safely.
+ */
+export function buildStaffAnswerMessageText({ decision, replyText, staffName, ownerName, isTaskBasedDecision, confirmationUrl }) {
+  const recipientBoundReply = normalizeOwnerReplyForRecipient(replyText, staffName);
+  // Approve/Reject on an escalation: the text is built by code around a quote
+  // of the staff member's own words and holds no owner words. Never read it as
+  // the owner's speech (a stray " inside their words could expose their "I").
+  if (!isTaskBasedDecision && (decision === 'approved' || decision === 'rejected')) return recipientBoundReply;
+  return isTaskBasedDecision
+    ? buildCanonicalStaffDecisionMessage({ decision, instructionText: recipientBoundReply, confirmationUrl, ownerName, staffName })
+    : resolveStaffAnswerText(recipientBoundReply, { ownerName, staffName });
+}
+
+export async function fetchOwnerDisplayName(supabaseUrl, serviceKey, userId) {
+  try {
+    const response = await fetch(
+      supabaseUrl + '/rest/v1/profiles?id=eq.' + encodeURIComponent(userId) + '&select=display_name&limit=1',
+      { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey } },
+    );
+    const rows = await response.json().catch(() => []);
+    return String((Array.isArray(rows) && rows[0]?.display_name) || '').trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 export function normalizeOwnerReplyForRecipient(replyText, staffName) {

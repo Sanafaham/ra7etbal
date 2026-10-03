@@ -4,6 +4,7 @@ import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./p
 import { composeMergedMessage } from "./ai/compose-message";
 import { scheduleEscalationMessages } from "./qstash-escalation";
 import { createTask } from "./tasks";
+import { renderOwnerPerspective, resolveOwnerPerspective, type DeclaredOwnerPerspective } from "./direct-message-owner-normalization";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
@@ -39,6 +40,12 @@ export interface CreateDelegationTaskAndMessageInput {
   scheduleEscalation?: boolean;
   createCompanionMessage?: boolean;
   onEscalationError?: (err: unknown, task: Task) => void;
+  /**
+   * Set only when taskText/note came from the extraction model call, with the
+   * perspective status that call declared. Absent = the owner's own words on a
+   * deterministic path. See resolveDelegationTaskText.
+   */
+  ownerPerspective?: DeclaredOwnerPerspective;
 }
 
 export interface CreateDelegationTaskAndMessageResult {
@@ -48,13 +55,27 @@ export interface CreateDelegationTaskAndMessageResult {
   confirmationUrl: string;
 }
 
-export function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
-  const name = ownerName?.trim() || "the sender";
-  return text
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name);
+/**
+ * The task text as the assignee should read it, through the single
+ * owner-perspective contract (shared/owner-perspective.js). The owner's own
+ * words (no declared status) use task-text voice: the owner's "I/me/my"
+ * become the owner, with correct grammar; "you" is the assignee and stays;
+ * third parties stay third parties. Text the extraction model already
+ * composed (declared status present) is verified in "composed" voice and
+ * never rewritten; anything but "rendered" fails closed. Throws
+ * OwnerPerspectiveError — nothing is created or sent — when the perspective
+ * cannot be resolved safely.
+ */
+export function resolveDelegationTaskText(
+  taskText: string,
+  assigneeName: string,
+  ownerName?: string | null,
+  declared?: DeclaredOwnerPerspective,
+): string {
+  const owner = ownerName?.trim() || "the sender";
+  return renderOwnerPerspective(taskText, declared === undefined
+    ? { ownerName: owner, recipientName: assigneeName, voice: "task_text" }
+    : { ownerName: owner, recipientName: assigneeName, voice: "composed", declared });
 }
 
 export async function buildDelegationMessageContent({
@@ -63,32 +84,39 @@ export async function buildDelegationMessageContent({
   personalNote,
   personNotes,
   ownerName,
+  ownerPerspective,
 }: {
   personName: string;
   taskText: string;
   personalNote?: string | null;
   personNotes?: string | null;
   ownerName?: string | null;
+  ownerPerspective?: DeclaredOwnerPerspective;
 }): Promise<string> {
-  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName);
+  const resolvedTask = resolveDelegationTaskText(taskText, personName, ownerName, ownerPerspective);
+  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName, personName, ownerPerspective);
 
   if (normalizedNote) {
     const merged = await composeMergedMessage({
       personName,
-      taskText,
+      taskText: resolvedTask,
       personalNote: normalizedNote,
       ownerName,
     });
-    if (merged) return merged;
+    if (merged) {
+      // The merge model call declares no perspective status, so its output is
+      // only accepted when the boundary finds nothing to resolve in it: both
+      // inputs were already verified, and any owner first person, recipient
+      // named as a third party, or unverifiable Arabic/Turkish in the merged
+      // text means the merge lost track of who is who. Otherwise the
+      // deterministic message below is built from the verified parts.
+      const checked = resolveOwnerPerspective(merged, { ownerName, recipientName: personName, voice: "owner_to_recipient" });
+      if (checked.status === "unchanged") return checked.text;
+    }
   }
 
   return injectPersonalNote(
-    stripClosingLine(
-      rewriteOwnerPronouns(
-        buildDelegationMessage({ personName, taskText, personNotes, ownerName }),
-        ownerName,
-      ),
-    ),
+    stripClosingLine(buildDelegationMessage({ personName, taskText: resolvedTask, personNotes, ownerName })),
     normalizedNote,
   );
 }
@@ -106,13 +134,16 @@ export async function createDelegationTaskAndMessage({
   scheduleEscalation = true,
   createCompanionMessage = true,
   onEscalationError,
+  ownerPerspective,
 }: CreateDelegationTaskAndMessageInput): Promise<CreateDelegationTaskAndMessageResult> {
   if (!userId) throw new Error("Not signed in.");
 
   const assigneeName = assignee.name.trim();
-  const description = taskText.trim();
   if (!assigneeName) throw new Error("Delegation assignee is required.");
-  if (!description) throw new Error("Delegation task text is required.");
+  if (!taskText.trim()) throw new Error("Delegation task text is required.");
+  // Stored as the assignee reads it, so the confirm page, the message and
+  // every later follow-up quote the same correctly-referenced task.
+  const description = resolveDelegationTaskText(taskText.trim(), assigneeName, ownerName, ownerPerspective);
 
   const id = taskId?.trim() || crypto.randomUUID();
   const confirmationUrl = `${CANONICAL_CONFIRMATION_ORIGIN}/confirm?task=${encodeURIComponent(id)}`;
@@ -122,6 +153,7 @@ export async function createDelegationTaskAndMessage({
     personalNote: note,
     personNotes: assignee.notes ?? null,
     ownerName,
+    ownerPerspective,
   });
 
   const task = await createTask({

@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../lib/delivery", () => ({ deliverTaskMessage: vi.fn() }));
+
+import { directMessageFailureResponse, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -59,8 +63,17 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
       "}\n    },\n    [],\n  );\n\n  // ------------------------------------------------------------------\n  // Client tool: save_city",
     );
 
-    expect(catchBlock).toContain("return `I couldn't send ${person.name} the message. Please try again.`;");
+    // Migrated pin (owner-perspective contract): the catch returns the shared
+    // failure reply, which is still exactly "I couldn't send <name> the
+    // message. Please try again." for every delivery/creation failure, and a
+    // request to rephrase only when the owner-perspective boundary refused to
+    // word the message. Either way nothing is reported as sent.
+    expect(catchBlock).toContain("return directMessageFailureResponse(err, person.name);");
     expect(catchBlock).not.toContain("recordDirectWhatsappSent");
+    expect(directMessageFailureResponse(new DirectMessageBoundaryError("deliver_message", "Meta 500"), "Grace"))
+      .toBe("I couldn't send Grace the message. Please try again.");
+    expect(directMessageFailureResponse(new Error("network down"), "Grace"))
+      .toBe("I couldn't send Grace the message. Please try again.");
   });
 
   it("does not add the direct WhatsApp duplicate guard to the follow-up path", () => {

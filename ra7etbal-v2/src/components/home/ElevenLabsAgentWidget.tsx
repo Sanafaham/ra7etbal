@@ -95,7 +95,7 @@ import {
   CANONICAL_CONFIRMATION_ORIGIN,
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
-import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
+import { createAndSendDirectMessage, directMessageFailureResponse, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
 import { interpretStaffInstruction } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
@@ -191,6 +191,7 @@ import { useAuthStore } from "../../stores/auth";
 import type { Person } from "../../types/person";
 import { usePeopleStore } from "../../stores/people";
 import { useProfileStore } from "../../stores/profile";
+import { resolveFollowUpRecipientText } from "../../lib/stored-recipient-text";
 import { useTasksStore } from "../../stores/tasks";
 import {
   clearTypedCarsonMessages,
@@ -885,11 +886,6 @@ function topicFromDescription(description: string): string {
 }
 
 /** Build the default follow-up message text from a task description. */
-function buildFollowUpText(description: string): string {
-  const topic = topicFromDescription(description);
-  return `Following up on ${topic}. Let me know when done.`;
-}
-
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -1946,6 +1942,7 @@ export default function ElevenLabsAgentWidget({
       // 4. Resolve message
       let messageText = message?.trim() ?? "";
       let topicLabel = messageText || "";
+      let followUpStoredDescription: string | null = null;
 
       const tasks = useTasksStore.getState().items;
       const openTasks = tasks.filter(
@@ -1967,7 +1964,7 @@ export default function ElevenLabsAgentWidget({
           return `I found more than one open item for ${person.name}: ${topics}. Ask the user which one to follow up on.`;
         }
         const singleTask = openTasks[0];
-        messageText = buildFollowUpText(singleTask.description);
+        followUpStoredDescription = singleTask.description;
         topicLabel = topicFromDescription(singleTask.description);
       } else {
         topicLabel = topicFromDescription(messageText);
@@ -1988,6 +1985,20 @@ export default function ElevenLabsAgentWidget({
 
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";
+
+      // 5. Owner perspective — the text the recipient will read goes through
+      // the shared boundary BEFORE anything is saved or sent. Model-supplied
+      // text is rendered or refused (never trusted); a stored task is quoted
+      // through the same builder the escalation cron uses (neutral line when
+      // it cannot be resolved).
+      const followUpText = resolveFollowUpRecipientText({
+        modelMessage: followUpStoredDescription === null ? messageText : null,
+        storedDescription: followUpStoredDescription,
+        ownerName: useProfileStore.getState().displayName ?? displayName ?? null,
+        recipientName: person.name,
+      });
+      if (!followUpText.ok) return followUpText.response;
+      messageText = followUpText.text;
 
       // 6. Create follow-up task row
       // confirmation_url is derived from a pre-generated UUID so it is set
@@ -2456,7 +2467,7 @@ export default function ElevenLabsAgentWidget({
             stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
             error: err instanceof Error ? err.message : String(err),
           });
-          return `I couldn't send ${person.name} the message. Please try again.`;
+          return directMessageFailureResponse(err, person.name);
         }
       }
 
@@ -3576,7 +3587,7 @@ export default function ElevenLabsAgentWidget({
           recipient: person.name,
           error: errMsg,
         });
-        return `I couldn't send ${person.name} the message. Please try again.`;
+        return directMessageFailureResponse(err, person.name);
       }
     },
     [],

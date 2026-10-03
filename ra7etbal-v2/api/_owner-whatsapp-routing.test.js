@@ -685,6 +685,35 @@ describe('authoritative quoted escalation routing', () => {
     );
   });
 
+  it('an answer whose owner perspective cannot be resolved sends nothing to staff, asks the owner to rephrase, and is terminal (never retried)', async () => {
+    const fetchMock = vi.fn();
+    stubQuoted(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    const clarification = "I didn't send anything to Christopher. I couldn't word it without risking who \"I\", \"me\" or \"her\" would refer to. Please say it again using names instead.";
+    mocks.resolve.mockResolvedValue({
+      kind: 'owner_perspective_unresolved', message: clarification, reason: 'reported_speech_first_person', persisted: false,
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ contextMessageId: 'wamid.owner-notification-2' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, route: 'quoted_escalation', reason: 'owner_perspective_unresolved' });
+    // The only WhatsApp send is the owner's own rephrase request — never "I saved your answer".
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMetaMessage.mock.calls[0][0].payload.text.body).toBe(clarification);
+    expect(mocks.updateCommand).toHaveBeenCalledWith(SUPABASE, KEY, expect.anything(), 'user-1', expect.objectContaining({
+      execution_status: 'terminal_failed',
+      execution_error: 'owner_perspective_unresolved:reported_speech_first_person',
+      acknowledgement_text: clarification,
+    }));
+    expect(mocks.callRpcSingle).not.toHaveBeenCalledWith(SUPABASE, KEY, 'fail_owner_whatsapp_reply', expect.anything());
+    expect(mocks.callRpcSingle).toHaveBeenCalledWith(SUPABASE, KEY, 'complete_owner_whatsapp_reply', expect.anything());
+  });
+
   it('owner acknowledgement failure is not described as sent and remains retryable', async () => {
     const fetchMock = vi.fn();
     stubQuoted(fetchMock);

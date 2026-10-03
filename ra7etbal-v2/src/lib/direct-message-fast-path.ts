@@ -1,7 +1,7 @@
-import { createAndSendDirectMessage, DirectMessageBoundaryError } from "./direct-messages";
+import { createAndSendDirectMessage, directMessageFailureResponse, DirectMessageBoundaryError } from "./direct-messages";
 import { deliverTaskMessage } from "./delivery";
 import { createMessage } from "./messages";
-import { normalizeFirstPersonForOwner } from "./direct-message-owner-normalization";
+import { ownerPerspectiveClarification, resolveOwnerPerspective } from "./direct-message-owner-normalization";
 import type { Person } from "../types/person";
 
 export type DirectMessageFastPathResult =
@@ -12,7 +12,7 @@ export type DirectMessageFastPathResult =
       response: string;
       recipientName?: string;
       messageText?: string;
-      reason?: "missing_person" | "missing_phone" | "missing_consent" | "delivery_failed";
+      reason?: "missing_person" | "missing_phone" | "missing_consent" | "delivery_failed" | "owner_perspective_unresolved";
     };
 
 interface DirectMessageFastPathContext {
@@ -88,12 +88,35 @@ export async function executeDirectMessageFastPath(
   const messageTextWithoutLeadingConnector = parsed.messageText.replace(/^to\s+/i, "");
 
   // Typed-only (see DirectMessageFastPathContext.normalizeOwnerReference):
-  // rewrite a leading first-person subject to the owner's name so typed and
-  // voice produce the same worker-facing message. The parser's own output
-  // contract is unchanged — this happens after parsing, before the send.
-  const messageText = context.normalizeOwnerReference
-    ? normalizeFirstPersonForOwner(messageTextWithoutLeadingConnector, context.displayName)
-    : messageTextWithoutLeadingConnector;
+  // resolve owner perspective here so typed shows the same worker-facing
+  // message voice will. Both channels then pass through the same boundary
+  // again in createDirectMessageRecord (idempotent: resolved text is returned
+  // unchanged). The parser's own output contract is unchanged.
+  let messageText = messageTextWithoutLeadingConnector;
+  if (context.normalizeOwnerReference) {
+    const perspective = resolveOwnerPerspective(messageTextWithoutLeadingConnector, {
+      ownerName: context.displayName,
+      recipientName: parsed.recipientName,
+      voice: "owner_to_recipient",
+      currentInstruction: input,
+    });
+    if (perspective.status === "needs_composition") {
+      console.warn("[fast_path_direct_message_blocked]", {
+        recipientName: parsed.recipientName,
+        reason: "owner_perspective_unresolved",
+        detail: perspective.reason,
+      });
+      return {
+        handled: true,
+        status: "blocked",
+        reason: "owner_perspective_unresolved",
+        recipientName: parsed.recipientName,
+        messageText,
+        response: ownerPerspectiveClarification(parsed.recipientName),
+      };
+    }
+    messageText = perspective.text;
+  }
 
   console.info("[fast_path_direct_message_detected]", {
     recipientName: parsed.recipientName,
@@ -158,6 +181,7 @@ export async function executeDirectMessageFastPath(
       messageText,
       phone: person.phone,
       ownerName: context.displayName ?? null,
+      ownerInstruction: input,
       createMessageFn,
       deliverTaskMessageFn,
     });
@@ -193,7 +217,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText,
-      response: `I couldn't send ${person.name} the message. Please try again.`,
+      response: directMessageFailureResponse(err, person.name),
     };
   }
 }

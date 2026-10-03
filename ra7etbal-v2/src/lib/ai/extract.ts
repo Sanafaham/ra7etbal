@@ -101,7 +101,8 @@ export async function extractItems(
   // of `tasks` (see todo-routing.ts).
   return {
     ...result,
-    extracted: applyTodoRouting(withNoteRouting),
+    // sourceText is attached by code, never taken from the model.
+    extracted: applyTodoRouting(withNoteRouting).map((item) => ({ ...item, sourceText: text })),
   };
 }
 
@@ -206,6 +207,8 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
     dueText,
     suggestedMessage,
     personalNote,
+    // Missing or invalid → "unclear": the shared boundary then fails closed.
+    ownerPerspective: v.ownerPerspective === "rendered" ? "rendered" : "unclear",
     needsPerson: v.needsPerson === true,
     needsClarification: v.needsClarification === true,
     clarificationQuestion:

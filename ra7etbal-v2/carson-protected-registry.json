@@ -23,7 +23,8 @@
         "api/_owner-command-executor.js"
       ],
       "shared_dependencies": [
-        "api/_owner-whatsapp-routing.js"
+        "api/_owner-whatsapp-routing.js",
+        "shared/owner-perspective.js"
       ],
       "db": {
         "tables": [
@@ -47,7 +48,10 @@
       "focused_tests": [
         "api/whatsapp-webhook.test.js",
         "api/_owner-whatsapp-routing.test.js",
-        "api/whatsapp-health-state-writer-authority.test.js"
+        "api/whatsapp-health-state-writer-authority.test.js",
+        "api/_owner-command-executor.test.js",
+        "api/_owner-command-executor.execution.test.js",
+        "api/owner-perspective-paths.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": false,
@@ -91,13 +95,15 @@
         "src/routes/TaskOnlyDecisionView.tsx",
         "src/lib/escalation-answer.ts",
         "api/_staff-decision-message.js",
-        "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
+        "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask",
+        "api/process-delegation-escalations.js:buildFollowUpMessageText"
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
         "api/_quality-review.js",
         "api/_staff-substitution-intent.js",
-        "api/_inbound-staff-evidence.js"
+        "api/_inbound-staff-evidence.js",
+        "shared/owner-perspective.js"
       ],
       "db": {
         "tables": [
@@ -139,6 +145,7 @@
         "api/owner-whatsapp-decision-golden-contract.test.js",
         "api/staff-decision-golden-contract.test.js",
         "api/_staff-decision-message.test.js",
+        "api/staff-answer-owner-perspective.test.js",
         "api/_quality-review.test.js",
         "api/alternative-review-golden-contract.test.js",
         "api/photo-workflow-golden-contract.test.js",
@@ -149,7 +156,8 @@
         "api/no-response-handoff.endpoint.test.js",
         "api/owner-whatsapp-no-response-guard.test.js",
         "src/routes/TaskOnlyDecisionView.test.tsx",
-        "src/lib/staff-messages.task-only-deep-link.test.ts"
+        "src/lib/staff-messages.task-only-deep-link.test.ts",
+        "api/owner-perspective-paths.test.js"
       ],
       "slice1_no_response_handoff": {
         "contract": "Chief-of-Staff Lifecycle Slice 1 (owner-authorized 2026-09-27). A tracked delegation that passed the existing follow-up and escalation, whose escalated_at is at or after NO_RESPONSE_HANDOFF_CUTOVER_AT and at least 4 hours old (OWNER PRODUCT DECISION, not derived from any existing timing), that is still pending/unarchived/undismissed/unconfirmed with no proof, no worker_reply and no staff_messages/personal_contact_replies row from the resolved assignee since creation, gets exactly one task-only review_type='no_response' decision and one owner notification carrying its decision link. The owner may only choose Ask again (one lease-protected re-ask to the assignee; task stays pending, confirmed_at untouched) or Keep waiting (status 'answered', no staff message; the row blocks recreation). Unset cutover = inert. Owner WhatsApp replies to a no_response handoff never execute anything.",
@@ -221,10 +229,15 @@
         "src/lib/delegation-fast-path.ts:parseDelegationFastPath / executeDelegationFastPath",
         "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
         "api/send-whatsapp-task.js",
-        "api/task-confirm.js:handleGet"
+        "api/task-confirm.js:handleGet",
+        "src/lib/personal-note.ts:normalizePersonalNote",
+        "src/lib/save.ts:savePending (message items)"
       ],
       "shared_dependencies": [
-        "api/_whatsapp-delivery.js"
+        "api/_whatsapp-delivery.js",
+        "shared/owner-perspective.js",
+        "shared/follow-up-message.js",
+        "src/lib/stored-recipient-text.ts"
       ],
       "db": {
         "tables": [
@@ -244,7 +257,10 @@
         "src/lib/carson-protected-behaviors.test.ts",
         "src/components/home/ElevenLabsAgentWidget.typed-delegation-execution.test.ts",
         "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts",
-        "api/send-whatsapp-task.test.js"
+        "api/send-whatsapp-task.test.js",
+        "src/lib/owner-perspective-paths.test.ts",
+        "src/lib/stored-recipient-text.test.ts",
+        "src/lib/direct-message-owner-normalization.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -272,11 +288,14 @@
         "src/lib/direct-message-reply-intent.ts",
         "api/_staff-comms-engine.js",
         "src/lib/staff-messages.ts",
-        "src/lib/ai/extract-prompt.ts:buildExtractionPrompt (RULE 2B)"
+        "src/lib/ai/extract-prompt.ts:buildExtractionPrompt (RULE 2B)",
+        "src/lib/direct-message-owner-normalization.ts"
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
-        "api/anthropic.js"
+        "api/anthropic.js",
+        "shared/owner-perspective.js",
+        "src/lib/stored-recipient-text.ts"
       ],
       "db": {
         "tables": [
@@ -302,7 +321,10 @@
         "api/_staff-comms-engine.test.js",
         "api/staff-message-response-delivery.test.js",
         "src/lib/staff-messages.test.ts",
-        "src/lib/ai/extract-prompt.test.ts"
+        "src/lib/ai/extract-prompt.test.ts",
+        "src/lib/direct-message-owner-normalization.test.ts",
+        "src/lib/owner-perspective-paths.test.ts",
+        "src/lib/stored-recipient-text.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -348,7 +370,9 @@
       ],
       "shared_dependencies": [
         "api/_whatsapp-delivery.js",
-        "api/send-whatsapp-task.js"
+        "api/send-whatsapp-task.js",
+        "api/_automation-recipient-text.js",
+        "shared/owner-perspective.js"
       ],
       "db": {
         "tables": [
@@ -381,6 +405,7 @@
         "api/process-delegation-escalations.timing-safety.test.js",
         "api/process-delegation-escalations.uncertain-olg.test.js",
         "api/automations.test.js",
+        "api/automation-owner-perspective.test.js",
         "src/lib/automation-context.test.ts",
         "src/lib/automation-support.test.ts",
         "src/lib/one-time-automation-routing.test.ts"
@@ -979,6 +1004,7 @@
       "files_functions": [
         "src/lib/text-carson.ts:executeDelegationFromText",
         "src/lib/ai/extract.ts:extractItems",
+        "src/lib/ai/role-precedence.ts:applyRolePrecedence (post-extraction routing correction; never authors recipient perspective)",
         "src/components/home/ElevenLabsAgentWidget.tsx:executeInstruction / clientTools.execute_instruction / guardCurrentToolInvocation",
         "src/lib/carson-transcript-guard.ts:CARSON_REPEAT_PROMPT / evaluateCarsonTranscriptCapture / matchCarsonSocialAcknowledgment (2026-09-07 registration — was already load-bearing for execute_instruction's invalid-capture handling at ElevenLabsAgentWidget.tsx's guardCurrentVoiceCapture/rawInstruction capture-guard call sites, but had never been added to this or any capability; registered while fixing a confirmed production regression, not a behavior change)"
       ],
