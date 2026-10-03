@@ -201,6 +201,8 @@ const IMPERATIVE_STARTS = new Set(['tell', 'ask', 'call', 'let', 'bring', 'take'
   'update', 'check', 'find', 'buy', 'book', 'arrange', 'pass', 'hand', 'fetch', 'grab', 'contact', 'phone', 'email']);
 const SENTENCE_LEADERS = new Set(['please', 'and', 'also', 'then', 'so', 'kindly']);
 const OWNER_SUBJECT_FORMS = new Set(['i', "i'm", "i'd", "i'll", "i've"]);
+/** Owner references that point back to the owner after a recipient pronoun ("…call me", "…my mother"). */
+const OWNER_OBJECT_FORMS = new Set(['me', 'my', 'mine', 'myself']);
 /** The only words allowed between the owner's "I" and a pronoun that means the recipient. */
 const RECIPIENT_ANCHOR_VERBS = new Set(['would', 'will', 'like', 'love', 'need', 'want', 'to', 'ask', 'expect', 'miss',
   'give', 'tell', 'remind', 'let', 'help', 'see', 'call', 'text', 'meet', 'thank', 'invite']);
@@ -296,7 +298,9 @@ function turkishFirstPerson(text, turkish) {
   if (TR_SUFFIX_NOT_ME.has(w)) return false;
   if (isTurkishMyNoun(w)) return true;
   if (TR_SPECIFIC_SUFFIXES.test(w) && w.length >= 6) return true;
-  if (!turkish) return false;
+  // Turkish-only endings also count on a word that itself carries a Turkish
+  // letter ("…, aldım." inside otherwise English text).
+  if (!turkish && !TR_SIGNAL.test(text)) return false;
   return TR_TURKISH_ONLY_SUFFIXES.test(w) && w.length >= 5;
 }
 
@@ -534,10 +538,12 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     return capitalized && w.lower !== 'i' && !w.lower.startsWith("i'") && w.lower !== recipient && w.lower !== ownerLower;
   });
   // "he/him/her" means the recipient only in one provable shape: the first
-  // sentence opens with the owner as subject and reaches the pronoun through a
+  // sentence opens with the owner as subject, reaches the pronoun through a
   // short, closed verb chain ("I'd like her to…", "I need him to…"), so no
-  // other person can have been mentioned before it. Anything else is either a
-  // provable third party or fails closed.
+  // other person can have been mentioned before it, and then points back to
+  // the owner ("…call me", "…my mother") — the owner asking the person being
+  // messaged to do something for the owner. Anything else ("I need him in bed
+  // by 8" to a nanny) is either a provable third party or fails closed.
   const anchoredToRecipient = (i) => {
     const s = tokens[i].sentence;
     if (tokens[words[0]].sentence !== s) return false;
@@ -545,7 +551,8 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     if (!before.length || before.some((j) => tokens[j].quoted) || !OWNER_SUBJECT_FORMS.has(tokens[before[0]].lower)) return false;
     if (/[,;:]/.test(tokens.slice(before[0] + 1, i).map((t) => t.text).join(''))) return false;
     const chain = before.slice(1).filter((j) => !ADVERBS.has(tokens[j].lower));
-    return chain.length >= 1 && chain.length <= 3 && chain.every((j) => RECIPIENT_ANCHOR_VERBS.has(tokens[j].lower));
+    if (!(chain.length >= 1 && chain.length <= 3 && chain.every((j) => RECIPIENT_ANCHOR_VERBS.has(tokens[j].lower)))) return false;
+    return ownerRefs.some((j) => j > i && tokens[j].sentence === s && OWNER_OBJECT_FORMS.has(tokens[j].lower));
   };
   const nextWordAfter = (i) => {
     const nextIdx = words.find((j) => j > i);
@@ -558,6 +565,9 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     const w = tokens[i].lower;
     const next = nextWordAfter(i);
     let role;
+    // Only one pronoun may ever become the recipient: a second he/him/her can
+    // follow another person ("…call Maria and ask her…"), so it fails closed.
+    if (previousRole === 'recipient') return fail('recipient_reference_unanchored');
     if (previousRole) role = previousRole;
     else if (recordVoice || isImperative(tokens[i].sentence) || hasCompetingAntecedent(i)) role = 'third';
     else if (!thirdPersonMayMeanRecipient) role = 'third';

@@ -183,8 +183,13 @@ describe("owner perspective — recipient, third-party and grammar rules", () =>
     expect(render("My mother called, ask her to wait.")).toBe(NEEDS("third_party_ambiguity_introduced"));
   });
   it("recipient as a subject (needs verb re-agreement) or a possessive-vs-object 'her' fails closed", () => {
-    expect(render("I'd like her to call when she lands.", "Sana", "Loulya")).toBe(NEEDS("recipient_subject_reference"));
-    expect(render("I want to give her money.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_ambiguous"));
+    // Still fail closed. Since the checker review these stop earlier, at the stricter recipient anchor
+    // (no "me"/"my" after the pronoun), instead of at the subject / possessive checks.
+    expect(render("I'd like her to call when she lands.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
+    expect(render("I want to give her money.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
+    // The subject / possessive checks still apply inside the anchored shape.
+    expect(render("I'd like her to call me when she lands.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
+    expect(render("I want to give her my money.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_ambiguous"));
   });
   it("mixed genders and unknown verbs fail closed", () => {
     expect(render("Tell him I'd like her to call me.")).toBe(NEEDS("third_party_reference_ambiguous"));
@@ -487,6 +492,27 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     "Yes let her in, I want her to clean the kitchen.", // was "Yes let you in, Sana wants you to clean the kitchen."
   ])("B1: %j — a he/him/her with no provable referent is never turned into the recipient; fails closed", (input) => {
     expect(render(input)).toBe(NEEDS("recipient_reference_unanchored"));
+  });
+
+  it.each([
+    "I want her to call Maria and ask her to come.", // was "…call Maria and ask you to come."
+    "I need her to take Maria to school and wait for her.", // was "…and wait for you."
+    "I need her to take maria to school and wait for her.",
+    "I need him to call Ali and tell him to wait.", // was "…call Ali and tell you to wait."
+    "I want her to call the guest. Ask her to come at 5.", // was "…Ask you to come at 5."
+    "I will call her. Maria is with her.", // was "Sana will call you. Maria is with you."
+    "I need him in bed by 8.", // was "Sana needs you in bed by 8." (to a nanny, about a child)
+    "I want him to stay.", // was "Sana wants you to stay."
+  ])("B1 re-review: %j — only one pronoun may become the recipient, and only when it points back to the owner; fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("recipient_reference_unanchored"));
+  });
+
+  it.each([
+    "The groceries are in the car, aldım.",
+    "You can leave at 5, döndüm.",
+    "It is fine, the bread is on the table, yaptım.",
+  ])("M2 side effect: %j — Turkish owner first person inside English text is still refused", (input) => {
+    expect(render(input)).toBe(NEEDS("turkish_owner_first_person"));
   });
 
   it("B1: the provable shape still reaches the recipient as 'you' (protected 'I would like her to call me')", () => {
