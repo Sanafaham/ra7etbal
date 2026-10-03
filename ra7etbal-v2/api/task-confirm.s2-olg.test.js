@@ -9,6 +9,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
+
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
 const fetchHouseholdRulesTextMock = vi.fn().mockResolvedValue(null);

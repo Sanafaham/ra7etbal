@@ -53,6 +53,14 @@ Production verification used labelled disposable accounts only. Test Account A h
 
 Still open: final audit-evidence retention duration is **BLOCKED — LEGAL/POLICY REVIEW REQUIRED**; six unattributed `whatsapp_inbound_evidence` rows remain blocked for attribution/policy resolution; existing in-flight cancellation is Account Deletion Slice B and requires separate owner authorization; relational/Storage/Carson-memory/provider/Auth deletion belongs to later explicitly authorized slices. The public 30-day deletion promise remains an open release gate. Slice A implements no cancellation RPC; status remains owner-readable through RLS while cancellation belongs to the later lifecycle design.
 
+### Phase 3F — Account deletion Slice B — IMPLEMENTED AND LOCALLY VERIFIED; NOT DEPLOYED (2026-10-03)
+
+Slice B adds tenant-readable, payload-minimized `account_deletion_work_cancellations` evidence. The deletion-request trigger inventories pending consequential tasks, QStash reminder identifiers, active automations, non-terminal automation runs, and pending Carson operations; pending Carson operations are atomically marked cancelled. The existing deletion request remains the authoritative local tombstone. Provider cancellation uses a service-only, `SKIP LOCKED`, lease-fenced claim/finish protocol and the existing authenticated scheduler, with confirmed, unknown, retryable, and manual-review outcomes kept distinct. Interrupted attempts are reclaimable after lease expiry.
+
+Task confirmation and owner alternative decisions now re-check the Slice A freeze before mutation or external continuation, closing the outstanding-confirmation bypass. Existing reminder, automation, WhatsApp, calendar, escalation, and push execution boundaries retain their Slice A fail-closed checks; stale QStash delivery therefore remains locally neutralized even when provider cancellation is pending or unknown. Generic QStash/pg_cron sweeps are not deleted per account.
+
+This status is local/CI evidence only until a separately authorized rollout applies the additive migration before runtime deployment, verifies QStash credentials and cancellation results with disposable accounts, and records Production evidence. No Production data or provider resource was changed by Phase 3F implementation. Later relational, Storage, Carson-memory, provider-data, and Auth-identity deletion slices remain unstarted. The public 30-day complete-deletion promise remains open.
+
 ### Next active checkpoint: P3 Step 3 — "What needs my attention?" attention journey — NOT STARTED (recorded 2026-10-03)
 
 Goal: verify the real Production "What needs my attention?" journey end to end — whether `get_items_needing_attention` is actually invoked/reachable in a real owner session, and whether Carson's answer reflects authoritative Ra7etBal truth. The opening-summary understatement recorded below under P3 Step 2 is evidence for this journey. Not started; requires owner authorization.

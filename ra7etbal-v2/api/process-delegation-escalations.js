@@ -105,6 +105,7 @@ import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
+import { processAccountDeletionCancellations } from './_account-deletion-cancellation.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -186,6 +187,20 @@ export default async function handler(req, res) {
     hasVapidSubject: Boolean(vapidSubject),
     appBaseUrl,
     testMode,
+  });
+
+  // Slice B: use the existing authenticated periodic worker to reconcile a
+  // bounded batch of provider cancellations. A missing QStash token leaves
+  // durable work pending; the deletion tombstone still blocks stale delivery.
+  await processAccountDeletionCancellations({
+    supabaseUrl,
+    serviceKey,
+    qstashToken: process.env.QSTASH_TOKEN,
+  }).catch((error) => {
+    console.error('[account-deletion] cancellation reconciliation failed', {
+      message: error?.message || String(error),
+    });
+    return { claimed: 0, confirmed: 0, unknown: 0, failed: 1 };
   });
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);

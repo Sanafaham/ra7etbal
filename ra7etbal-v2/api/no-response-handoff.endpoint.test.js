@@ -5,6 +5,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
+
 const execMock = vi.hoisted(() => vi.fn());
 vi.mock('./_no-response-handoff.js', async (importOriginal) => {
   const actual = await importOriginal();
