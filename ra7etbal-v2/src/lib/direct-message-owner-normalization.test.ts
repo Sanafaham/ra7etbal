@@ -559,6 +559,26 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     expect(render(input, "Sana", input.includes("her") ? "Loulya" : "Grace")).toBe(expected);
   });
 
+  it.each([
+    "I am going to the market and need the car.", // was sent as "Sana is going to the market and need the car."
+    "I go to work and come back at 6.",
+    "I come to the house and wait.",
+    "I went to the bank and need the receipt.",
+    "I am close to home and need the gate open.",
+    "I want to go home and need the car.",
+    "I need to rest and want quiet.",
+    "I like to cook and want fresh fish.",
+    "I love you, and miss you.",
+    "I need the car, and want it clean.",
+  ])("M-1b confirmation: %j — a preposition or the owner's own 'to' does not end the owner's clause; fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
+  });
+
+  it("M-1b confirmation: another person before 'to' owns the verbs after it", () => {
+    expect(render("I want Ali to come and wait outside.")).toBe("Sana wants Ali to come and wait outside.");
+    expect(render("I need the driver to come and wait.")).toBe("Sana needs the driver to come and wait.");
+  });
+
   it("M-1b: task text keeps the recipient's coordinated verbs", () => {
     expect(render("I need you to buy milk and bring it home.", "Sana", "Grace", "task_text")).toBe("Sana needs you to buy milk and bring it home.");
   });
