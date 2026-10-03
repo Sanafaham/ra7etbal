@@ -78,7 +78,7 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
           echo "Changed files:"
           echo "$CHANGED"
-          PATTERN='^ra7etbal-v2/supabase/migrations/(20260613_routines\.sql|20260620_agent_automation_layer\.sql|20260622_whatsapp_health_state\.sql|20260622_whatsapp_deliveries\.sql|20260710_quality_substitute_review\.sql|20260712_approve_alternative_message_first\.sql|20260720_create_staff_messages\.sql|20260726_staff_escalation_owner_decisions\.sql|20260801_task_based_escalation_owner_decisions\.sql|20260812_durable_person_id_communication_history\.sql|20260812_task_review_owner_decision_person_id\.sql|20260812_worker_notification_person_id\.sql|20260813_whatsapp_health_state_phone_number_unique(\.rollback)?\.sql|20260815_carson_canary_least_privilege(\.rollback)?\.sql|20260816_google_oauth_states(\.rollback)?\.sql|20260825170000_reserve_functions_service_role_only(\.rollback)?\.sql|verification/00_bootstrap_minimal_auth\.sql|verification/carson_(tier1|canary)_.*\.sql|verification/google_oauth_states_verification\.sql|verification/reserve_functions_service_role_only(_post_rollback)?_verification\.sql)$|^\.github/workflows/carson-tier1-db-contracts\.yml$'
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260613_routines\.sql|20260620_agent_automation_layer\.sql|20260622_whatsapp_health_state\.sql|20260622_whatsapp_deliveries\.sql|20260710_quality_substitute_review\.sql|20260712_approve_alternative_message_first\.sql|20260720_create_staff_messages\.sql|20260726_staff_escalation_owner_decisions\.sql|20260801_task_based_escalation_owner_decisions\.sql|20260812_durable_person_id_communication_history\.sql|20260812_task_review_owner_decision_person_id\.sql|20260812_worker_notification_person_id\.sql|20260813_whatsapp_health_state_phone_number_unique(\.rollback)?\.sql|20260815_carson_canary_least_privilege(\.rollback)?\.sql|20260816_google_oauth_states(\.rollback)?\.sql|20260825170000_reserve_functions_service_role_only(\.rollback)?\.sql|20261003_account_deletion_slice_c(\.rollback)?\.sql|verification/00_bootstrap_minimal_auth\.sql|verification/account_deletion_slice_c_.*\.sql|verification/carson_(tier1|canary)_.*\.sql|verification/google_oauth_states_verification\.sql|verification/reserve_functions_service_role_only(_post_rollback)?_verification\.sql)$|^\.github/workflows/carson-tier1-db-contracts\.yml$'
           if echo "$CHANGED" | grep -Eq "$PATTERN"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "Relevant Tier 1 DB-contract path changed — running the full real-Postgres verification."
@@ -264,3 +264,25 @@ jobs:
               RAISE NOTICE 'PASS: forward migration reapplies cleanly, constraint restored';
             END \$\$;
           "
+
+      - name: Create isolated Slice C verification database
+        if: steps.relevance.outputs.relevant == 'true'
+        run: createdb slice_c_verify
+
+      - name: Bootstrap isolated Slice C schema
+        if: steps.relevance.outputs.relevant == 'true'
+        env:
+          PGDATABASE: slice_c_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/account_deletion_slice_c_bootstrap.sql"
+
+      - name: Apply exact Slice C migration in disposable database
+        if: steps.relevance.outputs.relevant == 'true'
+        env:
+          PGDATABASE: slice_c_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261003_account_deletion_slice_c.sql"
+
+      - name: Prove Slice C two-account isolation, retry, and dependency preservation
+        if: steps.relevance.outputs.relevant == 'true'
+        env:
+          PGDATABASE: slice_c_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/account_deletion_slice_c_verification.sql"

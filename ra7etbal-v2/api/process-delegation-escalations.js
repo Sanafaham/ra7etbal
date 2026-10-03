@@ -106,6 +106,7 @@ import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
 import { processAccountDeletionCancellations } from './_account-deletion-cancellation.js';
+import { processAccountDeletionRelational } from './_account-deletion-relational.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -202,6 +203,21 @@ export default async function handler(req, res) {
     });
     return { claimed: 0, confirmed: 0, unknown: 0, failed: 1 };
   });
+
+  // Slice C claims only requests whose Slice B work has no pending, unknown,
+  // or retryable cancellation. The database performs one lease-fenced atomic
+  // deletion transaction and retains only later-stage cleanup identifiers.
+  // Per-task/special-trigger deliveries must not spend their response budget
+  // on lifecycle maintenance. The authenticated periodic sweep has a real URL
+  // and no trigger payload; it is the one existing orchestrator for Slice C.
+  if (typeof req.url === 'string' && !req.body?.trigger) {
+    await processAccountDeletionRelational({ supabaseUrl, serviceKey }).catch((error) => {
+      console.error('[account-deletion] relational deletion failed', {
+        message: error?.message || String(error),
+      });
+      return { claimed: 0, completed: 0, failed: 1 };
+    });
+  }
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
