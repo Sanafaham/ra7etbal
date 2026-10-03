@@ -608,13 +608,23 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
   // "I love you and miss you": only the first verb would be re-agreed, so a
   // second owner verb after and/or/but that would also need to change fails
   // closed rather than sending "Sana loves you and miss you".
-  // Only the owner's own clause counts. Scanning stops at "to" only when
-  // another person stands right before it ("I need you to pick up the kids and
-  // bring them home": those verbs are the recipient's); a preposition or the
-  // owner's own infinitive ("going to the market and need…", "want to go and
-  // need…") keeps the owner's clause open. It also stops at ; : or a comma
-  // that is not ", and"/", but", and at a subordinate clause.
-  const OTHER_PERSON_BEFORE_TO = new Set(['you', 'him', 'her', 'them', 'us', 'everyone', 'someone', 'somebody']);
+  // Only the owner's own clause counts. Scanning stops at "to" only when it
+  // opens someone else's infinitive: the word before it is not the owner's own
+  // verb ("want to go", "going to…") and the word after it does not start a
+  // place or object ("to the market", "to school", "to you", "to Maria").
+  // So "I need you/the plumber to come and wait" stops (those verbs are the
+  // other person's), while "I take Maria to school and need the car" keeps the
+  // owner's clause open. It also stops at ; : or a comma that is not
+  // ", and"/", but", and at a subordinate clause.
+  const NOT_INFINITIVE_AFTER_TO = new Set(['the', 'a', 'an', 'my', 'your', 'his', 'her', 'their', 'our', 'its', 'this', 'that',
+    'these', 'those', 'me', 'you', 'him', 'them', 'us', 'it', 'school', 'work', 'home', 'bed', 'church', 'class', 'town',
+    'dinner', 'lunch', 'breakfast', 'everyone', 'someone']);
+  const OWNER_FRAME_BEFORE_TO = new Set(['able', 'ready', 'happy', 'glad', 'about', 'going', 'supposed', 'trying', 'used']);
+  const opensOtherInfinitive = (before, after) => {
+    if (!after) return false;
+    if (thirdPersonForm(before.lower) !== null || /ing$/.test(before.lower) || OWNER_FRAME_BEFORE_TO.has(before.lower)) return false;
+    return !NOT_INFINITIVE_AFTER_TO.has(after.lower) && !/^[\p{Lu}\d]/u.test(after.text);
+  };
   const coordinatedVerbNeedsAgreement = (i) => {
     let prev = i;
     for (const j of words.filter((x) => x > i && tokens[x].sentence === tokens[i].sentence)) {
@@ -624,8 +634,10 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
       if (/[;:]/.test(gap) || (/,/.test(gap) && !coordinator)) return false;
       const before = tokens[prev];
       prev = j;
-      if (w === 'to' && j > i + 1 && (OTHER_PERSON_BEFORE_TO.has(before.lower) || PERSON_NOUNS.has(before.lower) ||
-        (/^\p{Lu}/u.test(before.text) && !before.sentenceStart))) return false;
+      if (w === 'to' && j > i + 1) {
+        const after = words.find((n) => n > j && tokens[n].sentence === tokens[j].sentence);
+        if (opensOtherInfinitive(before, after === undefined ? null : tokens[after])) return false;
+      }
       if (!coordinator && SUBORDINATORS.has(w)) return false;
       if (!coordinator) continue;
       const next = words.find((n) => n > j && tokens[n].sentence === tokens[j].sentence && !ADVERBS.has(tokens[n].lower));

@@ -574,9 +574,24 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
   });
 
-  it("M-1b confirmation: another person before 'to' owns the verbs after it", () => {
-    expect(render("I want Ali to come and wait outside.")).toBe("Sana wants Ali to come and wait outside.");
-    expect(render("I need the driver to come and wait.")).toBe("Sana needs the driver to come and wait.");
+  it.each([
+    ["I want Ali to come and wait outside.", "Sana wants Ali to come and wait outside."],
+    ["I need the driver to come and wait.", "Sana needs the driver to come and wait."],
+    ["I need the plumber to come and check the sink.", "Sana needs the plumber to come and check the sink."],
+    ["I want the kids to wait and call me.", "Sana wants the kids to wait and call Sana."],
+    ["I want the guests to arrive and wait.", "Sana wants the guests to arrive and wait."],
+    ["I want everyone to wait and stay calm.", "Sana wants everyone to wait and stay calm."],
+  ])("M-1b confirmation: %j — someone else's infinitive owns the verbs after it; renders %j", (input, expected) => {
+    expect(render(input)).toBe(expected);
+  });
+
+  it.each([
+    "I take Maria to school and need the car.", // was "Sana takes Maria to school and need the car."
+    "I take my son to school and need the car.",
+    "I send them to you and want a reply.",
+    "I am ready to go and need the car.",
+  ])("M-1b confirmation: %j — a preposition 'to' after another person keeps the owner's clause open; fails closed", (input) => {
+    expect(render(input)).toBe(NEEDS("unresolved_owner_verb"));
   });
 
   it("M-1b: task text keeps the recipient's coordinated verbs", () => {
