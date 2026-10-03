@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendWhatsappTask = vi.hoisted(() => vi.fn());
 vi.mock('./send-whatsapp-task.js', async (importOriginal) => ({ ...(await importOriginal()), default: sendWhatsappTask }));
+// Account-deletion freeze (main, #432) is not under test here: the account is active, same pattern as
+// _owner-command-executor.execution.test.js. The guard itself is covered by _account-deletion-guard.test.js.
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 import { persistAndExecuteOwnerCommand } from './_owner-command-executor.js';
 import { buildFollowUpMessageText } from './process-delegation-escalations.js';
