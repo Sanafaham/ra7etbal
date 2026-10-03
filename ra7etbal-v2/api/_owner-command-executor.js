@@ -111,11 +111,14 @@ export function classifyOwnerCommand(text) {
  * owner's words to the recipient. Throws OwnerPerspectiveError when perspective cannot be resolved
  * safely — the caller then sends nothing.
  */
-export function resolveOwnerCommandText(text, { ownerName, recipientName, commandType }) {
+export function resolveOwnerCommandText(text, { ownerName, recipientName, commandType, commandText = null }) {
   return renderOwnerPerspective(text, {
     ownerName: String(ownerName || '').trim() || 'the owner',
     recipientName,
     voice: commandType === 'delegation' ? 'task_text' : 'owner_to_recipient',
+    // The owner's own WhatsApp command is the current instruction: he/him/her
+    // becomes the recipient only when it is "Text <recipient> <this message>".
+    currentInstruction: commandText,
   });
 }
 
@@ -162,7 +165,7 @@ export async function persistAndExecuteOwnerCommand({
     const result = classification.type === 'reminder'
       ? await executeReminder({ supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification })
       : await executePersonCommand({
-          supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification, ownerName, imageStoragePath,
+          supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification, ownerName, imageStoragePath, commandText: text,
         });
     return {
       ...result,
@@ -251,7 +254,7 @@ function sameInstant(left, right) {
   return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
 }
 
-async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName, imageStoragePath }) {
+async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName, imageStoragePath, commandText = null }) {
   const people = await select(supabaseUrl, serviceKey, 'people',
     `user_id=eq.${encodeURIComponent(userId)}&name=ilike.${encodeURIComponent(classification.recipient)}&select=id,name,phone,notes,whatsapp_opted_in,is_family&limit=2`);
   if (people.length !== 1) throw new Error('recipient_not_unique');
@@ -272,7 +275,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   // Resolved before anything is written: an unresolved perspective throws
   // here, so no task, message or delivery exists for it.
   const normalizedText = resolveOwnerCommandText(classification.text, {
-    ownerName, recipientName: person.name, commandType: effectiveType,
+    ownerName, recipientName: person.name, commandType: effectiveType, commandText,
   });
   const messageId = row.action_message_id || receipt.receipt_id;
   let taskId = row.action_task_id || null;

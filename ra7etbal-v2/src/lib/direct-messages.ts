@@ -107,7 +107,7 @@ export async function createDirectMessageRecord({
   // repairs either a raw first-person tool payload or one the model has
   // already rewritten, while ordinary direct messages keep the resolved text.
   const perspective = resolveOwnerPerspective(messageText, declaredPerspective === undefined
-    ? { ownerName, recipientName: cleanRecipient, voice: "owner_to_recipient" }
+    ? { ownerName, recipientName: cleanRecipient, voice: "owner_to_recipient", currentInstruction: ownerInstruction ?? null }
     : { ownerName, recipientName: cleanRecipient, voice: "composed", declared: declaredPerspective });
   let cleanMessage: string;
   if (perspective.status === "needs_composition") {

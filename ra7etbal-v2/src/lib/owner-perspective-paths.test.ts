@@ -51,13 +51,38 @@ const loulya = (overrides: Partial<Person> = {}): Person => ({
 }) as Person;
 
 describe("Direct message boundary (Talk and Type converge here)", () => {
-  const create = (messageText: string, recipient = "Loulya") => {
+  const create = (messageText: string, recipient = "Loulya", ownerInstruction: string | null = null) => {
     const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
-    return { createMessageFn, promise: createDirectMessageRecord({ source: "test", userId: "user-1", recipient, messageText, ownerName: "Sana", createMessageFn }) };
+    return { createMessageFn, promise: createDirectMessageRecord({ source: "test", userId: "user-1", recipient, messageText, ownerName: "Sana", ownerInstruction, createMessageFn }) };
   };
 
+  it("her/him becomes 'you' only when the owner's current instruction names the recipient: 'Tell Loulya I would like her to call me.'", async () => {
+    const { createMessageFn, promise } = create("I would like her to call me.", "Loulya", "Tell Loulya I would like her to call me.");
+    await promise;
+    expect(createMessageFn).toHaveBeenCalledWith(expect.objectContaining({ content: "Sana would like you to call Sana." }));
+  });
+
+  // Owner ruling 2026-10-03: a him/her established outside the current instruction (an earlier Talk turn,
+  // a child the recipient knows about) is never reinterpreted as the recipient. Nothing is saved or sent.
   it.each([
-    ["I would like her to call me.", "Sana would like you to call Sana."],
+    ["I need him to call me back.", "Christopher", null],
+    ["I need her to call me back.", "Loulya", null],
+    ["I need him to call me back.", "Christopher", "I need him to call me back."],
+    ["I need him to call me back.", "Christopher", "Message Christopher."],
+    ["I need her to call me back.", "Loulya", "Maria is sick. Tell Loulya I need her to call me back."],
+    ["I need him to call me back.", "Christopher", "Tell Grace I need him to call me back."],
+  ])("outside-context %j to %s (instruction %j) is refused: no row, truthful reply", async (input, recipient, instruction) => {
+    const { createMessageFn, promise } = create(input, recipient, instruction);
+    let caught: any;
+    try { await promise; } catch (err) { caught = err; }
+    expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "recipient_reference_unanchored" });
+    expect(createMessageFn).not.toHaveBeenCalled();
+    const reply = directMessageFailureResponse(new DirectMessageBoundaryError("create_message", caught), recipient);
+    expect(reply).toMatch(new RegExp(`didn't send anything to ${recipient}`, "i"));
+    expect(reply).toMatch(/using names/);
+  });
+
+  it.each([
     ["I'd like you to call me.", "Sana would like you to call Sana."],
     ["I want you to call me.", "Sana wants you to call Sana."],
     ["put it in my room.", "put it in Sana's room."],

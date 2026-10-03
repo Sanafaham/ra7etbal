@@ -422,6 +422,24 @@ function composedLanguageChanged(sourceText, outTokens, outWords) {
   return outWords.filter((i) => EN_FUNCTION_WORDS.has(outTokens[i].lower)).length >= 2;
 }
 
+/**
+ * True only when the owner's current instruction is, verbatim, a command to
+ * the recipient carrying exactly this message ("Tell Loulya I would like her
+ * to call me." for the message "I would like her to call me."). Nothing may
+ * precede the command but a short courtesy opener, so no other person can be
+ * named in the instruction before the message.
+ */
+function instructionAddressesRecipient(instruction, recipientName, messageText) {
+  const norm = (x) => String(x ?? '').toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}'\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const ins = norm(instruction);
+  const rec = norm(recipientName);
+  const msg = norm(messageText);
+  if (!ins || !rec || !msg) return false;
+  const escaped = rec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = ins.match(new RegExp(`^(?:(?:please|hey|hi|carson|can you|could you|would you)\\s+)*(?:tell|text|message|whatsapp|ask)\\s+${escaped}\\s+(?:that\\s+)?(.+)$`, 'u'));
+  return Boolean(m) && m[1] === msg;
+}
+
 function thirdPersonForm(word) {
   if (IRREGULAR[word]) return IRREGULAR[word];
   if (INVARIANT.has(word)) return word;
@@ -441,7 +459,7 @@ function matchCase(original, replacement) {
  * @param {{ ownerName?: string | null, recipientName?: string | null, voice: 'owner_to_recipient' | 'task_text' | 'task_record' | 'composed', declared?: 'rendered' | 'unclear' }} options
  * @returns {{ status: 'unchanged' | 'rendered' | 'needs_composition', text: string, reason: string | null, language: string[] }}
  */
-export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined, sourceText = null, thirdPersonMayMeanRecipient = true }) {
+export function resolveOwnerPerspective(text, { ownerName, recipientName = null, voice, declared = undefined, sourceText = null, thirdPersonMayMeanRecipient = true, currentInstruction = null }) {
   const input = String(text ?? '');
   const owner = String(ownerName || '').trim();
   const recipient = String(recipientName || '').trim().toLowerCase();
@@ -554,6 +572,11 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     if (!(chain.length >= 1 && chain.length <= 3 && chain.every((j) => RECIPIENT_ANCHOR_VERBS.has(tokens[j].lower)))) return false;
     return ownerRefs.some((j) => j > i && tokens[j].sentence === s && OWNER_OBJECT_FORMS.has(tokens[j].lower));
   };
+  // The message text alone never proves who "him/her" is: the person may have
+  // been named earlier (another Talk turn, a child the recipient knows about).
+  // Only the owner's CURRENT instruction can prove it, and only in one exact
+  // shape: "Tell/Text/Message/Ask <recipient> [that] <this exact message>".
+  const instructionProvesRecipient = instructionAddressesRecipient(currentInstruction, recipientName, input);
   const nextWordAfter = (i) => {
     const nextIdx = words.find((j) => j > i);
     if (nextIdx === undefined) return null;
@@ -571,7 +594,7 @@ export function resolveOwnerPerspective(text, { ownerName, recipientName = null,
     if (previousRole) role = previousRole;
     else if (recordVoice || isImperative(tokens[i].sentence) || hasCompetingAntecedent(i)) role = 'third';
     else if (!thirdPersonMayMeanRecipient) role = 'third';
-    else if (anchoredToRecipient(i)) role = 'recipient';
+    else if (anchoredToRecipient(i) && instructionProvesRecipient) role = 'recipient';
     else return fail('recipient_reference_unanchored');
     previousRole = role;
     const objectForm = w === 'him' || (w === 'her' && (next === null || OBJECT_FOLLOWERS.has(next)));

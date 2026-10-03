@@ -98,6 +98,7 @@ export async function executeDirectMessageFastPath(
       ownerName: context.displayName,
       recipientName: parsed.recipientName,
       voice: "owner_to_recipient",
+      currentInstruction: input,
     });
     if (perspective.status === "needs_composition") {
       console.warn("[fast_path_direct_message_blocked]", {
@@ -180,6 +181,7 @@ export async function executeDirectMessageFastPath(
       messageText,
       phone: person.phone,
       ownerName: context.displayName ?? null,
+      ownerInstruction: input,
       createMessageFn,
       deliverTaskMessageFn,
     });

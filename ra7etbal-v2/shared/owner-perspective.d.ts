@@ -12,6 +12,8 @@ export interface OwnerPerspectiveOptions {
   sourceText?: string | null;
   /** owner_to_recipient: false when he/him/her can never mean the recipient (staff answers: the person is named in the staff member's question). Default true. */
   thirdPersonMayMeanRecipient?: boolean;
+  /** owner_to_recipient: the owner's verbatim current instruction. he/him/her becomes "you" only when it is exactly "Tell/Text/Message/Ask <recipient> [that] <this message>"; otherwise it fails closed. */
+  currentInstruction?: string | null;
 }
 
 export interface OwnerPerspectiveResult {

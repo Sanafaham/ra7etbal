@@ -84,7 +84,7 @@ describe('server owner-command classification', () => {
 // direct-message voice, plus the classes the old leading-subject normalizer
 // left unchanged and the fail-closed cases.
 describe('owner-reference normalization', () => {
-  const direct = (text) => resolveOwnerCommandText(text, { ownerName: 'Sana', recipientName: 'Loulya', commandType: 'direct_message' });
+  const direct = (text, commandText = null) => resolveOwnerCommandText(text, { ownerName: 'Sana', recipientName: 'Loulya', commandType: 'direct_message', commandText });
   const tracked = (text) => resolveOwnerCommandText(text, { ownerName: 'Sana', recipientName: 'Grace', commandType: 'delegation' });
 
   it.each([
@@ -98,7 +98,7 @@ describe('owner-reference normalization', () => {
   });
 
   it('direct message: the owner wish class becomes consistent recipient-facing wording', () => {
-    expect(direct('I would like her to call me')).toBe('Sana would like you to call Sana');
+    expect(direct('I would like her to call me', 'Text Loulya I would like her to call me')).toBe('Sana would like you to call Sana');
     expect(direct("I'd like you to call me")).toBe('Sana would like you to call Sana');
   });
 
@@ -106,6 +106,13 @@ describe('owner-reference normalization', () => {
     expect(tracked('put it in my room')).toBe("put it in Sana's room");
     expect(tracked('meet me outside')).toBe('meet Sana outside');
     expect(tracked('take Loulya to her appointment and call me after')).toBe('take Loulya to her appointment and call Sana after');
+  });
+
+  it('her/him is never reinterpreted as the recipient without the owner\'s own command naming them (owner ruling 2026-10-03)', () => {
+    for (const commandText of [null, 'I would like her to call me', 'Text Grace I would like her to call me']) {
+      expect(() => direct('I would like her to call me', commandText), String(commandText))
+        .toThrow(expect.objectContaining({ code: 'owner_perspective_unresolved', reason: 'recipient_reference_unanchored' }));
+    }
   });
 
   it('fails closed (OwnerPerspectiveError) instead of guessing', () => {

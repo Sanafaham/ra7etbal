@@ -20,9 +20,13 @@ import {
  * behaviour and the reason.
  */
 const NEEDS = (reason: string) => `NEEDS_COMPOSITION:${reason}`;
-function render(text: string, ownerName: string | null = "Sana", recipientName: string | null = "Grace", voice: OwnerPerspectiveVoice = "owner_to_recipient") {
-  const r = resolveOwnerPerspective(text, { ownerName, recipientName, voice });
+function render(text: string, ownerName: string | null = "Sana", recipientName: string | null = "Grace", voice: OwnerPerspectiveVoice = "owner_to_recipient", currentInstruction: string | null = null) {
+  const r = resolveOwnerPerspective(text, { ownerName, recipientName, voice, currentInstruction });
   return r.status === "needs_composition" ? NEEDS(r.reason ?? "") : r.text;
+}
+/** The message as the owner's own current instruction delivered it: "Tell <recipient> <text>". */
+function told(text: string, recipientName: string) {
+  return render(text, "Sana", recipientName, "owner_to_recipient", `Tell ${recipientName} ${text}`);
 }
 
 describe("owner perspective — carried over from the retired normalizer (unchanged expectations)", () => {
@@ -147,7 +151,7 @@ describe("owner perspective — retired 'leave unchanged' pins, replaced by the 
 });
 
 describe("owner perspective — the owner's required examples (direct-message voice, recipient Loulya)", () => {
-  const r = (t: string) => render(t, "Sana", "Loulya");
+  const r = (t: string) => told(t, "Loulya");
   it.each([
     ["I would like her to call me.", "Sana would like you to call Sana."],
     ["I'd like you to call me.", "Sana would like you to call Sana."],
@@ -175,8 +179,8 @@ describe("owner perspective — the owner's required examples (direct-message vo
 
 describe("owner perspective — recipient, third-party and grammar rules", () => {
   it("recipient referred to in the third person becomes 'you' only with no other possible antecedent", () => {
-    expect(render("I'd like her to meet my mother.", "Sana", "Loulya")).toBe("Sana would like you to meet Sana's mother.");
-    expect(render("I need him to call me back.", "Sana", "Christopher")).toBe("Sana needs you to call Sana back.");
+    expect(told("I'd like her to meet my mother.", "Loulya")).toBe("Sana would like you to meet Sana's mother.");
+    expect(told("I need him to call me back.", "Christopher")).toBe("Sana needs you to call Sana back.");
   });
   it("a third-party pronoun is never turned into the recipient or the owner", () => {
     expect(render("Tell him to call me.")).toBe("Tell him to call Sana.");
@@ -188,8 +192,8 @@ describe("owner perspective — recipient, third-party and grammar rules", () =>
     expect(render("I'd like her to call when she lands.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
     expect(render("I want to give her money.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
     // The subject / possessive checks still apply inside the anchored shape.
-    expect(render("I'd like her to call me when she lands.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
-    expect(render("I want to give her my money.", "Sana", "Loulya")).toBe(NEEDS("recipient_reference_ambiguous"));
+    expect(told("I'd like her to call me when she lands.", "Loulya")).toBe(NEEDS("recipient_reference_unanchored"));
+    expect(told("I want to give her my money.", "Loulya")).toBe(NEEDS("recipient_reference_ambiguous"));
   });
   it("mixed genders and unknown verbs fail closed", () => {
     expect(render("Tell him I'd like her to call me.")).toBe(NEEDS("third_party_reference_ambiguous"));
@@ -209,7 +213,7 @@ describe("owner perspective — recipient, third-party and grammar rules", () =>
   });
   it("is idempotent: rendered text passes through again unchanged", () => {
     for (const t of ["I would like her to call me.", "put it in my room.", "Wait for me. I'm on my way."]) {
-      const once = render(t, "Sana", "Loulya");
+      const once = told(t, "Loulya");
       expect(render(once, "Sana", "Loulya")).toBe(once);
     }
   });
@@ -515,9 +519,23 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     expect(render(input)).toBe(NEEDS("turkish_owner_first_person"));
   });
 
-  it("B1: the provable shape still reaches the recipient as 'you' (protected 'I would like her to call me')", () => {
-    expect(render("I would like her to call me.", "Sana", "Loulya")).toBe("Sana would like you to call Sana.");
-    expect(render("I need him to call me back.", "Sana", "Christopher")).toBe("Sana needs you to call Sana back.");
+  it("B1: the provable shape still reaches the recipient as 'you' when the current instruction names them ('Tell Loulya I would like her to call me')", () => {
+    expect(told("I would like her to call me.", "Loulya")).toBe("Sana would like you to call Sana.");
+    expect(told("I need him to call me back.", "Christopher")).toBe("Sana needs you to call Sana back.");
+  });
+
+  // Owner ruling 2026-10-03: a him/her that the CURRENT instruction does not resolve is never turned into the
+  // recipient — it may have been named outside it (an earlier Talk turn, a child the recipient knows about).
+  it.each([
+    ["I need him to call me back.", "Christopher", null],
+    ["I need her to call me back.", "Loulya", null],
+    ["I need him to call me back.", "Christopher", "I need him to call me back."],
+    ["I need him to call me back.", "Christopher", "Message Christopher."],
+    ["I need her to call me back.", "Loulya", "Maria is sick. Tell Loulya I need her to call me back."],
+    ["I need him to call me back.", "Christopher", "Tell Grace I need him to call me back."],
+    ["I would like her to call me.", "Loulya", "Tell Loulya I would like her to call me soon."],
+  ])("outside context: %j to %s with instruction %j is not reinterpreted as the recipient; fails closed", (text, recipient, instruction) => {
+    expect(render(text, "Sana", recipient, "owner_to_recipient", instruction)).toBe(NEEDS("recipient_reference_unanchored"));
   });
 
   it("B1: when the caller says he/him/her can never mean the recipient, the pronoun stays a third party", () => {
@@ -556,7 +574,7 @@ describe("owner perspective — checker regressions (he/him/her, inverted questi
     ["I am late, please start and call me.", "Sana is late, please start and call Sana."],
     ["I am late and you need to start dinner.", "Sana is late and you need to start dinner."],
   ])("M-1b (final review): %j — verbs after 'to' or in another clause are not the owner's; renders %j", (input, expected) => {
-    expect(render(input, "Sana", input.includes("her") ? "Loulya" : "Grace")).toBe(expected);
+    expect(input.includes("her") ? told(input, "Loulya") : render(input)).toBe(expected);
   });
 
   it.each([
