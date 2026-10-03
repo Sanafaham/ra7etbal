@@ -1535,7 +1535,7 @@
     },
     {
       "id": "account_deletion_consequential_freeze",
-      "contract": "ACCOUNT DELETION IN PROGRESS MUST BLOCK NEW CONSEQUENTIAL EXECUTION FOR THAT ACCOUNT WITHOUT AFFECTING OTHER ACCOUNTS. The authenticated deletion request is bound to auth.uid() and a recently created matching Supabase Auth session; one active request per account is idempotent. Once frozen, direct database inserts for new delegations/reminders/follow-ups/messages/automations/routines and every covered server execution, scheduler, callback, retry, WhatsApp, Calendar, QStash, and owner-command boundary fail closed. State-read failure denies execution. Identity is derived from the authenticated session or trusted existing server records, never a client-supplied account id. Read-only deletion status remains owner-scoped. This Slice A contract performs no destructive deletion, provider cancellation, Auth deletion, or Production mutation.",
+      "contract": "ACCOUNT DELETION IN PROGRESS MUST BLOCK NEW AND PRE-EXISTING CONSEQUENTIAL EXECUTION FOR THAT ACCOUNT WITHOUT AFFECTING OTHER ACCOUNTS. The authenticated deletion request is bound to auth.uid() and a recently created matching Supabase Auth session; one active request per account is idempotent. Once frozen, direct database inserts and every covered execution, scheduler, callback, retry, confirmation, WhatsApp, Calendar, QStash, and owner-command boundary fail closed. Existing in-flight work is inventoried with payload-minimized durable evidence; pending Carson operations are locally invalidated; QStash reminder cancellation is lease-fenced, resumable, and distinguishes confirmed, unknown, retryable, and manual-review outcomes. State-read failure denies execution. Identity is derived from the authenticated session or trusted existing server records, never a client-supplied account id. Read-only deletion and cancellation status remain owner-scoped. This Slice A/B contract performs no user-data, provider-history, Auth-identity, or Production deletion.",
       "business_importance": "critical — this is the safety boundary preventing a deletion-in-progress account, stale JWT, old callback, or scheduled retry from causing a new real-world action, while preserving every protected behavior for all other tenants.",
       "production_entry_points": [
         "api/send-whatsapp-task.js",
@@ -1547,7 +1547,9 @@
         "api/_owner-command-executor.js",
         "api/_owner-whatsapp-routing.js",
         "api/_personal-contact-reply.js",
-        "api/_no-response-handoff.js"
+        "api/_no-response-handoff.js",
+        "api/task-confirm.js",
+        "api/_account-deletion-cancellation.js"
       ],
       "files_functions": [
         "api/_account-deletion-guard.js:checkAccountConsequentialAccess / assertAccountMayExecuteConsequentialAction / resolveConsequentialOwnerFromReferences",
@@ -1560,13 +1562,15 @@
         "api/_owner-command-executor.js:persistAndExecuteOwnerCommand account deletion freeze",
         "api/_owner-whatsapp-routing.js:reconcileOwnerWhatsappMessages retry freeze",
         "api/_personal-contact-reply.js:reconcilePersonalContactReplyNotifications retry freeze",
-        "api/_no-response-handoff.js:runNoResponseHandoffs callback freeze"
+        "api/_no-response-handoff.js:runNoResponseHandoffs callback freeze",
+        "api/task-confirm.js:confirmation and owner-decision continuation freeze",
+        "api/_account-deletion-cancellation.js:processAccountDeletionCancellations"
       ],
       "shared_dependencies": [],
       "db": {
-        "tables": ["account_deletion_requests", "account_deletion_events", "tasks", "messages", "automations", "routines"],
-        "rpcs": ["request_account_deletion", "account_deletion_is_frozen"],
-        "migrations": ["supabase/migrations/20261003_account_deletion_slice_a.sql"]
+        "tables": ["account_deletion_requests", "account_deletion_events", "account_deletion_work_cancellations", "tasks", "messages", "automations", "automation_runs", "routines", "carson_pending_operations"],
+        "rpcs": ["request_account_deletion", "account_deletion_is_frozen", "claim_account_deletion_cancellation", "finish_account_deletion_cancellation"],
+        "migrations": ["supabase/migrations/20261003_account_deletion_slice_a.sql", "supabase/migrations/20261003_account_deletion_slice_b.sql"]
       },
       "external_boundaries": [
         "Supabase Auth sessions (recent-auth proof)",
@@ -1579,6 +1583,10 @@
         "api/_account-deletion-guard.test.js",
         "api/account-deletion-migration.test.js",
         "api/account-deletion-freeze-boundaries.test.js",
+        "api/account-deletion-cancellation.test.js",
+        "api/account-deletion-slice-b-migration.test.js",
+        "api/account-deletion-slice-b-boundaries.test.js",
+        "api/task-confirm.account-deletion.test.js",
         "api/_owner-command-executor.execution.test.js",
         "api/qstash-reminder.test.js",
         "api/automations.test.js",
@@ -1594,11 +1602,11 @@
       "golden_journey_tests": [],
       "db_contract_tests": [],
       "production_canary_required": false,
-      "rollback_risk": "medium — additive schema and fail-closed guards touch shared consequential boundaries. Rollback requires reverting code first, then applying 20261003_account_deletion_slice_a.rollback.sql only after confirming no account is frozen. Production migration and deployment require separate owner authorization.",
-      "verification_status": "Phase 3E Slice A implementation; local focused/protected verification required before PR. No Production migration, deletion, provider cancellation, or deployment authorized.",
+      "rollback_risk": "medium — additive schema and fail-closed guards touch shared consequential boundaries. Slice B rollout must apply schema before runtime; rollback reverts runtime before applying the Slice B rollback. Slice A rollback remains separately gated on confirming no account is frozen. Production migration and deployment require separate owner authorization.",
+      "verification_status": "Phase 3E Slice A is Production verified. Phase 3F Slice B is implemented and locally/protected-suite verified in PR #435 but is not merged, deployed, or Production verified.",
       "unresolved": [
         "Final audit-record retention duration remains BLOCKED — LEGAL/POLICY REVIEW REQUIRED.",
-        "Destructive cleanup, existing provider-job cancellation, Storage deletion, memory deletion, provider revocation, and Auth identity deletion belong to later owner-authorized slices.",
+        "Storage deletion, memory deletion, provider-history deletion/revocation, relational data deletion, and Auth identity deletion belong to later owner-authorized slices.",
         "The six unattributed whatsapp_inbound_evidence rows remain BLOCKED — OWNER DECISION / LEGAL-POLICY REVIEW REQUIRED and are untouched."
       ]
     },
