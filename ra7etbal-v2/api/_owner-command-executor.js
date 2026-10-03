@@ -1,4 +1,5 @@
 import sendWhatsappTask from './send-whatsapp-task.js';
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 import { isOwnerPerspectiveError, ownerPerspectiveClarification, renderOwnerPerspective } from '../shared/owner-perspective.js';
 
 // Legacy no-"to" fallback only — the primary delegation signal is the
@@ -121,6 +122,18 @@ export function resolveOwnerCommandText(text, { ownerName, recipientName, comman
 export async function persistAndExecuteOwnerCommand({
   supabaseUrl, serviceKey, identity, msg, receipt,
 }) {
+  const accountAccess = await checkAccountConsequentialAccess({
+    supabaseUrl,
+    serviceKey,
+    userId: identity.userId,
+  });
+  if (!accountAccess.allowed) {
+    return {
+      kind: 'account_deletion_in_progress',
+      acknowledgement: 'Account deletion is in progress. I did not carry out that action.',
+      acknowledgementAlreadyAccepted: false,
+    };
+  }
   const text = String(msg.body || '').trim().slice(0, MAX_COMMAND_LENGTH);
   const imageStoragePath = msg.imageStoragePath || null;
   const classification = classifyOwnerCommand(text);

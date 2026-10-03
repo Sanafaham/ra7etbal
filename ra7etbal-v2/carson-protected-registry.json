@@ -1560,6 +1560,75 @@
       ]
     },
     {
+      "id": "account_deletion_consequential_freeze",
+      "contract": "ACCOUNT DELETION IN PROGRESS MUST BLOCK NEW CONSEQUENTIAL EXECUTION FOR THAT ACCOUNT WITHOUT AFFECTING OTHER ACCOUNTS. The authenticated deletion request is bound to auth.uid() and a recently created matching Supabase Auth session; one active request per account is idempotent. Once frozen, direct database inserts for new delegations/reminders/follow-ups/messages/automations/routines and every covered server execution, scheduler, callback, retry, WhatsApp, Calendar, QStash, and owner-command boundary fail closed. State-read failure denies execution. Identity is derived from the authenticated session or trusted existing server records, never a client-supplied account id. Read-only deletion status remains owner-scoped. This Slice A contract performs no destructive deletion, provider cancellation, Auth deletion, or Production mutation.",
+      "business_importance": "critical — this is the safety boundary preventing a deletion-in-progress account, stale JWT, old callback, or scheduled retry from causing a new real-world action, while preserving every protected behavior for all other tenants.",
+      "production_entry_points": [
+        "api/send-whatsapp-task.js",
+        "api/qstash-reminder.js",
+        "api/automations.js",
+        "api/google-calendar.js",
+        "api/send-due-reminder-pushes.js",
+        "api/process-delegation-escalations.js",
+        "api/_owner-command-executor.js",
+        "api/_owner-whatsapp-routing.js",
+        "api/_personal-contact-reply.js",
+        "api/_no-response-handoff.js"
+      ],
+      "files_functions": [
+        "api/_account-deletion-guard.js:checkAccountConsequentialAccess / assertAccountMayExecuteConsequentialAction / resolveConsequentialOwnerFromReferences",
+        "api/send-whatsapp-task.js:handler account deletion freeze",
+        "api/qstash-reminder.js:handler account deletion freeze",
+        "api/automations.js:handlePost account deletion freeze",
+        "api/google-calendar.js:POST/PATCH/DELETE account deletion freeze",
+        "api/send-due-reminder-pushes.js:handler per-task account deletion freeze",
+        "api/process-delegation-escalations.js:delegation/routine/automation account deletion freeze",
+        "api/_owner-command-executor.js:persistAndExecuteOwnerCommand account deletion freeze",
+        "api/_owner-whatsapp-routing.js:reconcileOwnerWhatsappMessages retry freeze",
+        "api/_personal-contact-reply.js:reconcilePersonalContactReplyNotifications retry freeze",
+        "api/_no-response-handoff.js:runNoResponseHandoffs callback freeze"
+      ],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["account_deletion_requests", "account_deletion_events", "tasks", "messages", "automations", "routines"],
+        "rpcs": ["request_account_deletion", "account_deletion_is_frozen"],
+        "migrations": ["supabase/migrations/20261003_account_deletion_slice_a.sql"]
+      },
+      "external_boundaries": [
+        "Supabase Auth sessions (recent-auth proof)",
+        "Meta WhatsApp/Twilio sends",
+        "Upstash QStash publishes and callbacks",
+        "Google Calendar writes",
+        "Web Push reminder delivery"
+      ],
+      "focused_tests": [
+        "api/_account-deletion-guard.test.js",
+        "api/account-deletion-migration.test.js",
+        "api/account-deletion-freeze-boundaries.test.js",
+        "api/_owner-command-executor.execution.test.js",
+        "api/qstash-reminder.test.js",
+        "api/automations.test.js",
+        "api/process-delegation-escalations.test.js",
+        "api/send-due-reminder-pushes.test.js",
+        "api/send-whatsapp-task.auth-boundary.test.js",
+        "api/google-calendar.oauth-state.test.js",
+        "api/_owner-whatsapp-routing.test.js",
+        "api/no-response-handoff.test.js"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "db_contract_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium — additive schema and fail-closed guards touch shared consequential boundaries. Rollback requires reverting code first, then applying 20261003_account_deletion_slice_a.rollback.sql only after confirming no account is frozen. Production migration and deployment require separate owner authorization.",
+      "verification_status": "Phase 3E Slice A implementation; local focused/protected verification required before PR. No Production migration, deletion, provider cancellation, or deployment authorized.",
+      "unresolved": [
+        "Final audit-record retention duration remains BLOCKED — LEGAL/POLICY REVIEW REQUIRED.",
+        "Destructive cleanup, existing provider-job cancellation, Storage deletion, memory deletion, provider revocation, and Auth identity deletion belong to later owner-authorized slices.",
+        "The six unattributed whatsapp_inbound_evidence rows remain BLOCKED — OWNER DECISION / LEGAL-POLICY REVIEW REQUIRED and are untouched."
+      ]
+    },
+    {
       "id": "tavily_mcp_credential_security_contract",
       "contract": "Production Carson's Tavily web-search access must go through an ElevenLabs MCP server whose connection URL never carries the raw Tavily API key (or any other credential) as a query parameter, authenticating instead via ElevenLabs' workspace stored-secret reference (secret_token). The active MCP (wPijh8iY4yMWQPIf4R24) must remain referenced by Carson's mcp_server_ids; the retired, credential-embedding MCP (FcjPIUs6P8UBlIdW2BSb, deleted 2026-09-10) must never be reattached or recreated. approval_policy must remain require_approval_per_tool with tavily_search/tavily_extract/tavily_research auto_approved and tavily_crawl/tavily_map left unapproved — matching the exact permission boundary verified in production before and after the 2026-09-10 remediation. Perplexity (ip9w8BVxQBzSovyzaq1X) must never be altered as a side effect of Tavily maintenance. This is a live-ElevenLabs-configuration contract, not a repo-runtime-behavior contract — no api/, src/lib/, or supabase/migrations/ file implements or can verify it; see RA7ETBAL_STATE.md's 'Tavily MCP Credential-Security Remediation' entry for the full incident, remediation, and this contract's complete text.",
       "business_importance": "critical — the confirmed defect (2026-09-10) was a live Tavily API key readable in plaintext by anyone with ElevenLabs config read access, embedded in the old MCP server's connection URL. Regression here is a direct credential-exposure security defect, not a behavioral bug — same severity class as the whatsapp_send_authentication_boundary and google_calendar_oauth_identity_binding capabilities below.",

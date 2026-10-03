@@ -35,6 +35,7 @@ import {
 } from './_reminder-delivery.js';
 import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
 import { validateReminderCreationContract } from './_reminder-creation-contract.js';
+import { accountDeletionBlockedResponse, checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
 // Exported so a test can assert these stay in lockstep with
@@ -109,6 +110,15 @@ export default async function handler(req, res) {
   // ── 3. Parse and validate body ──────────────────────────────────────────────
   const body = req.body ?? {};
   const { action, taskId, dueAt, sentAt } = body;
+
+  if (action !== 'cancel') {
+    const accountAccess = await checkAccountConsequentialAccess({
+      supabaseUrl,
+      serviceKey: serviceRoleKey,
+      userId,
+    });
+    if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
+  }
 
   if (!action || (action !== 'create-and-schedule' && !taskId)) {
     return res.status(400).json({ success: false, error: 'action and taskId are required.' });

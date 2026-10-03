@@ -9,6 +9,7 @@ import { persistAndExecuteOwnerCommand, recordOwnerInbound, updateCommand } from
 import { classifyOwnerWhatsAppIntent, isExecutionDomain } from './_carson-intent-classifier.js';
 import { runOwnerConversationalTurn } from './_carson-agent-turn.js';
 import { NO_RESPONSE_REVIEW_TYPE } from './_no-response-handoff.js';
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 export const NO_RESPONSE_SUPERSEDED_REPLY_TEXT =
   "I haven't acted on that reply and nothing was sent. Newer information arrived for that task, so that question no longer applies.";
@@ -1325,6 +1326,11 @@ export async function reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey, 
   const results = [];
   for (const row of rows) {
     if (!isOwnerRoutingEnabledForUser(row.user_id) || !row.inbound_text) continue;
+    const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: row.user_id });
+    if (!accountAccess.allowed) {
+      results.push({ kind: 'account_deletion_in_progress', userId: row.user_id });
+      continue;
+    }
     // A quoted_escalation receipt with no context_message_id is structurally
     // unrecoverable: findQuotedEscalation requires a WhatsApp quoted-message
     // context to locate the escalation. Without it, every retry falls through

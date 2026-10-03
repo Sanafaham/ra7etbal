@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 import handler, { resolveAppBaseUrl, scheduleAutomationRunWakeup } from "./qstash-reminder.js";
 import { signReminderReceipt } from "./_reminder-delivery.js";
 

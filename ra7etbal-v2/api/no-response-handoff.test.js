@@ -21,6 +21,9 @@ const deliveryMocks = vi.hoisted(() => ({
   getMetaFailure: vi.fn(() => ({ reason: 'meta_rejected' })),
 }));
 vi.mock('./_whatsapp-delivery.js', () => deliveryMocks);
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 const {
   NO_RESPONSE_HANDOFF_DELAY_MS,

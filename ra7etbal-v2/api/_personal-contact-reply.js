@@ -29,6 +29,7 @@
  */
 
 import { sendMetaMessage } from './send-whatsapp-task.js';
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 const LOOKBACK_DAYS = 7;
 const MAX_TEXT_LENGTH = 2000;
@@ -161,6 +162,11 @@ export async function reconcilePersonalContactReplyNotifications({ supabaseUrl, 
 
   const results = [];
   for (const row of rows) {
+    const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: row.user_id });
+    if (!accountAccess.allowed) {
+      results.push({ id: row.id, ok: false, reason: accountAccess.code });
+      continue;
+    }
     const [personName, phoneNumberId, ownerPhone] = await Promise.all([
       resolvePersonName(supabaseUrl, serviceKey, row.person_id),
       resolvePhoneNumberId(supabaseUrl, serviceKey, row.user_id),

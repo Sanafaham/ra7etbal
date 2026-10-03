@@ -21,6 +21,7 @@ import { scheduleAutomationRunWakeup, resolveAppBaseUrl } from './qstash-reminde
 import { automationPerspectiveRefusal, automationRecipientVoice, renderAutomationRecipientText } from './_automation-recipient-text.js';
 import { isOwnerPerspectiveError, OWNER_PERSPECTIVE_UNRESOLVED, withOwnerNameWhenNeeded } from '../shared/owner-perspective.js';
 import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
+import { accountDeletionBlockedResponse, checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly'];
 const VALID_PROOF_TYPES   = ['photo', 'confirmation', 'text'];
@@ -169,6 +170,13 @@ async function handleGet(req, res) {
 async function handlePost(req, res) {
   const { uid, config, error } = await requireUser(req);
   if (error) return res.status(401).json({ error });
+
+  const accountAccess = await checkAccountConsequentialAccess({
+    supabaseUrl: config.supabaseUrl,
+    serviceKey: config.serviceRoleKey,
+    userId: uid,
+  });
+  if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
 
   const body = req.body ?? {};
   const routing = validateOneTimeRoutingEvidence(body.routing_evidence, 'one_time_automation');

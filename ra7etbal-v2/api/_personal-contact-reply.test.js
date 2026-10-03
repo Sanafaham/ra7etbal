@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendMetaMessage = vi.hoisted(() => vi.fn());
+const checkAccountConsequentialAccess = vi.hoisted(() => vi.fn());
 vi.mock('./send-whatsapp-task.js', () => ({ sendMetaMessage }));
+vi.mock('./_account-deletion-guard.js', () => ({ checkAccountConsequentialAccess }));
 
 import {
   buildOwnerNotificationText,
@@ -24,6 +26,8 @@ beforeEach(() => {
   process.env.WHATSAPP_ACCESS_TOKEN = 'wa-token';
   sendMetaMessage.mockReset();
   sendMetaMessage.mockResolvedValue({ ok: true, messageId: 'wamid.owner-notify-1' });
+  checkAccountConsequentialAccess.mockReset();
+  checkAccountConsequentialAccess.mockResolvedValue({ allowed: true, code: 'allowed' });
 });
 
 describe('correlateReply — deterministic priority order', () => {

@@ -709,3 +709,220 @@ describe("failed-run manifestation at the consumer boundary", () => {
     expect(orphan.dismissed_at).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P3 step 2 — bounded OPEN context prioritization (2026-10-02)
+//
+// Production 2026-10-02: after P3 5b supersession the owner had 17 CURRENT open
+// items (5 current recurring manifestations + 12 genuine responsibilities).
+// The OPEN window is 15 and newest-first, and a recurring source's current
+// manifestation is always among the newest rows, so the two oldest genuine
+// overdue reminders ("Check my mailbox", "Call Loulya") fell out of the
+// session-start context. Only membership under overflow changes: genuine
+// responsibilities are kept first, current recurring manifestations take the
+// remaining capacity, and the kept rows still render newest-first.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `sources` daily recurring sources (each with a superseded tail) + `genuine` older genuine items. */
+function overflowShape({ sources, genuine, tail = 3 }: { sources: number; genuine: number; tail?: number }) {
+  const tasks: Task[] = [];
+  const runs: Array<{ task_id: string; automation_id: string; user_id: string }> = [];
+  for (let s = 0; s < sources; s++) {
+    for (let d = 0; d < tail; d++) {
+      const id = `rec-${s}-${d}`;
+      tasks.push(
+        task({
+          id,
+          type: "action",
+          description: `Recurring source ${s}`,
+          // d = 0 is the newest manifestation of source s.
+          created_at: new Date(Date.UTC(2026, 9, 2 - d, 10 + s)).toISOString(),
+        }),
+      );
+      runs.push({ task_id: id, automation_id: `automation-${s}`, user_id: OWNER });
+    }
+  }
+  for (let g = 0; g < genuine; g++) {
+    tasks.push(
+      task({
+        id: `gen-${g}`,
+        type: "reminder",
+        description: `Genuine responsibility ${g}`,
+        // g = genuine - 1 is the oldest, so it is the first to fall out newest-first.
+        created_at: new Date(Date.UTC(2026, 7, 28 - g, 9)).toISOString(),
+      }),
+    );
+  }
+  tasks.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const recurringSourceIndexes = {
+    automationLinks: indexAutomationSourceLinks(runs),
+    routineLinks: indexRoutineSourceLinks([] as never),
+    notificationAutomationClaims: indexNotificationAutomationClaims([] as never),
+  };
+  return { tasks, recurringSourceIndexes };
+}
+
+describe("carson-context OPEN — bounded-context prioritization (P3 step 2)", () => {
+  it("<=15 current items: every current item is shown, newest-first, exactly as before", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 8 });
+    const context = buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes });
+    const open = openBlockLines(context);
+
+    expect(open).toHaveLength(13);
+    expect(context).not.toContain("(showing 15 of");
+    expect(open.filter((l) => l.includes("Recurring source"))).toHaveLength(5);
+    expect(open.filter((l) => l.includes("Genuine responsibility"))).toHaveLength(8);
+    // Newest-first rendering is unchanged: the recurring rows (October) precede the genuine rows (August).
+    const firstGenuine = open.findIndex((l) => l.includes("Genuine responsibility"));
+    expect(open.slice(0, firstGenuine).every((l) => l.includes("Recurring source"))).toBe(true);
+  });
+
+  it(">15 current items: no genuine responsibility is omitted while a recurring manifestation holds a slot", () => {
+    // The 2026-10-02 Production shape: 5 current recurring + 12 genuine = 17.
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 12 });
+    const context = buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes });
+    const open = openBlockLines(context);
+
+    expect(open).toHaveLength(15);
+    for (let g = 0; g < 12; g++) {
+      expect(open.some((l) => l.endsWith(`: Genuine responsibility ${g}`))).toBe(true);
+    }
+    // The two oldest genuine items are the ones newest-first truncation used to drop.
+    expect(open.some((l) => l.endsWith(": Genuine responsibility 11"))).toBe(true);
+    expect(open.some((l) => l.endsWith(": Genuine responsibility 10"))).toBe(true);
+  });
+
+  it("current recurring manifestations keep the remaining capacity, newest first", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 12 });
+    const open = openBlockLines(buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes }));
+
+    const recurring = open.filter((l) => l.includes("Recurring source"));
+    // 15 - 12 genuine = 3 slots, given to the three newest current manifestations (sources 4, 3, 2).
+    expect(recurring).toHaveLength(3);
+    expect(recurring[0]).toContain("Recurring source 4");
+    expect(recurring[1]).toContain("Recurring source 3");
+    expect(recurring[2]).toContain("Recurring source 2");
+    // The kept rows still render newest-first: recurring (October) before genuine (August).
+    expect(open.slice(0, 3).every((l) => l.includes("Recurring source"))).toBe(true);
+  });
+
+  it("superseded recurring manifestations stay excluded exactly as P3 5b derives them", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 12, tail: 6 });
+    const open = openBlockLines(buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes }));
+
+    for (let s = 0; s < 5; s++) {
+      expect(open.filter((l) => l.endsWith(`: Recurring source ${s}`)).length).toBeLessThanOrEqual(1);
+    }
+    // Total open count in the notice counts CURRENT items only (5 + 12), not the 30-row tail.
+    expect(buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes })).toContain(
+      "(showing 15 of 17 open items)",
+    );
+  });
+
+  it("recurring delegations stay under the accountability guard and are never deprioritized", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 10 });
+    const runs = [
+      { task_id: "deleg-a", automation_id: "automation-deleg", user_id: OWNER },
+      { task_id: "deleg-b", automation_id: "automation-deleg", user_id: OWNER },
+    ];
+    const delegations = runs.map((r, i) =>
+      task({
+        id: r.task_id,
+        type: "delegation",
+        description: `Recurring delegation ${i}`,
+        assigned_to: "Christopher",
+        needs_follow_up: true,
+        escalated_at: "2026-09-14T00:39:57.000Z",
+        created_at: `2026-07-${String(10 - i).padStart(2, "0")}T09:00:00.000Z`,
+      }),
+    );
+    const allTasks = [...tasks, ...delegations];
+    const indexes = {
+      ...recurringSourceIndexes,
+      automationLinks: indexAutomationSourceLinks([
+        ...overflowShapeRuns(5, 3),
+        ...runs,
+      ]),
+    };
+    const context = buildCarsonContext({ tasks: allTasks, people: [], now: NOW, recurringSourceIndexes: indexes });
+    const open = openBlockLines(context);
+
+    // 5 recurring + 10 genuine + 2 delegations = 17; both delegations are the OLDEST rows yet both stay.
+    expect(context).toContain("(showing 15 of 17 open items)");
+    expect(open.some((l) => l.endsWith(": Recurring delegation 0"))).toBe(true);
+    expect(open.some((l) => l.endsWith(": Recurring delegation 1"))).toBe(true);
+    expect(open.filter((l) => l.includes("Genuine responsibility"))).toHaveLength(10);
+    expect(open.filter((l) => l.includes("Recurring source"))).toHaveLength(3);
+  });
+
+  it("ambiguous items keep the fail-safe: they are treated as genuine and kept", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 11 });
+    // Claimed by an automation run AND a routine notification -> ambiguous -> never superseded, never deprioritized.
+    const ambiguous = task({
+      id: "ambiguous-1",
+      type: "action",
+      description: "Ambiguous recurring-looking item",
+      created_at: "2026-07-01T09:00:00.000Z",
+    });
+    const notifications = [
+      { target_id: "ambiguous-1", kind: "routine_reminder", user_id: OWNER, metadata: { routine_id: ROUTINE } },
+    ];
+    const indexes = {
+      automationLinks: indexAutomationSourceLinks([
+        ...overflowShapeRuns(5, 3),
+        { task_id: "ambiguous-1", automation_id: "automation-x", user_id: OWNER },
+      ]),
+      routineLinks: indexRoutineSourceLinks(notifications as never),
+      notificationAutomationClaims: indexNotificationAutomationClaims(notifications as never),
+    };
+    void recurringSourceIndexes;
+    const context = buildCarsonContext({ tasks: [...tasks, ambiguous], people: [], now: NOW, recurringSourceIndexes: indexes });
+    const open = openBlockLines(context);
+
+    // 5 recurring + 11 genuine + 1 ambiguous = 17; the ambiguous row is the oldest and is still kept.
+    expect(context).toContain("(showing 15 of 17 open items)");
+    expect(open.some((l) => l.endsWith(": Ambiguous recurring-looking item"))).toBe(true);
+    expect(open.filter((l) => l.includes("Recurring source"))).toHaveLength(3);
+  });
+
+  it("when genuine items alone exceed the window, the newest 15 genuine items are shown", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 2, genuine: 16 });
+    const context = buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes });
+    const open = openBlockLines(context);
+
+    expect(context).toContain("(showing 15 of 18 open items)");
+    expect(open).toHaveLength(15);
+    expect(open.every((l) => l.includes("Genuine responsibility"))).toBe(true);
+    expect(open.some((l) => l.endsWith(": Genuine responsibility 15"))).toBe(false);
+  });
+
+  it("the N-of-M notice stays truthful and appears only when the window is exceeded", () => {
+    const over = overflowShape({ sources: 5, genuine: 12 });
+    const at = overflowShape({ sources: 5, genuine: 10 });
+    const overCtx = buildCarsonContext({ tasks: over.tasks, people: [], now: NOW, recurringSourceIndexes: over.recurringSourceIndexes });
+    const atCtx = buildCarsonContext({ tasks: at.tasks, people: [], now: NOW, recurringSourceIndexes: at.recurringSourceIndexes });
+
+    expect(overCtx).toContain("(showing 15 of 17 open items)");
+    expect(openBlockLines(overCtx)).toHaveLength(15);
+    expect(atCtx).not.toContain("(showing 15 of");
+    expect(openBlockLines(atCtx)).toHaveLength(15);
+  });
+
+  it("context construction performs no writes to its inputs", () => {
+    const { tasks, recurringSourceIndexes } = overflowShape({ sources: 5, genuine: 12 });
+    const snapshot = JSON.stringify(tasks);
+    for (const t of tasks) Object.freeze(t);
+    Object.freeze(tasks);
+
+    expect(() => buildCarsonContext({ tasks, people: [], now: NOW, recurringSourceIndexes })).not.toThrow();
+    expect(JSON.stringify(tasks)).toBe(snapshot);
+  });
+});
+
+function overflowShapeRuns(sources: number, tail: number) {
+  const runs: Array<{ task_id: string; automation_id: string; user_id: string }> = [];
+  for (let s = 0; s < sources; s++) {
+    for (let d = 0; d < tail; d++) runs.push({ task_id: `rec-${s}-${d}`, automation_id: `automation-${s}`, user_id: OWNER });
+  }
+  return runs;
+}
