@@ -13,6 +13,9 @@ const personalContactReplyMocks = vi.hoisted(() => ({
   reconcilePersonalContactReplyNotifications: vi.fn(),
 }));
 vi.mock('./_personal-contact-reply.js', () => personalContactReplyMocks);
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 import webpush from 'web-push';
 import handler, { PROD_ESCALATE_MS, PROD_FOLLOWUP_MS } from './process-delegation-escalations.js';

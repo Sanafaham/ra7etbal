@@ -58,6 +58,7 @@ export function shouldClearRevokedCalendarCredentials(query = {}) {
 }
 
 import { randomBytes, createHash } from 'node:crypto';
+import { accountDeletionBlockedResponse, checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 const SCOPES = "https://www.googleapis.com/auth/calendar.events";
 
@@ -870,6 +871,8 @@ export default async function handler(req, res) {
       }
       const { id: uid } = await userRes.json();
       console.log("[calendar-create-debug] userId=%s", uid ? uid.slice(0, 8) : "none");
+      const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: uid });
+      if (!accountAccess.allowed) return accountDeletionBlockedResponse(res, 'calendar');
 
       // Parse body — log raw type for diagnosis if body is missing/wrong
       const rawBody = req.body;
@@ -1069,6 +1072,8 @@ export default async function handler(req, res) {
       });
       if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
       const { id: uid } = await userRes.json();
+      const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: uid });
+      if (!accountAccess.allowed) return accountDeletionBlockedResponse(res, 'calendar');
 
       const { event_id, title, date, time, duration_minutes } = req.body ?? {};
       if (!event_id) {
@@ -1248,6 +1253,8 @@ export default async function handler(req, res) {
       });
       if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
       const { id: uid } = await userRes.json();
+      const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: uid });
+      if (!accountAccess.allowed) return accountDeletionBlockedResponse(res, 'calendar');
 
       const { event_id } = req.body ?? {};
       if (!event_id) {

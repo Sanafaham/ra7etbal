@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS reject_frozen_account_routine_insert ON public.routines;
+DROP TRIGGER IF EXISTS reject_frozen_account_automation_insert ON public.automations;
+DROP TRIGGER IF EXISTS reject_frozen_account_message_insert ON public.messages;
+DROP TRIGGER IF EXISTS reject_frozen_account_task_insert ON public.tasks;
+DROP FUNCTION IF EXISTS public.reject_frozen_account_consequential_insert();
+DROP FUNCTION IF EXISTS public.request_account_deletion();
+DROP FUNCTION IF EXISTS public.account_deletion_is_frozen(uuid);
+DROP TRIGGER IF EXISTS record_account_deletion_transition ON public.account_deletion_requests;
+DROP FUNCTION IF EXISTS public.record_account_deletion_transition();
+DROP TABLE IF EXISTS public.account_deletion_events;
+DROP TABLE IF EXISTS public.account_deletion_requests;

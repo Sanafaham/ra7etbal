@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendWhatsappTask = vi.hoisted(() => vi.fn());
 vi.mock('./send-whatsapp-task.js', () => ({ default: sendWhatsappTask }));
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 import { persistAndExecuteOwnerCommand } from './_owner-command-executor.js';
 

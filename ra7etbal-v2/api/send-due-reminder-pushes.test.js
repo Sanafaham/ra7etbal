@@ -21,6 +21,10 @@ vi.mock('./_owner-notifications.js', async (importOriginal) => ({
   ...(await importOriginal()),
   getOrCreateOwnerNotification: mocks.getOrCreateOwnerNotification,
 }));
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 import {
   SAFETY_NET_TASK_SELECT,

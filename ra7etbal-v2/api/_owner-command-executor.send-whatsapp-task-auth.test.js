@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+  accountDeletionBlockedResponse: vi.fn(),
+  resolveConsequentialOwnerFromReferences: vi.fn(async () => 'user-1'),
+}));
+
 /**
  * Remediation 4 (Carson Engineering Hardening Project) found that
  * invokeSendWhatsappTask() in _owner-command-executor.js calls
