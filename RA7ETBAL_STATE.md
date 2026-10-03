@@ -41,15 +41,17 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 ## Current next task
 
-### Phase 3E — Account deletion Slice A — CODE COMPLETE, NOT DEPLOYED (2026-10-03)
+### Phase 3E — Account deletion Slice A — CLOSED, DEPLOYED AND VERIFIED (2026-10-03)
 
-Status: local implementation on `codex/phase3e-account-deletion-slice-a`, based on immutable intended Main/Production lineage `0d5202c19da00a908dcd8efe097bb3ca25870692`. No Production migration, deployment, account deletion, provider cancellation, or session revocation has occurred.
+Status: PR #432 merged as `44116620c063c898b0aeac971994665a84d0ae22`. Production Supabase project `ggarvhgqzpooloacjgcj` has migration `20261003094421_account_deletion_slice_a`. Vercel deployment `dpl_8xFaiJBYz7URspkCcho8niN9RTWY` is READY, Production-targeted, and carries the exact merge SHA. Read-only Production canary run `37114423345` passed against that SHA.
 
 Slice A adds one durable source of truth (`account_deletion_requests`) plus minimum non-content transition evidence (`account_deletion_events`), an authenticated `request_account_deletion()` RPC deriving `auth.uid()` and requiring a matching Supabase Auth session created within 15 minutes, and one shared fail-closed server guard. One active request per account is enforced by a partial unique index; repeated/concurrent requests return the active process. Owner reads are RLS-scoped and clients receive no table-write grant.
 
 The freeze covers new task/message/automation/routine inserts, direct/tracked WhatsApp sends, reminder and QStash scheduling, automation creation/execution, routines, calendar writes, owner commands, due-reminder delivery, delegation escalation, no-response handoffs, and owner/personal-contact retry relays. State-read failure denies execution. Other tenants remain independently evaluated. Cancellation and deletion-status reads remain available. This slice deletes nothing and does not cancel already-scheduled provider resources; old callbacks fail closed when they reach the guarded execution boundary.
 
-Open before release: Production migration/deployment and a disposable-account Production-safe verification require separate owner authorization; final audit-evidence retention duration is **BLOCKED — LEGAL/POLICY REVIEW REQUIRED**; six unattributed `whatsapp_inbound_evidence` rows remain blocked for attribution/policy resolution; destructive relational/Storage/Carson-memory/provider/Auth deletion belongs to later explicitly authorized slices.
+Production verification used labelled disposable accounts only. Test Account A had zero People/tasks/messages/automations/routines; anon and stale-session requests were denied, a recent-authenticated request succeeded, replay returned the same request, and one request plus one transition event intentionally remain as audit evidence. Test Account B remained unfrozen and tenant-isolated. Rolled-back direct-database canaries accepted task/message/automation/routine inserts for B and denied all four for A, with no external side effect. The canonical site returned HTTP 200. No Slice A runtime error surfaced; the pre-existing Node `DEP0169` scheduler warning remains **FIX BEFORE RELEASE**. Supabase advisors also recorded an event-FK covering-index and RLS init-plan optimization as **FIX BEFORE RELEASE**.
+
+Still open: final audit-evidence retention duration is **BLOCKED — LEGAL/POLICY REVIEW REQUIRED**; six unattributed `whatsapp_inbound_evidence` rows remain blocked for attribution/policy resolution; existing in-flight cancellation is Account Deletion Slice B and requires separate owner authorization; relational/Storage/Carson-memory/provider/Auth deletion belongs to later explicitly authorized slices. The public 30-day deletion promise remains an open release gate. Slice A implements no cancellation RPC; status remains owner-readable through RLS while cancellation belongs to the later lifecycle design.
 
 ### P3 5b — recurring-manifestation supersession — PRODUCTION VERIFIED / OWNER VOICE VERIFIED / CLOSED (2026-09-26)
 
