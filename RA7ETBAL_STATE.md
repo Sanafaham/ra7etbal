@@ -41,6 +41,16 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 ## Current next task
 
+### Phase 3E — Account deletion Slice A — CODE COMPLETE, NOT DEPLOYED (2026-10-03)
+
+Status: local implementation on `codex/phase3e-account-deletion-slice-a`, based on immutable intended Main/Production lineage `0d5202c19da00a908dcd8efe097bb3ca25870692`. No Production migration, deployment, account deletion, provider cancellation, or session revocation has occurred.
+
+Slice A adds one durable source of truth (`account_deletion_requests`) plus minimum non-content transition evidence (`account_deletion_events`), an authenticated `request_account_deletion()` RPC deriving `auth.uid()` and requiring a matching Supabase Auth session created within 15 minutes, and one shared fail-closed server guard. One active request per account is enforced by a partial unique index; repeated/concurrent requests return the active process. Owner reads are RLS-scoped and clients receive no table-write grant.
+
+The freeze covers new task/message/automation/routine inserts, direct/tracked WhatsApp sends, reminder and QStash scheduling, automation creation/execution, routines, calendar writes, owner commands, due-reminder delivery, delegation escalation, no-response handoffs, and owner/personal-contact retry relays. State-read failure denies execution. Other tenants remain independently evaluated. Cancellation and deletion-status reads remain available. This slice deletes nothing and does not cancel already-scheduled provider resources; old callbacks fail closed when they reach the guarded execution boundary.
+
+Open before release: Production migration/deployment and a disposable-account Production-safe verification require separate owner authorization; final audit-evidence retention duration is **BLOCKED — LEGAL/POLICY REVIEW REQUIRED**; six unattributed `whatsapp_inbound_evidence` rows remain blocked for attribution/policy resolution; destructive relational/Storage/Carson-memory/provider/Auth deletion belongs to later explicitly authorized slices.
+
 ### P3 5b — recurring-manifestation supersession — PRODUCTION VERIFIED / OWNER VOICE VERIFIED / CLOSED (2026-09-26)
 
 **Implementation:** PR #412, merged to `main` as `91b88fd0003289b4dd5444c7ab87925da25e2256`. Production deployment identity verified by `carson-production-canary` run `36232262412` (`deployment_identity: ok`, zero failures) against that exact SHA; the merged Main tree hash was byte-identical to the approved branch head `b567ead5a239e5ed1bb9ac38756cf0c9d1aa7435`.

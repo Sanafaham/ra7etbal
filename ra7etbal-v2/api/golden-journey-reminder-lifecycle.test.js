@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+  accountDeletionBlockedResponse: vi.fn(),
+}));
+
 /**
  * GOLDEN JOURNEY 3 — Reminder lifecycle
  * Phase 3 of the Carson Engineering Hardening Project.

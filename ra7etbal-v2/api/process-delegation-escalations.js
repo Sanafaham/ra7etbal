@@ -101,6 +101,7 @@ import webpush from 'web-push';
 import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
@@ -346,6 +347,11 @@ export default async function handler(req, res) {
   const stats = { checked: tasks.length, followupsSent: 0, escalationsSent: 0, errors: [] };
 
   for (const task of tasks) {
+    const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: task.user_id });
+    if (!accountAccess.allowed) {
+      console.log('[escalation] task skipped: account consequential execution frozen', { taskId: task.id });
+      continue;
+    }
     const ageMs = now.getTime() - new Date(task.created_at).getTime();
     const skipReason = getDelegationSkipReason(task);
     if (skipReason) {
@@ -901,6 +907,11 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   // 2. Process each routine independently.
   for (const routine of routines) {
     try {
+      const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: routine.user_id });
+      if (!accountAccess.allowed) {
+        stats.skipped++;
+        continue;
+      }
       if (!isRoutineDue(routine, now)) {
         console.log('[routines] skipped (not due)', { routineId: routine.id, name: routine.name });
         stats.skipped++;
@@ -1658,6 +1669,11 @@ export async function runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }
   // ── Process each automation independently — one failure must not stop others ─
   for (const automation of automations) {
     try {
+      const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: automation.user_id });
+      if (!accountAccess.allowed) {
+        stats.skipped++;
+        continue;
+      }
       const result = await processAutomation({ automation, supabaseUrl, serviceKey, appBaseUrl, now });
       if (result === 'skipped') {
         stats.skipped++;

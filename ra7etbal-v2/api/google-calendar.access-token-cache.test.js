@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+  accountDeletionBlockedResponse: vi.fn(),
+}));
 import handler, { __resetGoogleAccessTokenCacheForTests } from "./google-calendar.js";
 
 // Confirmed production latency finding: create_calendar_event (and every

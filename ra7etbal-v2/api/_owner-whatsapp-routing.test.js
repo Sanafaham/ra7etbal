@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   recordInbound: vi.fn(),
   updateCommand: vi.fn(),
   ownerConversationalTurn: vi.fn(),
+  checkAccountConsequentialAccess: vi.fn(),
+}));
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: mocks.checkAccountConsequentialAccess,
 }));
 
 vi.mock('./task-confirm.js', () => ({
@@ -88,6 +92,8 @@ beforeEach(() => {
   mocks.executeCommand.mockReset();
   mocks.recordInbound.mockReset();
   mocks.updateCommand.mockReset();
+  mocks.checkAccountConsequentialAccess.mockReset();
+  mocks.checkAccountConsequentialAccess.mockResolvedValue({ allowed: true, code: 'allowed' });
   mocks.callRpcSingle.mockResolvedValue({ data: { status: 'completed' } });
   mocks.sendMetaMessage.mockResolvedValue({ ok: true, messageId: 'wamid.ack-1' });
   mocks.executeCommand.mockResolvedValue({

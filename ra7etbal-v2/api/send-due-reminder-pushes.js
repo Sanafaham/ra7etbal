@@ -2,6 +2,7 @@ import webpush from 'web-push';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
 
 const MAX_TASKS_PER_RUN = 50;
 export const SAFETY_NET_TASK_SELECT =
@@ -110,6 +111,16 @@ export default async function handler(req, res) {
     const debugTasks = [];
 
     for (const task of tasks) {
+      const accountAccess = await checkAccountConsequentialAccess({
+        supabaseUrl: config.values.supabaseUrl,
+        serviceKey: config.values.serviceRoleKey,
+        userId: task.user_id,
+      });
+      if (!accountAccess.allowed) {
+        skipped += 1;
+        debugTasks.push({ id: task.id, reason: `skipped: ${accountAccess.code}` });
+        continue;
+      }
       const whatsapp = await attemptOwnerReminderWhatsapp({
         task,
         supabaseUrl: config.values.supabaseUrl,

@@ -1,3 +1,5 @@
+import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
+
 /**
  * Chief-of-Staff Lifecycle Slice 1 — stalled tracked delegation → owner
  * handoff (review_type 'no_response') → owner chooses ASK AGAIN or KEEP
@@ -295,6 +297,13 @@ export async function runNoResponseHandoffs({ supabaseUrl, serviceKey, now = new
 
   for (const { task, decisions } of candidates.slice(0, NO_RESPONSE_MAX_TASKS_PER_RUN)) {
     stats.checked += 1;
+    const accountAccess = await checkAccountConsequentialAccess({
+      supabaseUrl, serviceKey, userId: task.user_id, fetchImpl,
+    });
+    if (!accountAccess.allowed) {
+      stats.skipped.push({ taskId: task.id, reason: accountAccess.code });
+      continue;
+    }
     let evidence;
     try {
       evidence = await fetchNoResponseEvidence({ supabaseUrl, serviceKey, fetchImpl, task, decisions });

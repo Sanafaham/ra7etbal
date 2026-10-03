@@ -14,6 +14,10 @@ vi.mock('./_owner-notifications.js', async (importOriginal) => ({
   ...(await importOriginal()),
   prepareOwnerPushNotification: ownerNotificationMocks.prepareOwnerPushNotification,
 }));
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 import webpush from 'web-push';
 import {

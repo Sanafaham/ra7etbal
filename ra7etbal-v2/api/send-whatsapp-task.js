@@ -4,6 +4,11 @@ import {
   markWhatsappDeliveryAccepted,
   markWhatsappDeliveryFailed,
 } from './_whatsapp-delivery.js';
+import {
+  accountDeletionBlockedResponse,
+  checkAccountConsequentialAccess,
+  resolveConsequentialOwnerFromReferences,
+} from './_account-deletion-guard.js';
 
 // Raise Vercel function timeout to 60 s so image download + Meta upload do not
 // hit the default 15 s limit and kill the entire send-whatsapp-task request.
@@ -182,6 +187,18 @@ export default async function handler(req, res) {
       }
     }
   }
+
+  const consequentialOwnerId = verifiedUid || await resolveConsequentialOwnerFromReferences({
+    supabaseUrl,
+    serviceKey,
+    references: { taskId, messageRecordId, routineId, automationRunId, personId },
+  });
+  const accountAccess = await checkAccountConsequentialAccess({
+    supabaseUrl,
+    serviceKey,
+    userId: consequentialOwnerId,
+  });
+  if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
 
   const isRoutineMessage = sendMode === 'routine_message';
   const isDirectMessage = sendMode === 'direct_message';

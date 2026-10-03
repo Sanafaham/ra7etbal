@@ -33,6 +33,11 @@
  *   K — a fresh proof submission clears and replaces prior review state
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+  accountDeletionBlockedResponse: vi.fn(),
+  resolveConsequentialOwnerFromReferences: vi.fn(async () => 'user-1'),
+}));
 
 beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-token');

@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('./_account-deletion-guard.js', () => ({
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+  accountDeletionBlockedResponse: vi.fn(),
+  resolveConsequentialOwnerFromReferences: vi.fn(async () => 'user-1'),
+}));
 import handler from './send-whatsapp-task.js';
 
 /**
