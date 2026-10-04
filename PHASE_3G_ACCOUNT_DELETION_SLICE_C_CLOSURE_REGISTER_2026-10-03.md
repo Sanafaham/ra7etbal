@@ -55,6 +55,7 @@ Slice C completion is not account-deletion completion. The overall request remai
 - Production idempotency/freeze: PASS. Completed-stage replay returned false; post-delete A memory recreation was rejected with SQLSTATE `55000`; Slice B recorded the disposable pending task and pending operation as `locally_invalidated`.
 - Production dependency preservation: PASS. Seven cleanup references remain: three Storage paths, two WhatsApp IDs, one ElevenLabs conversation ID and one provider phone-number ID. No Storage object existed at those canary paths and none was deleted. A's Auth user, profile, People and consent remain. All 35 inbound-evidence rows remain.
 - Production deployment/health: canonical site HTTP 200; no new Slice C runtime error observed. The pre-existing Node `DEP0169` warning remains separate.
+- Final scheduler snapshot: 3 relational stages completed, all for disposable `example.com` identities; 0 completed for non-disposable identities; 0 failed/blocked. The two additional completions were older already-frozen disposable requests processed by the normal scheduler. All 35 inbound-evidence rows remained and no `phase3g/` Storage object existed or was deleted.
 
 ## No-floating-work register
 
