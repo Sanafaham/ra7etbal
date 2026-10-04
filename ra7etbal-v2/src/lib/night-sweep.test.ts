@@ -325,6 +325,20 @@ describe("buildNightSweepSpoken — truthful closing (P3 Step 3, 2026-10-03)", (
     expect(spoken).not.toMatch(ALL_CLEAR);
   });
 
+  it("a task that is both the named waiter and an overdue reminder is not counted as another open item", () => {
+    const both = makeTask({
+      id: "both",
+      type: "reminder",
+      description: "Pay bills",
+      assigned_to: "Christopher",
+      needs_follow_up: true,
+      due_at: new Date(OCT3.getTime() - 86_400_000).toISOString(),
+    });
+    const spoken = buildNightSweepSpoken([both], "Sana", OCT3);
+    expect(spoken).not.toMatch(/still open/);
+    expect(spoken).toMatch(/Everything else is set\.$/);
+  });
+
   it("performs no writes to its inputs", () => {
     const tasks = oct3Shape();
     const snapshot = JSON.stringify(tasks);

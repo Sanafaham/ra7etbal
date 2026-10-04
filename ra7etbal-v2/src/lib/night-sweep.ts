@@ -672,16 +672,23 @@ export function buildNightSweepSpoken(
   // reminders are still never enumerated here and Waiting stays Waiting; only
   // the closing claim changes. A routine (non-material) waiter still allows the
   // all-clear, exactly as before.
-  const overdueReminderCount = buildMorningBrief(
+  // Counted by task id, so a task that is both a waiter and an overdue
+  // reminder is never counted twice, and the item S3 already named never
+  // counts as "other".
+  const otherOpenIds = new Set<string>();
+  for (const t of waitingOn) {
+    if (isMaterialWaitingItem(t, _now)) otherOpenIds.add(t.id);
+  }
+  for (const t of buildMorningBrief(
     currentTasks,
     [],
     _now,
     automationDigest?.routineAutomationTaskIds,
-  ).overdueItems.filter(t => t.type === "reminder").length;
-  const otherMaterialWaitingCount = waitingOn.filter(
-    t => t !== riskItem && isMaterialWaitingItem(t, _now),
-  ).length;
-  const otherOpenCount = otherMaterialWaitingCount + overdueReminderCount;
+  ).overdueItems) {
+    otherOpenIds.add(t.id);
+  }
+  if (riskItem) otherOpenIds.delete(riskItem.id);
+  const otherOpenCount = otherOpenIds.size;
   const stillOpenClose = riskItem != null
     ? (otherOpenCount === 1 ? "One other item is still open." : "Other items are still open.")
     : (otherOpenCount === 1 ? "One item is still open." : "Some items are still open.");
