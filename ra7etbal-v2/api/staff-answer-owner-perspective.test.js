@@ -22,6 +22,12 @@ import { ownerPerspectiveClarification } from '../shared/owner-perspective.js';
 
 const sendMetaMessageMock = vi.hoisted(() => vi.fn());
 vi.mock('./send-whatsapp-task.js', async (importOriginal) => ({ ...(await importOriginal()), sendMetaMessage: sendMetaMessageMock }));
+// Account-deletion freeze (main, #432/#435) is not under test here: the account is active, same pattern as
+// main's staff-decision-golden-contract.test.js. The guard itself is covered by _account-deletion-guard.test.js.
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
 
 const { resolveAndDeliverEscalationAnswer, buildStaffAnswerMessageText } = await import('./task-confirm.js');
 const handler = (await import('./task-confirm.js')).default;
