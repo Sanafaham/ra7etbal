@@ -451,9 +451,9 @@ Current disposition for this checklist: **BLOCKED — NATIVE RELEASE CANDIDATE R
 | Processor/App Privacy inventory accuracy | **FIX BEFORE RELEASE** | 33A processor matrix / 33B App Privacy | Final production/native inventory and approved disclosures |
 | Twilio applicability | **BLOCKED — PROVIDER EVIDENCE REQUIRED** | 33A processor matrix | Production flag/credential-presence evidence |
 | Third-party AI consent product direction | **PASS — VERIFIED** | This decision pack / 33A | Owner approved explicit, versioned, limited, withdrawable, voice/text-equivalent consent |
-| Third-party AI consent implementation | **FIX BEFORE RELEASE** | 33A AI consent contract / 33B | Legal/provider inputs, separately authorized implementation and release-candidate verification |
+| Third-party AI consent implementation | **INACTIVE FOUNDATION IMPLEMENTED LOCALLY — PUBLICATION / REAL-POSTGRES VERIFICATION AUTHORIZED** | 33A AI consent contract / 33B | Reviewed PR and real-PostgreSQL proof; activation, legal/provider inputs and release-candidate verification remain separate |
 | Notification lock-screen privacy direction | **PASS — VERIFIED** | This decision pack / 33C | Owner approved generic privacy-preserving content by default |
-| Notification lock-screen privacy implementation | **FIX BEFORE RELEASE — LOCALLY IMPLEMENTED AND VERIFIED** | 33C notifications | Owner review/publication, protected deployment, disposable Production verification, and later native-RC APNs/lock-screen evidence |
+| Notification lock-screen privacy implementation | **IMPLEMENTATION COMPLETE AND DEPLOYED; PRODUCTION CODE-PATH VERIFICATION COMPLETE; PHYSICAL PRODUCTION DISPLAY/TAP VERIFICATION BLOCKED — SAFE DISPOSABLE PUSH-ENABLED IDENTITY/DEVICE REQUIRED** | 33C notifications | PR #442 / merge `ab5d1a0d0ecffda6c201192f31b17774424c17e6`; do not create a canary account/infrastructure solely for this evidence; close physical evidence only when a suitable disposable reviewer/canary identity and dedicated device/runtime naturally exist; native APNs/TestFlight evidence remains separate |
 | Notification permission/fallback/delivery truth | **KEEP — VERIFIED REQUIRED** | Protected notification/reminder work | Real-device APNs and disabled-notification verification |
 | Native permissions, APNs, manifests, SDK signatures, signing and entitlements | **BLOCKED — NATIVE RELEASE CANDIDATE REQUIRED** | 33B native release gate | Exact Archive/TestFlight evidence |
 | Accessibility | **BLOCKED — NATIVE RELEASE CANDIDATE REQUIRED** | 33C accessibility gate | Real-device VoiceOver, Dynamic Type, focus, contrast, target, motion and announcement evidence |
@@ -468,9 +468,9 @@ No new competing workstream is created. This pack is the decision layer over the
 
 ## L. Current bounded implementation status
 
-### Current slice: generic notification-content privacy — locally implemented and verified
+### Notification-content privacy — deployed; physical display evidence dependency remains open
 
-The separately authorized bounded implementation now replaces sensitive task/person/calendar/communication content in every current server-side Web Push producer with the approved generic wording and independently enforces the same copy in the service worker. Opaque authenticated routing and delivery-evidence fields remain intact; detailed content remains available only through the existing authenticated in-app records.
+PR #442, merged as `ab5d1a0d0ecffda6c201192f31b17774424c17e6`, replaces sensitive task/person/calendar/communication content in all five current Production Web Push producer paths with the approved generic wording. The payload allow-list is verified, and the deployed Production service worker independently constructs the same generic display copy. Opaque authenticated routing and delivery-evidence fields remain intact; detailed content remains available only through the existing authenticated in-app records.
 
 Why this slice was selected:
 
@@ -481,15 +481,16 @@ Why this slice was selected:
 - It is less assumption-dependent than AI consent implementation, whose exact user-facing wording, provider representations and consent-evidence retention still require legal/provider inputs.
 - It changes presentation content only; reminder scheduling, QStash, delivery evidence, notification permission, retries, Carson attention state and in-app discoverability remain protected.
 
-Completed local protection evidence:
+Completed protection evidence:
 
 1. Focused privacy/producer/service-worker tests: 202/202 passed.
 2. Protected pretest: 126/126 passed; impact map: 35/35 passed; state integrity: 22/22 passed; registry validation passed.
 3. Typecheck and production build passed.
 4. Current-main full protected suite: 2,831 passed, 4 skipped, 3 todo, zero failures.
 5. Diff inspection confirms no change to reminder timing, QStash/pg_cron, subscription lifecycle, permission prompts, delivery evidence, retries, authentication, RLS, schema, Carson routing, WhatsApp, or authenticated in-app content.
+6. Production code-path verification confirms the deployed generic payload and service-worker construction.
 
-No commit, PR, merge or deployment has been performed. Publication/deployment requires owner authorization and the established protected workflow. Production closure additionally requires a disposable controlled push proof; native APNs/lock-screen closure requires the exact native release candidate. Slice D, Auth changes, privacy-policy publication, provider deletion, Google Play work, agentic-safety verification and cumulative public-release review remain unauthorized.
+Physical Production display/tap verification has not been performed and must not be described as PASS. It is **BLOCKED — SAFE DISPOSABLE PUSH-ENABLED IDENTITY/DEVICE REQUIRED**. Per owner decision, no disposable Production Auth account/device or additional canary infrastructure will be created solely to close this evidence gap. The implementation must not be reopened without contradictory evidence. Native APNs/TestFlight notification verification remains separately blocked on the exact native release candidate, and richer previews remain unimplemented and unauthorized. Slice D, Auth changes, privacy-policy publication, provider deletion, Google Play work, agentic-safety verification and cumulative public-release review remain unauthorized.
 
 ## Boundary confirmation
 
@@ -497,7 +498,7 @@ No commit, PR, merge or deployment has been performed. Publication/deployment re
 - Database/schema/RLS/Auth changes: none.
 - Slice D or Storage deletion: none.
 - Provider deletion/revocation/configuration: none.
-- Notification behavior changes: generic external Web Push display content implemented locally; scheduling, routing, evidence and authenticated in-app content unchanged. Not deployed.
+- Notification behavior changes: generic external Web Push display content is deployed through PR #442 / `ab5d1a0d0ecffda6c201192f31b17774424c17e6`; scheduling, routing, evidence and authenticated in-app content remain unchanged. Physical Production display/tap verification remains blocked on a safe disposable push-enabled identity/device.
 - Native iOS/App Store Connect work: none.
 - Privacy-policy publication: none.
 - Payment/analytics implementation: none.

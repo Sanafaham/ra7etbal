@@ -1621,6 +1621,43 @@
       ]
     },
     {
+      "id": "ai_consent_authority_foundation",
+      "contract": "AI-transfer authority evidence is one immutable, owner-scoped event ledger. Authenticated grant and withdrawal RPCs derive auth.uid(), replay by event id is idempotent only for identical evidence, and withdrawal or service-controlled supersession invalidates the targeted grant without rewriting it. Deterministic evaluation denies missing, stale, withdrawn, superseded, wrong-provider, wrong-purpose, and under-scoped category authority. Static manifests enumerate possible transfer categories for all proven Anthropic, ElevenLabs, and OpenAI call-site families. Slice 1 is intentionally inactive: no provider call imports or invokes this authority yet.",
+      "business_importance": "critical — future AI disclosure authority depends on tenant-isolated, auditable, fail-closed evidence without changing current Carson behavior before activation is separately authorized.",
+      "production_entry_points": [],
+      "files_functions": [
+        "src/lib/ai-consent-authority.ts:evaluateAiConsentAuthority",
+        "src/lib/ai-transfer-manifests.ts:AI_TRANSFER_MANIFESTS"
+      ],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["ai_consent_events"],
+        "rpcs": ["grant_ai_consent", "withdraw_ai_consent", "supersede_ai_consent", "evaluate_ai_consent_authority"],
+        "migrations": ["supabase/migrations/20261004120000_ai_consent_authority_foundation.sql"]
+      },
+      "external_boundaries": ["None in Slice 1 — manifests describe future Anthropic, ElevenLabs, and OpenAI enforcement boundaries but are not imported by active provider paths"],
+      "focused_tests": [
+        "api/ai-consent-authority-migration.test.js",
+        "src/lib/ai-consent-authority.test.ts",
+        "src/lib/ai-transfer-manifests.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "db_contract_tests": [
+        "supabase/migrations/verification/ai_consent_authority_bootstrap.sql",
+        "supabase/migrations/verification/ai_consent_authority_verification.sql",
+        "supabase/migrations/verification/ai_consent_authority_rollback_verification.sql"
+      ],
+      "production_canary_required": false,
+      "rollback_risk": "low while inactive and before real grants exist; Production migration/application and later enforcement activation each require separate owner authorization.",
+      "verification_status": "Local unit/static migration tests complete. Real-Postgres RLS/RPC/immutability verification is defined in .github/workflows/ai-consent-authority-verification.yml but is not claimed as a required merge gate until branch protection is separately updated and verified; it cannot execute locally in this checkout because no local Postgres server/container is available.",
+      "unresolved": [
+        "Production schema application is not authorized.",
+        "Provider gating activation, consent UI/wording, evidence retention, lawful basis, and live provider configuration remain separate blocked work."
+      ]
+    },
+    {
       "id": "tavily_mcp_credential_security_contract",
       "contract": "Production Carson's Tavily web-search access must go through an ElevenLabs MCP server whose connection URL never carries the raw Tavily API key (or any other credential) as a query parameter, authenticating instead via ElevenLabs' workspace stored-secret reference (secret_token). The active MCP (wPijh8iY4yMWQPIf4R24) must remain referenced by Carson's mcp_server_ids; the retired, credential-embedding MCP (FcjPIUs6P8UBlIdW2BSb, deleted 2026-09-10) must never be reattached or recreated. approval_policy must remain require_approval_per_tool with tavily_search/tavily_extract/tavily_research auto_approved and tavily_crawl/tavily_map left unapproved — matching the exact permission boundary verified in production before and after the 2026-09-10 remediation. Perplexity (ip9w8BVxQBzSovyzaq1X) must never be altered as a side effect of Tavily maintenance. This is a live-ElevenLabs-configuration contract, not a repo-runtime-behavior contract — no api/, src/lib/, or supabase/migrations/ file implements or can verify it; see RA7ETBAL_STATE.md's 'Tavily MCP Credential-Security Remediation' entry for the full incident, remediation, and this contract's complete text.",
       "business_importance": "critical — the confirmed defect (2026-09-10) was a live Tavily API key readable in plaintext by anyone with ElevenLabs config read access, embedded in the old MCP server's connection URL. Regression here is a direct credential-exposure security defect, not a behavioral bug — same severity class as the whatsapp_send_authentication_boundary and google_calendar_oauth_identity_binding capabilities below.",
