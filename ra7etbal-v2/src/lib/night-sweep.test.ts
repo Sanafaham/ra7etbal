@@ -208,3 +208,123 @@ describe("buildNightSweepSpoken — post-midnight continuation (PR #308 protecti
     expect(spoken).not.toContain("Good morning");
   });
 });
+
+// P3 Step 3 (S1) — Night Sweep waiting-state truth. Real Production evidence
+// (owner session conv_5901m3z8nhpjetxvm9ffcpy60bbm, 2026-10-02): five
+// escalated, unconfirmed Christopher delegations plus seven overdue reminders,
+// yet the opening said "Christopher still hasn't confirmed the car task.
+// Everything else is set." The named item is only a representative; the brief
+// must state that more material waiting work exists and must not close with
+// an all-clear. Overdue reminders stay outside Night Sweep (existing contract).
+describe("buildNightSweepSpoken — material waiting count truth (P3 Step 3, S1)", () => {
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 60 * 60 * 1000).toISOString();
+  const escalatedDelegation = (id: string, description: string, createdHoursAgo: number, assignee = "Christopher") =>
+    makeTask({
+      id,
+      type: "delegation",
+      assigned_to: assignee,
+      status: "pending",
+      description,
+      created_at: hoursAgo(createdHoursAgo),
+      escalated_at: hoursAgo(createdHoursAgo - 1),
+    });
+  const overdueReminder = (id: string, description: string, dueHoursAgo: number) =>
+    makeTask({
+      id,
+      type: "reminder",
+      status: "pending",
+      description,
+      created_at: hoursAgo(dueHoursAgo + 1),
+      due_at: hoursAgo(dueHoursAgo),
+    });
+
+  // Shape of the real 2026-10-02 Production state (oldest first).
+  const productionDelegations = [
+    escalatedDelegation("d1", "bring the car around.", 18 * 24),
+    escalatedDelegation("d2", "bring the car around.", 17 * 24),
+    escalatedDelegation("d3", "Make a pizza for dinner.", 15 * 24),
+    escalatedDelegation("d4", "call me now.", 5 * 24),
+    escalatedDelegation("d5", "prepare lunch for me and track this until he confirms it.", 3 * 24),
+  ];
+  const productionOverdueReminders = [
+    overdueReminder("r1", "Call Loulya", 38 * 24),
+    overdueReminder("r2", "Check my mailbox", 38 * 24),
+    overdueReminder("r3", "Check my email", 38 * 24),
+    overdueReminder("r4", "Pay bills", 36 * 24),
+    overdueReminder("r5", "Call the doctor", 36 * 24),
+    overdueReminder("r6", "Call Loulya", 24 * 24),
+    overdueReminder("r7", "Call Loulya", 12 * 24),
+  ];
+
+  it("A. zero material waiting items — unchanged close", () => {
+    expect(buildNightSweepSpoken([], "Sana", NOW)).toBe("Good evening Sana. You can close the day.");
+    const routine = makeTask({ type: "delegation", assigned_to: "Grace", status: "pending", created_at: hoursAgo(1) });
+    const spoken = buildNightSweepSpoken([routine], "Sana", NOW);
+    expect(spoken).toBe("Good evening Sana. Everything else is set.");
+    expect(spoken).not.toMatch(/more waiting/);
+  });
+
+  it("B. exactly one material waiting item — unchanged wording", () => {
+    const spoken = buildNightSweepSpoken([escalatedDelegation("d1", "bring the car around.", 48)], "Sana", NOW);
+    expect(spoken).toBe("Good evening Sana. Christopher still hasn't confirmed the car task. Everything else is set.");
+  });
+
+  it("C. multiple material waiting items — states the others and never closes with an all-clear", () => {
+    const tasks = [
+      escalatedDelegation("d1", "bring the car around.", 48),
+      escalatedDelegation("d2", "Make a pizza for dinner.", 24, "Grace"),
+    ];
+    const spoken = buildNightSweepSpoken(tasks, "Sana", NOW);
+    expect(spoken).toBe(
+      "Good evening Sana. Christopher still hasn't confirmed the car task, and one more waiting item is still open.",
+    );
+    expect(spoken).not.toContain("Everything else is set.");
+  });
+
+  it("C2. non-material (fresh, routine) waiting items are not counted", () => {
+    const tasks = [
+      escalatedDelegation("d1", "bring the car around.", 48),
+      makeTask({ id: "fresh", type: "delegation", assigned_to: "Grace", status: "pending", created_at: hoursAgo(1) }),
+    ];
+    expect(buildNightSweepSpoken(tasks, "Sana", NOW)).toBe(
+      "Good evening Sana. Christopher still hasn't confirmed the car task. Everything else is set.",
+    );
+  });
+
+  it("D. real Production shape — five escalated Christopher delegations", () => {
+    const spoken = buildNightSweepSpoken(productionDelegations, "Sana", NOW);
+    expect(spoken).toBe(
+      "Good evening Sana. Christopher still hasn't confirmed the car task, and four more waiting items are still open.",
+    );
+  });
+
+  it("E. overdue reminders do not change Night Sweep output (existing reminder contract untouched)", () => {
+    const shapes: Task[][] = [[], [escalatedDelegation("d1", "bring the car around.", 48)], productionDelegations];
+    for (const shape of shapes) {
+      const without = buildNightSweepSpoken(shape, "Sana", NOW);
+      const withReminders = buildNightSweepSpoken([...shape, ...productionOverdueReminders], "Sana", NOW);
+      expect(withReminders).toBe(without);
+      expect(withReminders).not.toMatch(/reminder|overdue|missed|unseen|ignored|completed/i);
+    }
+  });
+
+  it("F. no false all-clear when more material waiting items exist — with tomorrow events and with Needs You", () => {
+    const tomorrow = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() + 1, 10, 0, 0);
+    const events = [{ id: "ev1", title: "Dentist", start: tomorrow.toISOString(), end: null, location: null, allDay: false }];
+    const withEvents = buildNightSweepSpoken(productionDelegations, "Sana", NOW, events);
+    expect(withEvents).toContain("and four more waiting items are still open.");
+    expect(withEvents).not.toContain("Everything else is set.");
+
+    const withNeedsYou = buildNightSweepSpoken(productionDelegations, "Sana", NOW, [], undefined, [
+      { id: "esc-1", staffName: "Grace", inboundText: "done?", escalationReason: null, receivedAt: NOW.toISOString(), taskId: null, decisionId: "dec-1", deepLinkToken: "tok" },
+    ]);
+    expect(withNeedsYou).toContain("and four more waiting items are still open.");
+    expect(withNeedsYou).not.toContain("Everything else is set.");
+  });
+
+  it("waiting work is never described as completed or handled", () => {
+    const spoken = buildNightSweepSpoken(productionDelegations, "Sana", NOW);
+    expect(spoken).not.toMatch(/\b(handled|done|completed|finished)\b/i);
+    expect(spoken).not.toMatch(/(?<!hasn't )confirmed the/i);
+  });
+});

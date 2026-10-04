@@ -497,6 +497,9 @@ function nsEvLocalDate(ev: CalendarEvent): Date | null {
  *   3. OPEN LOOP             — top waiter, risk-framed when escalated/stale
  *   4. TOMORROW SIGNAL       — calendar shape or fused risk+calendar sentence
  *   5. CLOSE                 — "You can close the day." / "Everything else is set."
+ *                              (never "Everything else is set." while other
+ *                              material waiting items are open — S3 then
+ *                              states how many; P3 Step 3, S1)
  *
  * Dedup rule: if section 3 names the risk and section 4 would repeat it,
  * section 4 is omitted and section 5 uses "That is the main thing to check."
@@ -594,6 +597,11 @@ export function buildNightSweepSpoken(
   // isMaterialWaitingItem()'s doc comment (morning-brief.ts) for the exact
   // signals used — shared with Morning Brief so both agree on what matters.
   const riskItem = waitingOn.find(t => isMaterialWaitingItem(t, _now)) ?? null;
+  // P3 Step 3 (S1): the named risk is only a representative. Count the other
+  // material waiting items so the brief never implies it is the only one.
+  const otherMaterialWaitingCount = riskItem
+    ? waitingOn.filter(t => t !== riskItem && isMaterialWaitingItem(t, _now)).length
+    : 0;
 
   let section3 = "";
   if (riskItem) {
@@ -612,6 +620,10 @@ export function buildNightSweepSpoken(
       section3 = who && what
         ? `${who} needs to confirm the ${what} today.`
         : "One item needs confirmation today.";
+    }
+    if (otherMaterialWaitingCount > 0) {
+      const n = otherMaterialWaitingCount;
+      section3 = `${section3.slice(0, -1)}, and ${nsSpokenCount(n)} more waiting ${n === 1 ? "item is" : "items are"} still open.`;
     }
   }
 
@@ -665,9 +677,13 @@ export function buildNightSweepSpoken(
     section5 = "That is the main thing to check before tomorrow.";
   } else if (riskItem != null) {
     // Risk was named in S3; S4 may have calendar shape (not fused risk).
+    // Never close with an all-clear while other material waiting items are
+    // still open — S3 already states how many (P3 Step 3, S1).
     section5 = tomorrowEvs.length > 0
       ? "That is the main thing to check before tomorrow."
-      : "Everything else is set.";
+      : otherMaterialWaitingCount > 0
+        ? ""
+        : "Everything else is set.";
   } else {
     // Fresh waiters but no stale/escalated risk.
     section5 = "Everything else is set.";
