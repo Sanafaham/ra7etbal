@@ -10,7 +10,7 @@ import {
   collectSupersededManifestationIds,
   withoutSupersededManifestations,
 } from "../../shared/carson-recurring-manifestations.js";
-import { taskLabel, buildCompletionPhrase, isMaterialWaitingItem } from "./morning-brief";
+import { taskLabel, buildCompletionPhrase, isMaterialWaitingItem, buildMorningBrief } from "./morning-brief";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 
@@ -497,6 +497,8 @@ function nsEvLocalDate(ev: CalendarEvent): Date | null {
  *   3. OPEN LOOP             — top waiter, risk-framed when escalated/stale
  *   4. TOMORROW SIGNAL       — calendar shape or fused risk+calendar sentence
  *   5. CLOSE                 — "You can close the day." / "Everything else is set."
+ *                              (all-clear only when no other material work remains;
+ *                              otherwise a concise "still open" close)
  *
  * Dedup rule: if section 3 names the risk and section 4 would repeat it,
  * section 4 is omitted and section 5 uses "That is the main thing to check."
@@ -656,21 +658,56 @@ export function buildNightSweepSpoken(
   const riskFusedInS4 = !riskAlreadyNamed && riskItem != null && section4.length > 0;
   const totalWaiting = waitingOn.length;
 
+  // Truthful-closing rule (owner product decision, P3 Step 3, 2026-10-03).
+  // Production 2026-10-03: S3 named one escalated Christopher delegation and
+  // S5 then said "Everything else is set." while four more escalated
+  // delegations and seven overdue reminders were still open — a false
+  // all-clear. An all-clear close ("You can close the day." / "Everything else
+  // is set.") is now spoken only when no OTHER material unresolved work
+  // remains. "Material" reuses existing definitions only: a waiting item that
+  // isMaterialWaitingItem() already treats as briefing-worthy, or an overdue
+  // reminder from the Morning Brief's own overdue population
+  // (buildMorningBrief().overdueItems — same P3 5b membership and
+  // routineAutomationTaskIds exclusion, no second population). Overdue
+  // reminders are still never enumerated here and Waiting stays Waiting; only
+  // the closing claim changes. A routine (non-material) waiter still allows the
+  // all-clear, exactly as before.
+  // Counted by task id, so a task that is both a waiter and an overdue
+  // reminder is never counted twice, and the item S3 already named never
+  // counts as "other".
+  const otherOpenIds = new Set<string>();
+  for (const t of waitingOn) {
+    if (isMaterialWaitingItem(t, _now)) otherOpenIds.add(t.id);
+  }
+  for (const t of buildMorningBrief(
+    currentTasks,
+    [],
+    _now,
+    automationDigest?.routineAutomationTaskIds,
+  ).overdueItems) {
+    otherOpenIds.add(t.id);
+  }
+  if (riskItem) otherOpenIds.delete(riskItem.id);
+  const otherOpenCount = otherOpenIds.size;
+  const stillOpenClose = riskItem != null
+    ? (otherOpenCount === 1 ? "One other item is still open." : "Other items are still open.")
+    : (otherOpenCount === 1 ? "One item is still open." : "Some items are still open.");
+
   let section5: string;
   if (sectionNeedsYou) {
     section5 = "That decision is the main thing before you're done for tonight.";
   } else if (totalWaiting === 0) {
-    section5 = "You can close the day.";
+    section5 = otherOpenCount > 0 ? stillOpenClose : "You can close the day.";
   } else if (riskFusedInS4) {
     section5 = "That is the main thing to check before tomorrow.";
   } else if (riskItem != null) {
     // Risk was named in S3; S4 may have calendar shape (not fused risk).
     section5 = tomorrowEvs.length > 0
       ? "That is the main thing to check before tomorrow."
-      : "Everything else is set.";
+      : otherOpenCount > 0 ? stillOpenClose : "Everything else is set.";
   } else {
     // Fresh waiters but no stale/escalated risk.
-    section5 = "Everything else is set.";
+    section5 = otherOpenCount > 0 ? stillOpenClose : "Everything else is set.";
   }
 
   // ── Automation signal (appended only when there is room) ──────────────────
