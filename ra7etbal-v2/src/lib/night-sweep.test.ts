@@ -208,3 +208,129 @@ describe("buildNightSweepSpoken — post-midnight continuation (PR #308 protecti
     expect(spoken).not.toContain("Good morning");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P3 Step 3 — truthful-closing rule (owner product decision, 2026-10-03)
+//
+// Production 2026-10-03 (conv_5901m3z8nhpjetxvm9ffcpy60bbm): the spoken
+// opening was "Christopher still hasn't confirmed the car task. Everything
+// else is set." while four more escalated Christopher delegations and seven
+// overdue reminders were still open. Night Sweep stays concise and still
+// never enumerates overdue reminders, but it must never claim an all-clear
+// that authoritative state contradicts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OCT3 = new Date("2026-10-02T21:35:00.000Z");
+const ALL_CLEAR = /Everything else is set|You can close the day/;
+const OVERDUE_LABELS = ["Call Loulya", "Call the doctor", "Pay bills", "Check my email", "Check my mailbox"];
+
+function escalatedChristopher(id: string, description: string, daysAgo: number): Task {
+  return makeTask({
+    id,
+    type: "delegation",
+    description,
+    assigned_to: "Christopher",
+    needs_follow_up: true,
+    created_at: new Date(OCT3.getTime() - daysAgo * 86_400_000).toISOString(),
+    escalated_at: new Date(OCT3.getTime() - (daysAgo - 1) * 86_400_000).toISOString(),
+  });
+}
+
+function overdueReminder(id: string, description: string, daysOverdue: number): Task {
+  return makeTask({
+    id,
+    type: "reminder",
+    description,
+    due_at: new Date(OCT3.getTime() - daysOverdue * 86_400_000).toISOString(),
+    created_at: new Date(OCT3.getTime() - (daysOverdue + 1) * 86_400_000).toISOString(),
+  });
+}
+
+function oct3Shape(): Task[] {
+  return [
+    escalatedChristopher("d1", "bring the car around.", 18),
+    escalatedChristopher("d2", "bring the car around.", 17),
+    escalatedChristopher("d3", "Make a pizza for dinner.", 15),
+    escalatedChristopher("d4", "call me now.", 5),
+    escalatedChristopher("d5", "prepare lunch for me and track this until he confirms it.", 3),
+    overdueReminder("r1", "Call Loulya", 38),
+    overdueReminder("r2", "Check my mailbox", 38),
+    overdueReminder("r3", "Check my email", 38),
+    overdueReminder("r4", "Pay bills", 35),
+    overdueReminder("r5", "Call the doctor", 35),
+    overdueReminder("r6", "Call Loulya", 24),
+    overdueReminder("r7", "Call Loulya", 12),
+  ];
+}
+
+describe("buildNightSweepSpoken — truthful closing (P3 Step 3, 2026-10-03)", () => {
+  it("reproduces the Oct 3 shape: one named escalated item never becomes 'everything else is set'", () => {
+    const spoken = buildNightSweepSpoken(oct3Shape(), "Sana", OCT3, [], emptyDigest(), []);
+    expect(spoken).toContain("Christopher still hasn't confirmed the car task.");
+    expect(spoken).not.toMatch(ALL_CLEAR);
+    expect(spoken).toContain("Other items are still open.");
+  });
+
+  it("one named escalated item + other escalated waiting items, no reminders: no false all-clear", () => {
+    const tasks = oct3Shape().filter((t) => t.type === "delegation");
+    const spoken = buildNightSweepSpoken(tasks, "Sana", OCT3);
+    expect(spoken).not.toMatch(ALL_CLEAR);
+    expect(spoken).toContain("Other items are still open.");
+  });
+
+  it("one named escalated item + overdue reminders only: no false all-clear", () => {
+    const tasks = [escalatedChristopher("d1", "bring the car around.", 18), overdueReminder("r1", "Pay bills", 35)];
+    const spoken = buildNightSweepSpoken(tasks, "Sana", OCT3);
+    expect(spoken).toContain("Christopher still hasn't confirmed the car task.");
+    expect(spoken).not.toMatch(ALL_CLEAR);
+    expect(spoken).toContain("One other item is still open.");
+  });
+
+  it("overdue reminders alone (no waiting) prevent 'You can close the day'", () => {
+    const tasks = [overdueReminder("r1", "Pay bills", 35), overdueReminder("r2", "Call the doctor", 35)];
+    const spoken = buildNightSweepSpoken(tasks, "Sana", OCT3);
+    expect(spoken).not.toMatch(ALL_CLEAR);
+    expect(spoken).toBe("Good evening Sana. Some items are still open.");
+  });
+
+  it("overdue reminders are never enumerated and nothing is promoted to Needs You", () => {
+    const spoken = buildNightSweepSpoken(oct3Shape(), "Sana", OCT3, [], emptyDigest(), []);
+    for (const label of OVERDUE_LABELS) expect(spoken).not.toContain(label);
+    expect(spoken).not.toMatch(/overdue|decision needs you|needs your review/i);
+  });
+
+  it("stays concise: at most five sentences", () => {
+    const spoken = buildNightSweepSpoken(oct3Shape(), "Sana", OCT3, [], emptyDigest(), []);
+    expect(spoken.split(/(?<=[.!?])\s+/).length).toBeLessThanOrEqual(5);
+  });
+
+  it("a genuine all-clear is still spoken when nothing material remains", () => {
+    expect(buildNightSweepSpoken([], "Sana", OCT3)).toBe("Good evening Sana. You can close the day.");
+    const onlyNamed = [escalatedChristopher("d1", "bring the car around.", 18)];
+    const spoken = buildNightSweepSpoken(onlyNamed, "Sana", OCT3);
+    expect(spoken).toBe("Good evening Sana. Christopher still hasn't confirmed the car task. Everything else is set.");
+  });
+
+  it("a reminder that is not overdue, or is tied to an open routine automation run, does not block the all-clear", () => {
+    const future = makeTask({ id: "f1", type: "reminder", description: "Pay bills", due_at: new Date(OCT3.getTime() + 3_600_000).toISOString() });
+    const routine = overdueReminder("rr", "Charge your phone", 1);
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set(["rr"]) });
+    expect(buildNightSweepSpoken([future, routine], "Sana", OCT3, [], digest)).toBe("Good evening Sana. You can close the day.");
+  });
+
+  it("calendar behavior is unchanged: a tomorrow event still yields the 'main thing to check' close", () => {
+    const tomorrow = { id: "ev1", title: "Board Review", start: new Date(OCT3.getTime() + 86_400_000).toISOString(), end: null, allDay: false } as never;
+    const spoken = buildNightSweepSpoken(oct3Shape(), "Sana", OCT3, [tomorrow], emptyDigest(), []);
+    expect(spoken).toContain("That is the main thing to check before tomorrow.");
+    expect(spoken).not.toMatch(ALL_CLEAR);
+  });
+
+  it("performs no writes to its inputs", () => {
+    const tasks = oct3Shape();
+    const snapshot = JSON.stringify(tasks);
+    for (const t of tasks) Object.freeze(t);
+    Object.freeze(tasks);
+    expect(() => buildNightSweepSpoken(tasks, "Sana", OCT3, [], emptyDigest(), [])).not.toThrow();
+    expect(JSON.stringify(tasks)).toBe(snapshot);
+  });
+});
