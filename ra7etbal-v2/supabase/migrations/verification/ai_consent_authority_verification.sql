@@ -91,12 +91,17 @@ DO $$ DECLARE v record; BEGIN
   IF (SELECT count(*) FROM public.ai_consent_events WHERE target_grant_id='aaaaaaaa-0000-4000-8000-000000000001' AND event_type='withdraw') <> 1 THEN RAISE EXCEPTION 'withdrawal replay duplicated evidence'; END IF;
   SELECT * INTO v FROM public.evaluate_ai_consent_authority('11111111-1111-4111-8111-111111111111','ai-v1','anthropic','ai_model_provider','carson_reasoning',ARRAY['user_text']);
   IF v.authorized THEN RAISE EXCEPTION 'withdrawn grant authorized'; END IF;
+END $$;
+RESET ROLE;
+
+-- The service role has no UPDATE/DELETE grant. Prove the immutable trigger
+-- separately as the database owner, which otherwise has table privileges.
+DO $$ BEGIN
   BEGIN UPDATE public.ai_consent_events SET purpose='rewritten' WHERE id='aaaaaaaa-0000-4000-8000-000000000001'; RAISE EXCEPTION 'historical update succeeded';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL; END;
   BEGIN DELETE FROM public.ai_consent_events WHERE id='aaaaaaaa-0000-4000-8000-000000000001'; RAISE EXCEPTION 'historical delete succeeded';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL; END;
 END $$;
-RESET ROLE;
 
 -- A new explicit v2 grant can authorize, then service supersession revokes it.
 SET ROLE authenticated;
