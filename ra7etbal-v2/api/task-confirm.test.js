@@ -590,8 +590,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(true);
     expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(pushPayload.body).toBe('Ghulam confirmed: Buy TEREA Silver.');
-    expect(pushPayload.body).not.toMatch(/sent an alternative/i);
+    expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(pushPayload)).not.toMatch(/Ghulam|Buy TEREA Silver|sent an alternative/i);
   });
 
   it('approved review with 3 proof photos: all 3 sent to the vision review together, all 3 persisted', async () => {
@@ -928,9 +928,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
     expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls.at(-1)[1]);
-    expect(pushPayload.body).toContain("Grace's proof");
-    expect(pushPayload.body).toContain('still needs correction');
-    expect(pushPayload.body).not.toMatch(/Carson flagged|hasn't confirmed/i);
+    expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(pushPayload)).not.toMatch(/Grace|proof|still needs correction|Carson flagged|hasn't confirmed/i);
   });
 
   it('regression: wrong pizza proof rejected, corrected salad proof accepted, stale correction state cannot carry forward', async () => {
@@ -1241,8 +1240,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // Owner-push path was attempted (push_subscriptions lookup ran) after the proof-attachment replace.
     expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(pushPayload.body).toContain('Grace submitted proof for review');
-    expect(pushPayload.body).not.toMatch(/flagged|hasn't confirmed/i);
+    expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(pushPayload)).not.toMatch(/Grace|submitted proof for review|flagged|hasn't confirmed/i);
   });
 
   it('Phase 8.1 — substitute_review: keeps the task pending, sends no correction WhatsApp, does not increment the cycle count, saves the worker reply, and pushes the owner', async () => {
@@ -1288,7 +1287,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(pushPayload.body).toContain('sent an alternative for review');
+    expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(pushPayload)).not.toMatch(/TEREA|Turquoise|sent an alternative for review/i);
   });
 
   // Substitute-approval production failure follow-up (2026-08-26,
@@ -1509,7 +1509,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       // proves this reused the existing owner-decision machinery rather
       // than inventing a parallel one.
       const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-      expect(pushPayload.body).toContain('sent an alternative for review');
+      expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+      expect(JSON.stringify(pushPayload)).not.toMatch(/Can I get this one instead|sent an alternative for review/i);
     });
 
     it('11 — genuine post-action wording ("I bought Turquoise instead.") does NOT use the pre-action bypass and stays correction_required', async () => {
@@ -1763,8 +1764,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(pushPayload.body).toBe('Grace confirmed: check the closet outfit');
-    expect(pushPayload.body).not.toMatch(/Carson flagged|flagged|submitted proof for review|hasn't confirmed/i);
+    expect(pushPayload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(pushPayload)).not.toMatch(/Grace|check the closet outfit|Carson flagged|flagged|submitted proof for review|hasn't confirmed/i);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
   });
 
@@ -3998,13 +3999,15 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
     // No call ever touches reminder_delivery_events for this push variant.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('reminder_delivery_events'))).toBe(false);
     // sendOwnerPush's own single push call carries no receipt.
-    const pushCall = vi.mocked(webpush.sendNotification).mock.calls.find(([, body]) =>
-      JSON.parse(body).body?.includes('sent an alternative'));
+    const pushCall = vi.mocked(webpush.sendNotification).mock.calls[0];
     expect(pushCall).toBeTruthy();
     expect(JSON.parse(pushCall[1]).receipt).toBeUndefined();
+    expect(JSON.parse(pushCall[1]).body).toBe('You have an update in Ra7etBal.');
+    expect(pushCall[1]).not.toContain('sent an alternative');
     const inboxCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/owner_notifications'));
     expect(inboxCall).toBeTruthy();
     expect(JSON.parse(inboxCall[1].body).event_key).toBe('task_substitute_review:task-1');
+    expect(JSON.parse(inboxCall[1].body).body).toContain('sent an alternative for review');
   });
 
   it('a receipt-signing failure (e.g. CRON_SECRET unset) still sends the push, without a receipt, instead of losing the notification entirely', async () => {
@@ -4029,7 +4032,9 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
     expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
     const payload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(payload.body).toBe('Christopher confirmed: get the pizza');
+    expect(payload.body).toBe('You have an update in Ra7etBal.');
+    expect(JSON.stringify(payload)).not.toContain('Christopher');
+    expect(JSON.stringify(payload)).not.toContain('get the pizza');
     expect(payload.receipt).toBeUndefined();
   });
 

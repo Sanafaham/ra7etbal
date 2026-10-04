@@ -68,6 +68,7 @@ import {
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { dedupeSubscriptionsByEndpoint } from './send-push-for-task.js';
 import { checkAccountConsequentialAccess, accountDeletionBlockedResponse } from './_account-deletion-guard.js';
+import { buildPrivacySafePushPayload } from './_push-content-privacy.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -2044,7 +2045,7 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
 
   const notificationKind = variant ? `task_${variant}` : 'task_completed';
   for (const sub of subscriptions) {
-    let payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
+    let payload = JSON.stringify(buildPrivacySafePushPayload());
 
     if (taskId) {
       // Evidence/receipt construction is best-effort and must never block
@@ -2054,9 +2055,7 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
       if (sentAt) {
         try {
           const receiptFields = { taskId, userId, subscriptionId: sub.id, dueAt: sentAt };
-          payload = JSON.stringify({
-            title: 'Ra7etBal',
-            body: notificationBody,
+          payload = JSON.stringify(buildPrivacySafePushPayload({
             receipt: {
               url: '/api/qstash-reminder',
               kind: 'completion',
@@ -2065,7 +2064,7 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
               dueAt: sentAt,
               token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
             },
-          });
+          }));
         } catch (err) {
           console.error('[task-confirm] completion push receipt signing failed (sending without evidence):', err?.message || err);
         }

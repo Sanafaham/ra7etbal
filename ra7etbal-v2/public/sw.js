@@ -118,8 +118,8 @@ self.addEventListener("push", function (event) {
   var show = reportDelivery(receipt, "service_worker_received")
     .then(function () { return reportDelivery(receipt, "show_notification_attempted"); })
     .then(function () {
-      return self.registration.showNotification(payload.title || "Ra7etBal reminder", {
-        body: payload.body || "A reminder is due now.",
+      return self.registration.showNotification("Ra7etBal", {
+        body: "You have an update in Ra7etBal.",
         icon: "/icons/ra7etbal-icon-192.png",
         badge: "/icons/ra7etbal-icon-180.png",
         data: {

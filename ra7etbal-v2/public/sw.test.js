@@ -25,6 +25,14 @@ describe('reminder service-worker observability contract', () => {
     expect(source).toContain('kind: receipt.kind');
   });
 
+  it('always displays generic privacy-preserving copy and never trusts payload display text', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('showNotification("Ra7etBal"');
+    expect(source).toContain('body: "You have an update in Ra7etBal."');
+    expect(source).not.toContain('showNotification(payload.title');
+    expect(source).not.toContain('body: payload.body');
+  });
+
   it('navigates an existing client, opens a target without one, and rejects unsafe URLs', async () => {
     const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
     expect(source).toContain('client.navigate(targetUrl)');

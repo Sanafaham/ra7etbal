@@ -41,6 +41,22 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 ## Current next task
 
+### 33A / 33B Apple privacy and account-lifecycle owner decisions — RECORDED (2026-10-04)
+
+Canonical decision record: `APPLE_PRIVACY_ACCOUNT_LIFECYCLE_DECISION_PACK_2026-10-04.md`.
+
+Owner-approved product direction:
+
+- The intended iOS release is **invite-only / sign-in-only**. Public signup, Auth changes and social login are not authorized. Apple review will eventually use a dedicated reviewer-access mechanism/account that preserves ordinary authorization, RLS, tenant isolation and invite-only behavior.
+- Before final account-deletion confirmation, the user may cancel or leave. Once a confirmed request enters the protected Slice A freeze/deletion lifecycle, deletion is irreversible from the user's perspective. Do not promise restoration, resurrect deleted data, or weaken freeze/recreation protection.
+- The unconditional public 30-day complete-deletion promise must not remain as a release claim unless legal and operational evidence supports it. No replacement duration or final wording is approved; this remains **BLOCKED — LEGAL/POLICY DECISION REQUIRED**.
+- Explicit, understandable, versioned and limited consent before applicable third-party AI transfer is approved product direction. Consent must cover relevant text, voice/audio, image/document and Carson-context categories, support withdrawal, remain equivalent across voice/text, and renew after material processor/data-use changes. Implementation is **FIX BEFORE RELEASE**; exact legal wording, provider representations and consent-evidence retention remain blocked.
+- Generic privacy-preserving notification content is the approved default. Sensitive task, household, staff, calendar, communication and personal details must not appear in default lock-screen/push content. The bounded Web Push payload/display implementation is **COMPLETE LOCALLY — DEPLOYMENT AUTHORIZATION REQUIRED**: all four current server-side Web Push producers now emit only `Ra7etBal` / `You have an update in Ra7etBal.` plus the existing opaque routing/evidence fields, and the service worker independently enforces the same display copy. Focused privacy/producer/service-worker tests passed 202/202; pretest 126/126; impact map 35/35; state integrity 22/22; registry validation, typecheck and build passed; current-main full protected suite 2,831 passed, 4 skipped, 3 todo. Scheduling, QStash/pg_cron, subscription lifecycle, permission, retries, delivery evidence, authenticated in-app content, Carson, WhatsApp, Auth/RLS and schema were not changed. No commit, PR, deployment or Production push was performed.
+
+Account Deletion Slices A, B and C remain closed and production verified. Slice D remains not authorized. People/consent, inbound/shared-party WhatsApp evidence, audit/deletion-evidence retention, provider-side retention/deletion and final Apple privacy representations remain blocked by their existing legal/policy or provider-evidence gates.
+
+Current bounded slice: generic notification-content privacy is implemented and locally verified, but remains unpublished and unverified in Production pending owner authorization. Production closure requires the approved patch to be committed/reviewed, deployed through the protected process, and verified using a disposable controlled notification without exposing real private content. Native APNs/lock-screen behavior remains blocked on the exact native release candidate. Account-deletion UI should not precede an end-to-end completable lifecycle; AI consent implementation should not precede the remaining legal/provider wording inputs.
+
 ### Phase 3E — Account deletion Slice A — CLOSED, DEPLOYED AND VERIFIED (2026-10-03)
 
 Status: PR #432 merged as `44116620c063c898b0aeac971994665a84d0ae22`. Production Supabase project `ggarvhgqzpooloacjgcj` has migration `20261003094421_account_deletion_slice_a`. Vercel deployment `dpl_8xFaiJBYz7URspkCcho8niN9RTWY` is READY, Production-targeted, and carries the exact merge SHA. Read-only Production canary run `37114423345` passed against that SHA.

@@ -21,6 +21,7 @@ import { Receiver } from '@upstash/qstash';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
+import { buildPrivacySafePushPayload } from './_push-content-privacy.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -186,9 +187,7 @@ export default async function handler(req, res) {
     const receiptFields = {
       taskId, userId: task.user_id, subscriptionId: sub.id, dueAt: task.due_at,
     };
-    const payload = JSON.stringify({
-      title: notification.title,
-      body: notification.body,
+    const payload = JSON.stringify(buildPrivacySafePushPayload({
       ...(notification.id ? { notificationId: notification.id } : {}),
       url: notification.target_url,
       receipt: {
@@ -198,7 +197,7 @@ export default async function handler(req, res) {
         dueAt: task.due_at,
         token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
       },
-    });
+    }));
     await recordDeliveryEvent({
       supabaseUrl, serviceRoleKey, taskId, userId: task.user_id, subscriptionId: sub.id,
       eventKey: `provider_send_attempted:${sub.id}:${sentAt}`, stage: 'provider_send_attempted',

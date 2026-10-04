@@ -3,6 +3,7 @@ import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.j
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
 import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
+import { buildPrivacySafePushPayload } from './_push-content-privacy.js';
 
 const MAX_TASKS_PER_RUN = 50;
 export const SAFETY_NET_TASK_SELECT =
@@ -462,9 +463,7 @@ async function sendTaskReminder(task, notification, subscriptions, config, attem
     const receiptFields = {
       taskId: task.id, userId: task.user_id, subscriptionId: row.id, dueAt: task.due_at,
     };
-    const payload = JSON.stringify({
-      title: notification.title,
-      body: notification.body,
+    const payload = JSON.stringify(buildPrivacySafePushPayload({
       ...(notification.id ? { notificationId: notification.id } : {}),
       url: notification.target_url,
       receipt: {
@@ -474,7 +473,7 @@ async function sendTaskReminder(task, notification, subscriptions, config, attem
         dueAt: task.due_at,
         token: signReminderReceipt(receiptFields, config.receiptSecret),
       },
-    });
+    }));
     await recordDeliveryEvent({
       supabaseUrl: config.supabaseUrl, serviceRoleKey: config.serviceRoleKey,
       taskId: task.id, userId: task.user_id, subscriptionId: row.id,

@@ -169,10 +169,11 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
     expect(mocks.getOrCreateOwnerNotification).toHaveBeenCalledTimes(1);
     expect(JSON.parse(mocks.sendNotification.mock.calls[0][1])).toEqual(expect.objectContaining({
       title: 'Ra7etBal',
-      body: 'Check the bill',
+      body: 'You have an update in Ra7etBal.',
       notificationId: 'notification-1',
       url: '/updates?tab=todo',
     }));
+    expect(mocks.sendNotification.mock.calls[0][1]).not.toContain('Check the bill');
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       pushSuccessCount: 1,
       markedSent: 1,

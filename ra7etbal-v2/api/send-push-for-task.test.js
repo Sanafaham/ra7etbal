@@ -154,10 +154,11 @@ describe('send-push-for-task reminder delivery', () => {
     }));
     expect(payload).toEqual(expect.objectContaining({
       title: 'Ra7etBal',
-      body: 'Call Loulya',
+      body: 'You have an update in Ra7etBal.',
       notificationId: 'notification-1',
       url: '/updates?tab=todo',
     }));
+    expect(JSON.stringify(payload)).not.toContain('Call Loulya');
   });
 
   it('creates the durable inbox event even when the owner has no push subscription', async () => {
