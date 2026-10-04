@@ -1,15 +1,17 @@
 # Phase 3G — Account Deletion Slice C Closure Register
 
-Date: 2026-10-03
-Status: IMPLEMENTED / NON-PRODUCTION VERIFIED / OWNER REVIEW REQUIRED
+Date: 2026-10-04
+Status: CLOSED — DEPLOYED AND PRODUCTION VERIFIED
 
 ## Baseline
 
-- Authoritative base: `5d83eb93bb966be83e60de27216bc69be96f2114` (`origin/main`).
+- Authoritative implementation base: `5d83eb93bb966be83e60de27216bc69be96f2114` (`origin/main`).
 - Slice A `44116620c063c898b0aeac971994665a84d0ae22` and Slice B `d290b201a9237ad32c59bdec69ebfa34566dc8f0` are ancestors.
 - No commits after the Slice B closure materially altered the deletion architecture.
-- Branch: `codex/phase3g-account-deletion-slice-c`.
-- Production changes and destructive real-user deletion: **NONE**.
+- PR #437 reviewed head: `9d822018be90caa0b3719ed3ef4181e1a04bc546`; merge SHA: `0a15d6f19730442d8a4da9ec85e8375e26afe164`.
+- Production migration: `20261004083856_account_deletion_slice_c` on Supabase project `ggarvhgqzpooloacjgcj`.
+- Production deployment: `dpl_8MWinKpf4vJRK9HTG6AiKTFAHZ14`, READY, exact merge SHA, canonical aliases attached.
+- Destructive real-user deletion: **NONE**. Production mutations were limited to the reviewed migration and labelled disposable canary data.
 
 ## Authoritative current deletion matrix
 
@@ -47,14 +49,19 @@ Slice C completion is not account-deletion completion. The overall request remai
 - Dependency preservation: PASS. Eight expected cleanup references and eight truthful resource-class results persisted; no personal-content field exists in cleanup evidence.
 - Focused Vitest: 9/9 PASS. Slice A/B focused regression: 51/51 PASS. Protected pretest: 126/126 PASS. Full protected suite after integration correction: 2,819 passed, 4 skipped, 3 todo, 0 failed.
 - Registry validation: PASS (28 capabilities). State integrity: 22/22 PASS. Impact map: 35/35 PASS.
-- Production schema/data access during this phase was read-only. Migration `20261003_account_deletion_slice_c.sql` was **not** applied to Production.
+- Production schema: PASS. Migration `20261004083856_account_deletion_slice_c` is recorded; RLS is enabled on both new tables; anon/authenticated cannot execute destructive RPCs; service role can; 24 frozen-account insert triggers exist; Slice A/B functions/tables remain present.
+- Production two-account canary: PASS. Request `c3c00000-0000-4000-8000-000000000003`; Account A `a3c00000…`; Account B `b3c00000…`. Both identities are labelled disposable `example.com` records. No real-user data was used.
+- Production resource truth: A deleted 8 Carson rows, 2 operational rows, 2 communication rows and 2 notification/preference rows. All eight B Carson stores remained, together with its task/message/push records; a post-delete B insert succeeded.
+- Production idempotency/freeze: PASS. Completed-stage replay returned false; post-delete A memory recreation was rejected with SQLSTATE `55000`; Slice B recorded the disposable pending task and pending operation as `locally_invalidated`.
+- Production dependency preservation: PASS. Seven cleanup references remain: three Storage paths, two WhatsApp IDs, one ElevenLabs conversation ID and one provider phone-number ID. No Storage object existed at those canary paths and none was deleted. A's Auth user, profile, People and consent remain. All 35 inbound-evidence rows remain.
+- Production deployment/health: canonical site HTTP 200; no new Slice C runtime error observed. The pre-existing Node `DEP0169` warning remains separate.
 
 ## No-floating-work register
 
 | Obligation | Disposition | Release impact / closure prerequisite |
 |---|---|---|
-| Slice C code and additive migration | READY FOR OWNER REVIEW / MERGE-ROLLOUT AUTHORIZATION | Complete remaining protected/type/build/CI review, then separate approval for rollout. |
-| Production migration/deployment/canary | DEFERRED — SLICE C ROLLOUT | Requires explicit owner authorization; disposable accounts only. |
+| Slice C code and additive migration | CLOSED — DEPLOYED AND PRODUCTION VERIFIED | PR #437, migration `20261004083856_account_deletion_slice_c`, deployment `dpl_8MWinKpf4vJRK9HTG6AiKTFAHZ14`. |
+| Production migration/deployment/canary | CLOSED — EVIDENCE RECORDED | Disposable two-account isolation, eight-store deletion, replay/freeze and dependency-preservation evidence recorded above. |
 | Real QStash confirmed-cancellation evidence | KEEP — VERIFIED REQUIRED | Real disposable scheduled message; does not block local freeze or this patch review. |
 | People and consent treatment | BLOCKED — LEGAL/POLICY DECISION REQUIRED | Define retention/deletion basis before later relational closure. |
 | Inbound WhatsApp evidence | BLOCKED — OWNERSHIP / RETENTION POLICY REQUIRED | Authoritative attribution design plus unresolved-row policy; no heuristic deletion. |
