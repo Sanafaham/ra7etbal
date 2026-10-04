@@ -1627,7 +1627,8 @@
       "production_entry_points": [],
       "files_functions": [
         "src/lib/ai-consent-authority.ts:evaluateAiConsentAuthority",
-        "src/lib/ai-transfer-manifests.ts:AI_TRANSFER_MANIFESTS"
+        "src/lib/ai-transfer-manifests.ts:AI_TRANSFER_MANIFESTS",
+        "scripts/ai-consent-tier1-relevance.mjs:hasAiConsentTier1Change"
       ],
       "shared_dependencies": [],
       "db": {
@@ -1638,6 +1639,7 @@
       "external_boundaries": ["None in Slice 1 — manifests describe future Anthropic, ElevenLabs, and OpenAI enforcement boundaries but are not imported by active provider paths"],
       "focused_tests": [
         "api/ai-consent-authority-migration.test.js",
+        "scripts/ai-consent-tier1-relevance.test.mjs",
         "src/lib/ai-consent-authority.test.ts",
         "src/lib/ai-transfer-manifests.test.ts"
       ],
@@ -1649,9 +1651,10 @@
         "supabase/migrations/verification/ai_consent_authority_verification.sql",
         "supabase/migrations/verification/ai_consent_authority_rollback_verification.sql"
       ],
+      "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": false,
       "rollback_risk": "low while inactive and before real grants exist; Production migration/application and later enforcement activation each require separate owner authorization.",
-      "verification_status": "Local unit/static migration tests complete. Real-Postgres RLS/RPC/immutability verification is defined in .github/workflows/ai-consent-authority-verification.yml but is not claimed as a required merge gate until branch protection is separately updated and verified; it cannot execute locally in this checkout because no local Postgres server/container is available.",
+      "verification_status": "Real-Postgres RLS/RPC/replay/immutability/rollback verification is routed by scripts/ai-consent-tier1-relevance.mjs through .github/workflows/carson-tier1-db-contracts.yml, an existing required main merge gate. Relevant migration, rollback, verification, registry, routing or workflow changes cannot receive a green Tier-1 result unless the complete proof succeeds in its isolated PostgreSQL database.",
       "unresolved": [
         "Production schema application is not authorized.",
         "Provider gating activation, consent UI/wording, evidence retention, lawful basis, and live provider configuration remain separate blocked work."

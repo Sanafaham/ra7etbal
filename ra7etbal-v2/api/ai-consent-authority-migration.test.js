@@ -5,6 +5,7 @@ const sql = readFileSync(new URL("../supabase/migrations/20261004120000_ai_conse
 const rollback = readFileSync(new URL("../supabase/migrations/20261004120000_ai_consent_authority_foundation.rollback.sql", import.meta.url), "utf8");
 const verification = readFileSync(new URL("../supabase/migrations/verification/ai_consent_authority_verification.sql", import.meta.url), "utf8");
 const rollbackVerification = readFileSync(new URL("../supabase/migrations/verification/ai_consent_authority_rollback_verification.sql", import.meta.url), "utf8");
+const tier1Workflow = readFileSync(new URL("../../.github/workflows/carson-tier1-db-contracts.yml", import.meta.url), "utf8");
 
 describe("AI consent authority migration", () => {
   it("uses one immutable append-only event source", () => {
@@ -68,5 +69,17 @@ describe("AI consent authority migration", () => {
       "historical update succeeded",
       "historical delete succeeded",
     ]) expect(verification).toContain(proof);
+  });
+  it("executes every consent proof stage inside the required Tier-1 job", () => {
+    expect(tier1Workflow).toContain("AI_CONSENT_RELEVANT=$(printf");
+    expect(tier1Workflow).toContain("createdb ai_consent_verify");
+    for (const file of [
+      "ai_consent_authority_bootstrap.sql",
+      "20261004120000_ai_consent_authority_foundation.sql",
+      "ai_consent_authority_verification.sql",
+      "20261004120000_ai_consent_authority_foundation.rollback.sql",
+      "ai_consent_authority_rollback_verification.sql",
+    ]) expect(tier1Workflow).toContain(file);
+    expect(tier1Workflow).not.toMatch(/continue-on-error:\s*true/);
   });
 });
