@@ -1,5 +1,7 @@
-import { createDelegationTaskAndMessage, rewriteOwnerPronouns } from "./delegations";
+import { createDelegationTaskAndMessage, resolveDelegationTaskText } from "./delegations";
 import { createDirectMessageRecord } from "./direct-messages";
+import { OwnerPerspectiveError, renderOwnerPerspective, resolveOwnerPerspective } from "./direct-message-owner-normalization";
+import { normalizePersonalNote } from "./personal-note";
 import { buildDelegationMessage } from "./delegation-message";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
 import { supabase } from "./supabase";
@@ -91,6 +93,24 @@ export async function savePending(
   let skipped = 0;
   const imagePathsByTaskId = new Map<string, string | null>();
 
+  // Owner perspective is resolved for EVERY recipient-facing item before
+  // anything is written: one unresolvable item fails the whole save closed
+  // (OwnerPerspectiveError), so nothing is persisted or sent as though the
+  // instruction succeeded.
+  const messageContentByItemId = new Map<string, string>();
+  for (const item of items) {
+    const recipient = item.assignedTo && item.assignedTo !== "__me__" ? item.assignedTo : null;
+    if ((item.type === "message" || item.type === "delegation") && recipient) {
+      enforceComposedContract(item, recipient, people, ownerName);
+    }
+    if (item.type === "message" && recipient) {
+      messageContentByItemId.set(item.id, recipientMessageContent(item, recipient, people, ownerName));
+    } else if (item.type === "delegation" && recipient) {
+      resolveDelegationTaskText(item.description, recipient, ownerName, item.ownerPerspective);
+      normalizePersonalNote(item.personalNote ?? "", ownerName, recipient, item.ownerPerspective);
+    }
+  }
+
   for (const item of items) {
     // "parked" = passive idea/information the user wants remembered, not
     // acted on ("Save this idea...", "Remember this thought...", "Hold this
@@ -131,24 +151,7 @@ export async function savePending(
         skipped += 1;
         continue;
       }
-      // For known people (in the People list), always rebuild from
-      // buildDelegationMessage so the final stored content is deterministic
-      // and never relies on AI-generated text. For unknown recipients
-      // (needsPerson: true / person not found), fall back to AI text.
-      const assignedPersonMsg = people.find(
-        (person) => person.name.trim().toLowerCase() === recipient.toLowerCase(),
-      );
-      const content = assignedPersonMsg
-        ? rewriteOwnerPronouns(
-            buildDelegationMessage({
-              personName: recipient,
-              taskText: item.description,
-              personNotes: assignedPersonMsg.notes ?? null,
-              ownerName,
-            }),
-            ownerName,
-          )
-        : (item.suggestedMessage ?? item.description).trim();
+      const content = messageContentByItemId.get(item.id) ?? "";
       if (!content) {
         skipped += 1;
         continue;
@@ -159,6 +162,8 @@ export async function savePending(
           userId,
           recipient,
           messageText: content,
+          ownerName,
+          declaredPerspective: item.ownerPerspective,
           createMessageFn: createMessage,
         }),
       );
@@ -207,6 +212,7 @@ export async function savePending(
             dueAt: item.dueAt,
             ownerName,
             taskId: pregenId,
+            ownerPerspective: item.ownerPerspective,
             onEscalationError: (err, task) =>
               console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
           }),
@@ -282,6 +288,7 @@ export async function savePending(
           note: item.personalNote,
           dueAt: item.dueAt,
           ownerName,
+          ownerPerspective: item.ownerPerspective,
           onEscalationError: (err, task) =>
             console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
         }),
@@ -393,4 +400,96 @@ export async function saveTaskAttachments(
   if (updateError) throw updateError;
 
   return files.length;
+}
+
+/**
+ * The text a message item's recipient will read, resolved through the single
+ * owner-perspective boundary (throws OwnerPerspectiveError when unsafe).
+ *
+ * Extraction items (declared ownerPerspective present): the existing
+ * extraction call already wrote suggestedMessage as the recipient reads it,
+ * in the owner's language. It is used ONLY after the boundary verifies it in
+ * "composed" voice — missing text, a status other than "rendered", owner
+ * first person, the recipient named as a third party, or an orphan pronoun
+ * fail closed. (Replaces the old known-person rebuild from `description`,
+ * which is written as an instruction to Carson — "Tell Sarah I'm running
+ * late." — and produced "Hi Sarah, could you tell Sarah Sana is running late?".)
+ *
+ * Items built without the extraction model keep the deterministic template,
+ * whose text the boundary resolves in task-text voice.
+ */
+function recipientMessageContent(
+  item: ExtractedItem,
+  recipient: string,
+  people: Person[],
+  ownerName?: string | null,
+): string {
+  if (item.ownerPerspective !== undefined) {
+    const composed = item.suggestedMessage?.trim() ?? "";
+    if (!composed) {
+      throw new OwnerPerspectiveError(
+        "composition_missing",
+        recipient,
+        `There was no message text for ${recipient}, so nothing was saved or sent. Please say what you want to tell them.`,
+      );
+    }
+    return renderOwnerPerspective(composed, {
+      ownerName,
+      recipientName: recipient,
+      voice: "composed",
+      declared: item.ownerPerspective,
+    });
+  }
+  const assignedPersonMsg = people.find(
+    (person) => person.name.trim().toLowerCase() === recipient.toLowerCase(),
+  );
+  return assignedPersonMsg
+    ? buildDelegationMessage({
+        personName: recipient,
+        taskText: resolveDelegationTaskText(item.description, recipient, ownerName),
+        personNotes: assignedPersonMsg.notes ?? null,
+        ownerName,
+      })
+    : (item.suggestedMessage ?? item.description).trim();
+}
+
+/**
+ * Structural checks on an item the extraction model composed (declared
+ * ownerPerspective present), run before anything is saved. They do not
+ * judge grammar — the shared boundary verifies what it can — they check
+ * the identity and language claims deterministic code CAN verify:
+ *   - the recipient is a canonical contact from the People list, not a
+ *     model-generated spelling ("قريس" for Grace); an explicitly unknown
+ *     recipient (needsPerson) keeps the existing never-sent path;
+ *   - every recipient-facing field kept the language the owner wrote in
+ *     (Arabic input must not become English).
+ */
+function enforceComposedContract(item: ExtractedItem, recipient: string, people: Person[], ownerName?: string | null): void {
+  if (item.ownerPerspective === undefined) return;
+  const bound = people.some((person) => person.name.trim().toLowerCase() === recipient.trim().toLowerCase());
+  if (!bound && item.needsPerson !== true) {
+    throw new OwnerPerspectiveError(
+      "recipient_not_bound",
+      recipient,
+      `I couldn't match "${recipient}" to anyone in your People list, so nothing was saved or sent. Please use their name as it appears there.`,
+    );
+  }
+  const recipientTexts = [item.type === "message" ? item.suggestedMessage : item.description, item.personalNote];
+  for (const text of recipientTexts) {
+    if (!text?.trim()) continue;
+    const checked = resolveOwnerPerspective(text, {
+      ownerName,
+      recipientName: recipient,
+      voice: "composed",
+      declared: item.ownerPerspective,
+      sourceText: item.sourceText ?? null,
+    });
+    if (checked.status === "needs_composition" && checked.reason === "composition_language_changed") {
+      throw new OwnerPerspectiveError(
+        checked.reason,
+        recipient,
+        "I couldn't keep the message in the language you used, so nothing was saved or sent. Please try again.",
+      );
+    }
+  }
 }

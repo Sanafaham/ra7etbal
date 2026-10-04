@@ -419,6 +419,7 @@ describe("canonical action creation paths", () => {
           description: "buy flowers",
           assignedTo: "Grace",
           suggestedMessage: "Grace, please buy flowers.",
+          ownerPerspective: "rendered",
         },
       ],
       [grace],
@@ -451,6 +452,282 @@ describe("canonical action creation paths", () => {
     expect(h.db.carson_todos).toHaveLength(0);
     expect(h.db.carson_notes).toHaveLength(0);
     expect(h.reminderSchedules).toHaveLength(0);
+  });
+
+  describe("owner perspective — existing extraction call declares it, the shared boundary enforces it", () => {
+    const person = (name: string): Person => ({ ...grace, id: `person-${name.toLowerCase()}`, name });
+    const sarah = person("Sarah");
+    const loulya = person("Loulya");
+    const people = [grace, sarah, loulya];
+    const nothingWritten = () => {
+      expect(h.db.tasks).toHaveLength(0);
+      expect(h.db.messages).toHaveLength(0);
+      expect(h.db.carson_todos).toHaveLength(0);
+      expect(h.db.carson_notes).toHaveLength(0);
+    };
+    const refused = (promise: Promise<unknown>) =>
+      expect(promise).rejects.toMatchObject({ code: "owner_perspective_unresolved" });
+
+    it("Sarah case: the recipient reads the model's recipient-perspective text, never \"could you tell Sarah …\"", async () => {
+      await extractAndSave("Tell Sarah I'm running late tonight.", [{
+        type: "message", assignedTo: "Sarah", description: "Tell Sarah I'm running late tonight.",
+        suggestedMessage: "Sana is running late tonight.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages).toHaveLength(1);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Sarah", task_id: null, content: "Sana is running late tonight." });
+      expect(h.db.messages[0].content).not.toMatch(/tell Sarah|\bI'm\b|\bme\b/i);
+    });
+
+    it("Sarah case: model output that still names the recipient as a third party fails closed, nothing written", async () => {
+      await refused(extractAndSave("Tell Sarah I'm running late.", [{
+        type: "message", assignedTo: "Sarah", description: "Tell Sarah I'm running late.",
+        suggestedMessage: "Hi Sarah, could you tell Sarah Sana is running late?", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("Loulya case: \"Sana loves you.\" is sent; \"Sana loves her.\" (recipient as a third party) fails closed", async () => {
+      await extractAndSave("Tell Loulya I love her.", [{
+        type: "message", assignedTo: "Loulya", description: "Tell Loulya I love her.",
+        suggestedMessage: "Sana loves you.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "Sana loves you." });
+
+      resetHarness();
+      await refused(extractAndSave("Tell Loulya I love her.", [{
+        type: "message", assignedTo: "Loulya", description: "Tell Loulya I love her.",
+        suggestedMessage: "Sana loves her.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it.each([
+      ["missing", {}],
+      ["unclear", { ownerPerspective: "unclear" }],
+      ["invalid", { ownerPerspective: "yes" }],
+    ])("%s perspective status fails closed even for clean text, nothing written", async (_label, status) => {
+      await refused(extractAndSave("Tell Grace dinner is at 8.", [{
+        type: "message", assignedTo: "Grace", description: "Tell Grace dinner is at 8.",
+        suggestedMessage: "Grace, dinner is at 8.", ...(status as Partial<ExtractedItem>),
+      }], people));
+      nothingWritten();
+    });
+
+    it("model claims rendered but leaves owner first person: structurally contradictory, fails closed", async () => {
+      await refused(extractAndSave("Tell Grace I'm running late.", [{
+        type: "message", assignedTo: "Grace", description: "Tell Grace I'm running late.",
+        suggestedMessage: "I'm running late.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("one unresolvable item fails the whole instruction before ANY row is written", async () => {
+      await refused(extractAndSave("Add buy flowers to my to-do list and tell Grace I'm late", [
+        { type: "action", description: "buy flowers" },
+        { type: "message", assignedTo: "Grace", description: "Tell Grace I'm late.", suggestedMessage: "I'm late.", ownerPerspective: "rendered" },
+      ], people));
+      nothingWritten();
+    });
+
+    it("tracked delegation: owner named, assignee is 'you', third party kept; stored description is what the assignee reads", async () => {
+      await extractAndSave("Ask Grace to take Loulya to her appointment and call me after", [{
+        type: "delegation", assignedTo: "Grace",
+        description: "Take Loulya to her appointment and call Sana after.",
+        suggestedMessage: "Can you take Loulya to her appointment and call Sana after?", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Take Loulya to her appointment and call Sana after." });
+      expect(h.db.messages[0].content).toContain("Loulya to her appointment and call Sana after");
+      expect(h.db.messages[0].content).not.toMatch(/\bme\b|\bI\b|\bmy\b/);
+    });
+
+    it("tracked delegation with an unclear or contradictory declaration creates no task and no message", async () => {
+      await refused(extractAndSave("Ask Grace to call me", [{
+        type: "delegation", assignedTo: "Grace", description: "Call Sana.", ownerPerspective: "unclear",
+      }], people));
+      nothingWritten();
+      await refused(extractAndSave("Ask Grace to call me", [{
+        type: "delegation", assignedTo: "Grace", description: "Call me.", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    it("Arabic and Turkish recipient text is accepted ONLY from the declaring extraction call, with the frozen backstop still applied", async () => {
+      await extractAndSave("قول لقريس إن الغدا جاهز", [{
+        type: "message", assignedTo: "Grace", description: "قول لقريس إن الغدا جاهز",
+        suggestedMessage: "الغدا جاهز", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "الغدا جاهز" });
+
+      resetHarness();
+      await extractAndSave("Grace'e söyle akşam yemeği hazır", [{
+        type: "delegation", assignedTo: "Grace", description: "Akşam yemeğini hazırla, Sana yolda.", ownerPerspective: "rendered",
+      }], people);
+      expect(h.db.tasks[0]).toMatchObject({ description: "Akşam yemeğini hazırla, Sana yolda." });
+
+      resetHarness();
+      await refused(extractAndSave("قول لقريس بروح السوق", [{
+        type: "message", assignedTo: "Grace", description: "قول لقريس بروح السوق",
+        suggestedMessage: "بروح السوق", ownerPerspective: "rendered",
+      }], people));
+      nothingWritten();
+    });
+
+    describe("Batch #2 live evidence (run 37040868214, claude-sonnet-4-6) — permanent regression fixtures", () => {
+      // The model outputs below are the exact items returned live in Batch #2.
+      const rendered = { ownerPerspective: "rendered" as const };
+
+      it("row 1 (EN): 'Sana is running late tonight.' is accepted for Sarah", async () => {
+        await extractAndSave("Tell Sarah I'm running late tonight.", [{ type: "message", assignedTo: "Sarah",
+          description: "Tell Sarah I'm running late tonight.", suggestedMessage: "Sana is running late tonight.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Sarah", content: "Sana is running late tonight." });
+      });
+
+      it("row 2 (EN): 'Sana loves you.' is accepted for Loulya", async () => {
+        await extractAndSave("Tell Loulya I love her.", [{ type: "message", assignedTo: "Loulya",
+          description: "Tell Loulya I love her.", suggestedMessage: "Sana loves you.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "Sana loves you." });
+      });
+
+      it("row 3 (EN): the task text actually used is correct; the model's unused delegation message ('your appointment … call me') is never sent", async () => {
+        await extractAndSave("Ask Grace to take Loulya to her appointment and call me after.", [{ type: "delegation", assignedTo: "Grace",
+          description: "Take Loulya to her appointment and call Sana after.",
+          suggestedMessage: "Can you please take Loulya to your appointment and call me after.", ...rendered }], people);
+        expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Take Loulya to her appointment and call Sana after." });
+        expect(h.db.messages[0].content).not.toMatch(/your appointment|call me/);
+      });
+
+      it.each([
+        ["row 4 (EN)", "Tell Grace Ali said I'd come at 5.", "Tell Grace Ali said I'd come at 5."],
+        ["row 8 (AR)", "قول لقريس إن علي قال إني بجي الساعة ٥", "Tell Grace that Ali said he's coming at 5."],
+      ])("%s: the embedded speaker stays unclear and fails closed", async (_row, input, description) => {
+        await refused(extractAndSave(input, [{ type: "message", assignedTo: "Grace", description, suggestedMessage: null, ownerPerspective: "unclear" }], people));
+        nothingWritten();
+      });
+
+      it("row 5 (AR): the live output's model-spelled recipient 'قريس' is not bound to the contact Grace — refused before anything is saved", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("قول لقريس إني بتأخر الليلة", [{ type: "message", assignedTo: "قريس",
+            description: "قول لقريس إنها بتأخر الليلة.", suggestedMessage: "سنا بتأخر الليلة.", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "recipient_not_bound" });
+        expect((caught as Error).message).toMatch(/couldn't match "قريس" to anyone in your People list/);
+        nothingWritten();
+      });
+
+      it("row 3 (EN) root cause: role-precedence no longer rewrites 'her appointment' into 'your appointment' (the bad text was deterministic, not the model's)", async () => {
+        mockExtractionResponse([{ type: "delegation", assignedTo: "Grace",
+          description: "Take Loulya to her appointment and call Sana after.",
+          suggestedMessage: "Can you please take Loulya to her appointment and call Sana after?", ...rendered }]);
+        const result = await extractItems("Ask Grace to take Loulya to her appointment and call me after.", people, "Sana");
+        expect(result.extracted[0]).toMatchObject({ type: "delegation", assignedTo: "Grace" });
+        expect(result.extracted[0].suggestedMessage).toBe("Can you please take Loulya to her appointment and call me after.");
+        expect(result.extracted[0].suggestedMessage).not.toMatch(/your appointment/);
+      });
+
+      it("row 3 reachable path: a delegation flipped to a message with no words to send never promotes the model's delegation text — refused, nothing written", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("Tell Grace", [{ type: "delegation", assignedTo: "Grace", description: "Take Loulya to her appointment.",
+            suggestedMessage: "Can you please take Loulya to your appointment and call me after.", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "composition_missing" });
+        expect((caught as Error).message).toMatch(/There was no message text for Grace, so nothing was saved or sent/);
+        nothingWritten();
+      });
+
+      it("retired rewriteRecipientPronouns: 'Tell Grace she can leave early' is no longer guessed into 'you can leave early' — the boundary refuses it", async () => {
+        await refused(extractAndSave("Tell Grace she can leave early", [{ type: "reminder", assignedTo: "Grace",
+          description: "Grace can leave early", ...rendered }], people));
+        nothingWritten();
+      });
+
+      it("a flipped message with no pronoun to resolve still sends the owner's own words", async () => {
+        await extractAndSave("Tell Grace dinner is ready", [{ type: "reminder", assignedTo: "Grace", description: "Dinner is ready", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "Grace, dinner is ready" });
+      });
+
+      // OWNER-ACCEPTED LIMITATION (2026-10-02), not expected work: Batch #2 row 5 stays FAIL evidence. Arabic/Turkish
+      // perspective is model-native; deterministic code cannot verify verb person without grammar machinery, which
+      // is not authorized. This pin documents that the boundary does NOT catch it — see RA7ETBAL_STATE.md.
+      it("row 5 (AR) known limitation: 'سنا بتأخر الليلة.' (wrong verb person) bound to Grace is NOT detected deterministically and is sent", async () => {
+        await extractAndSave("قول لقريس إني بتأخر الليلة", [{ type: "message", assignedTo: "Grace",
+          description: "قول لقريس إني بتأخر الليلة.", suggestedMessage: "سنا بتأخر الليلة.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "سنا بتأخر الليلة." });
+      });
+
+      it("row 6 (AR): 'سنا تحبك.' is accepted for Loulya (Arabic kept, recipient bound)", async () => {
+        await extractAndSave("قولي للوليا إني أحبها", [{ type: "message", assignedTo: "Loulya",
+          description: "قولي للوليا إني أحبها.", suggestedMessage: "سنا تحبك.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Loulya", content: "سنا تحبك." });
+      });
+
+      it("row 7 (AR): Arabic input whose delegation came back in English is refused (language contract) — no task, no message", async () => {
+        let caught: unknown;
+        try {
+          await extractAndSave("خلي قريس تجيب الأغراض لغرفتي", [{ type: "delegation", assignedTo: "Grace",
+            description: "Bring the groceries to Sana's room.", suggestedMessage: "Can you please bring the groceries to Sana's room?", ...rendered }], people);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toMatchObject({ code: "owner_perspective_unresolved", reason: "composition_language_changed" });
+        expect((caught as Error).message).toMatch(/couldn't keep the message in the language you used/);
+        nothingWritten();
+      });
+
+      it.each([
+        ["row 9", "Grace'e söyle bu akşam geç kalacağım", "message", "Grace", "Grace, Sana bu akşam geç kalacak."],
+        ["row 10", "Loulya'ya onu sevdiğimi söyle", "message", "Loulya", "Sana seni seviyor."],
+      ])("%s (TR): accepted — identity comes from the bound contact, not from reading 'Sana'", async (_row, input, type, assignedTo, text) => {
+        await extractAndSave(input, [{ type: type as "message", assignedTo, description: input, suggestedMessage: text, ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: assignedTo, content: text });
+      });
+
+      it("row 11 (TR): delegation 'Çantaları Sana'nın odasına getir.' is stored for Grace", async () => {
+        await extractAndSave("Grace'ten odama çantaları getirmesini iste", [{ type: "delegation", assignedTo: "Grace",
+          description: "Çantaları Sana'nın odasına getir.", suggestedMessage: "Çantaları Sana'nın odasına getirir misin lütfen?", ...rendered }], people);
+        expect(h.db.tasks[0]).toMatchObject({ assigned_to: "Grace", description: "Çantaları Sana'nın odasına getir." });
+      });
+
+      it("Turkish: the pronoun 'sana' (to you) is not mistaken for the owner, and a Turkish item that came back in English is refused", async () => {
+        await extractAndSave("Grace'e bir paket geldiğini söyle", [{ type: "message", assignedTo: "Grace",
+          description: "Grace'e paket geldiğini söyle", suggestedMessage: "Grace, sana bir paket geldi.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Grace", content: "Grace, sana bir paket geldi." });
+        resetHarness();
+        await refused(extractAndSave("Grace'e söyle bu akşam geç kalacağım", [{ type: "message", assignedTo: "Grace",
+          description: "x", suggestedMessage: "Sana will be late tonight, please wait for her.", ...rendered }], people));
+        nothingWritten();
+      });
+
+      it("row 12 (TR): invalid JSON from the model fails closed — truthful error, nothing written", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: "{ not valid json" }] }), {
+          status: 200, headers: { "Content-Type": "application/json" },
+        })));
+        await expect(extractItems("Grace'e Ali'nin saat 5'te geleceğimi söylediğini söyle", people, "Sana"))
+          .rejects.toThrow("The AI returned something Ra7etBal couldn't parse. Please try again.");
+        nothingWritten();
+      });
+
+      it("an unknown recipient the model explicitly marks needsPerson keeps the existing never-sent path", async () => {
+        await extractAndSave("Tell Ahmed dinner is at 8", [{ type: "message", assignedTo: "Ahmed", needsPerson: true,
+          description: "Tell Ahmed dinner is at 8", suggestedMessage: "Ahmed, dinner is at 8.", ...rendered }], people);
+        expect(h.db.messages[0]).toMatchObject({ recipient: "Ahmed" });
+      });
+    });
+
+    it("the extraction parser turns a missing or invalid declaration into 'unclear' (never 'rendered')", async () => {
+      mockExtractionResponse([
+        { type: "message", assignedTo: "Grace", description: "a", suggestedMessage: "a" },
+        { type: "message", assignedTo: "Grace", description: "b", suggestedMessage: "b", ownerPerspective: "RENDERED" as never },
+        { type: "message", assignedTo: "Grace", description: "c", suggestedMessage: "c", ownerPerspective: "rendered" },
+      ]);
+      const result = await extractItems("x", people, "Sana");
+      expect(result.extracted.map((i) => i.ownerPerspective)).toEqual(["unclear", "unclear", "rendered"]);
+    });
   });
 });
 

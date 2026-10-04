@@ -47,6 +47,7 @@ import { checkAccountConsequentialAccess } from './_account-deletion-guard.js';
  */
 
 import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { resolveOwnerPerspective } from '../shared/owner-perspective.js';
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 
 export const NO_RESPONSE_REVIEW_TYPE = 'no_response';
@@ -88,27 +89,25 @@ export function buildNoResponseOwnerMessage({ taskDescription, assignedTo, deepL
   return `${who} hasn't replied about "${task}" since Carson followed up. Should I ask ${who} again, or keep waiting?${link}`;
 }
 
-/** Staff-facing re-ask. Neutral, no invented context; links to the real task. */
+/**
+ * Staff-facing re-ask. Neutral, no invented context; links to the real task.
+ * The stored task description is a task record from the owner's side; it is
+ * rendered for the assignee through the single owner-perspective contract
+ * (shared/owner-perspective.js). When that cannot be done safely the re-ask
+ * does not quote the task at all rather than guess who "I" or "her" means.
+ */
 export function buildNoResponseReaskMessage({ assignedTo, taskDescription, ownerName, confirmationUrl }) {
   const who = String(assignedTo || '').replace(/[\r\n\t]+/g, ' ').trim();
-  const task = rewriteOwnerPronouns(String(taskDescription || '').replace(/[\r\n\t]+/g, ' ').trim(), ownerName)
-    .replace(/[\s.!?]+$/, '');
+  const owner = (typeof ownerName === 'string' && ownerName.trim()) ? ownerName.trim() : 'the sender';
   const greeting = who ? `Hi ${who}, checking` : 'Checking';
+  const resolved = resolveOwnerPerspective(String(taskDescription || '').replace(/[\r\n\t]+/g, ' ').trim(), {
+    ownerName: owner, recipientName: who || null, voice: 'task_record',
+  });
+  if (resolved.status === 'needs_composition') {
+    return `${greeting} in again about the task ${owner} sent you. Please confirm here when it's done: ${confirmationUrl}`;
+  }
+  const task = resolved.text.replace(/[\s.!?]+$/, '');
   return `${greeting} in again about: ${task}. Please confirm here when it's done: ${confirmationUrl}`;
-}
-
-// Same rewrite the existing follow-up applies (process-delegation-escalations.js
-// rewriteDelegationPronouns): task.description is stored from the owner's view.
-function rewriteOwnerPronouns(text, ownerName) {
-  const name = (typeof ownerName === 'string' && ownerName.trim()) ? ownerName.trim() : 'the sender';
-  return text
-    .replace(/\byou\b/gi, name)
-    .replace(/\byour\b/gi, `${name}'s`)
-    .replace(/\byourself\b/gi, name)
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name);
 }
 
 /**

@@ -1,3 +1,5 @@
+import { isOwnerPerspectiveError, ownerPerspectiveDetail } from "./direct-message-owner-normalization";
+
 const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
   "You're welcome.",
   "Anytime.",
@@ -92,6 +94,9 @@ export function sanitizeCarsonErrorDetail(error: unknown): string {
   if (error instanceof TypeError && NETWORK_ERROR_PATTERN.test(error.message)) {
     return "Please check your connection.";
   }
+  // The owner-perspective boundary refused to word the delegation: ask the
+  // owner to rephrase rather than to retry the same words.
+  if (isOwnerPerspectiveError(error)) return error.detail || ownerPerspectiveDetail();
   return "Please try again.";
 }
 
