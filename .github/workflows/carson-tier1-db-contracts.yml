@@ -65,14 +65,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Determine relevance (same path set the old workflow-level filter used)
+      - name: Determine Tier-1 and AI-consent relevance
         id: relevance
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ -z "$BASE_SHA" ]; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "No PR base SHA available (e.g. workflow_dispatch) — running the full check to be safe."
+            echo "ai_consent_relevant=true" >> "$GITHUB_OUTPUT"
+            echo "No PR base SHA available (e.g. workflow_dispatch) — running every DB contract to be safe."
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
@@ -86,10 +87,51 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "No Tier 1 DB-contract path changed — skipping the expensive verification steps. This check still reports a genuine success, it is not required-but-silently-absent."
           fi
+          AI_CONSENT_RELEVANT=$(printf '%s\n' "$CHANGED" | node ra7etbal-v2/scripts/ai-consent-tier1-relevance.mjs)
+          echo "ai_consent_relevant=$AI_CONSENT_RELEVANT" >> "$GITHUB_OUTPUT"
+          if [ "$AI_CONSENT_RELEVANT" = "true" ]; then
+            echo "Relevant AI-consent DB-contract path changed — the required Tier-1 job will run the complete real-Postgres consent proof."
+          else
+            echo "No AI-consent DB-contract path changed — the consent-specific isolated database steps are not needed."
+          fi
 
       - name: Wait for Postgres
-        if: steps.relevance.outputs.relevant == 'true'
+        if: steps.relevance.outputs.relevant == 'true' || steps.relevance.outputs.ai_consent_relevant == 'true'
         run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Create isolated AI-consent verification database
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        run: createdb ai_consent_verify
+
+      - name: Bootstrap isolated AI-consent schema
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_bootstrap.sql"
+
+      - name: Apply exact AI-consent forward migration
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004120000_ai_consent_authority_foundation.sql"
+
+      - name: Prove AI-consent RLS, RPC, replay, withdrawal and immutability contracts
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_verification.sql"
+
+      - name: Apply bounded AI-consent rollback
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004120000_ai_consent_authority_foundation.rollback.sql"
+
+      - name: Prove AI-consent rollback stayed inside Slice 1 boundary
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_rollback_verification.sql"
 
       - name: Bootstrap minimal auth-compatible schema (reused from the staff-escalation suite)
         if: steps.relevance.outputs.relevant == 'true'
