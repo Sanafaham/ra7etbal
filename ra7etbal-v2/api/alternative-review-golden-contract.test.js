@@ -45,6 +45,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./_account-deletion-guard.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  checkAccountConsequentialAccess: vi.fn(async () => ({ allowed: true, code: 'allowed' })),
+}));
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 beforeEach(() => {

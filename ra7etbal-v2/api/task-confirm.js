@@ -68,6 +68,7 @@ import {
 } from './_automation-run-confirmation-sync.js';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { dedupeSubscriptionsByEndpoint } from './send-push-for-task.js';
+import { checkAccountConsequentialAccess, accountDeletionBlockedResponse } from './_account-deletion-guard.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -414,6 +415,15 @@ export async function handleTaskConfirmationPost(
     }
 
     const task = tasks[0];
+
+    // A confirmation link can outlive the owner's active account. Treat it as
+    // a continuation of pre-existing consequential work, not as fresh
+    // authorization. This check occurs before review, writes, provider calls,
+    // or follow-on scheduling and fails closed if deletion state is unreadable.
+    const accountAccess = await checkAccountConsequentialAccess({
+      supabaseUrl, serviceKey, userId: task.user_id,
+    });
+    if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
 
     // Supplemental security review (2026-08-29): this endpoint is public
     // (gated only by possession of the taskId link), and proofImagePaths
@@ -989,6 +999,11 @@ async function handleOwnerDecision(req, res) {
       return res.status(403).json({ error: 'Not authorized for this task.' });
     }
 
+    const accountAccess = await checkAccountConsequentialAccess({
+      supabaseUrl, serviceKey, userId,
+    });
+    if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
+
     // Owner perspective of a custom instruction is resolved BEFORE the
     // decision is claimed: an unresolvable "I"/"me" is refused with a
     // rephrase request and nothing is saved or sent.
@@ -1326,6 +1341,11 @@ async function handleEscalationAnswer(req, res) {
     if (existing.user_id !== userId) {
       return invalidLinkResponse();
     }
+
+    const accountAccess = await checkAccountConsequentialAccess({
+      supabaseUrl, serviceKey, userId,
+    });
+    if (!accountAccess.allowed) return accountDeletionBlockedResponse(res);
 
     // Slice 1 — task-only 'no_response' handoff. Only Ask again / Keep
     // waiting exist here; the approve/reject/custom path below never runs
