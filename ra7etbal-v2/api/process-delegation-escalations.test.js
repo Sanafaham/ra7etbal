@@ -222,8 +222,8 @@ describe('processAutomation owner-only automations', () => {
     expect(webpush.sendNotification).toHaveBeenCalledWith(
       { endpoint: 'https://push.example/a', keys: { p256dh: 'p', auth: 'a' } },
       JSON.stringify({
-        title: 'Ra7etBal · Reminder',
-        body: 'Review your priorities.',
+        title: 'Ra7etBal',
+        body: 'You have an update in Ra7etBal.',
       }),
       { urgency: 'normal', TTL: 600 },
     );

@@ -477,6 +477,7 @@
       ],
       "shared_dependencies": [
         "api/_owner-reminder-whatsapp.js",
+        "api/_push-content-privacy.js",
         "public/sw.js"
       ],
       "db": {
@@ -548,7 +549,8 @@
         "public/sw.js"
       ],
       "shared_dependencies": [
-        "api/_reminder-delivery.js"
+        "api/_reminder-delivery.js",
+        "api/_push-content-privacy.js"
       ],
       "db": {
         "tables": [
@@ -814,7 +816,8 @@
       ],
       "shared_dependencies": [
         "api/_reminder-delivery.js",
-        "api/_owner-notifications.js"
+        "api/_owner-notifications.js",
+        "api/_push-content-privacy.js"
       ],
       "db": {
         "tables": [

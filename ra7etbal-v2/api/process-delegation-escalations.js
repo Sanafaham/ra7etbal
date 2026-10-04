@@ -107,6 +107,7 @@ import { reconcilePersonalContactReplyNotifications } from './_personal-contact-
 import { runNoResponseHandoffs } from './_no-response-handoff.js';
 import { processAccountDeletionCancellations } from './_account-deletion-cancellation.js';
 import { processAccountDeletionRelational } from './_account-deletion-relational.js';
+import { buildPrivacySafePushPayload } from './_push-content-privacy.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -714,7 +715,7 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
       targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
     }),
   });
-  const payload = JSON.stringify(pushContent);
+  const payload = JSON.stringify(buildPrivacySafePushPayload(pushContent));
 
   const label = testMode ? '[testMode] ' : '';
   console.log(`[escalation] ${label}sending owner escalation push for task ${taskId}`, {
@@ -1531,7 +1532,7 @@ async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey, not
   const pushContent = await prepareOwnerPushNotification({
     supabaseUrl, serviceRoleKey: serviceKey, notification, fallback: { title, body },
   });
-  const payload = JSON.stringify(pushContent);
+  const payload = JSON.stringify(buildPrivacySafePushPayload(pushContent));
   let sent = false;
 
   for (const sub of subscriptions) {
