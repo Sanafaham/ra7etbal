@@ -1634,7 +1634,10 @@
       "db": {
         "tables": ["ai_consent_events"],
         "rpcs": ["grant_ai_consent", "withdraw_ai_consent", "supersede_ai_consent", "evaluate_ai_consent_authority"],
-        "migrations": ["supabase/migrations/20261004120000_ai_consent_authority_foundation.sql"]
+        "migrations": [
+          "supabase/migrations/20261004120000_ai_consent_authority_foundation.sql",
+          "supabase/migrations/20261004203000_ai_consent_authority_foundation_acl_safe.sql"
+        ]
       },
       "external_boundaries": ["None in Slice 1 — manifests describe future Anthropic, ElevenLabs, and OpenAI enforcement boundaries but are not imported by active provider paths"],
       "focused_tests": [
@@ -1648,15 +1651,16 @@
       "golden_journey_tests": [],
       "db_contract_tests": [
         "supabase/migrations/verification/ai_consent_authority_bootstrap.sql",
+        "supabase/migrations/verification/ai_consent_authority_acl_incident_reproduction.sql",
         "supabase/migrations/verification/ai_consent_authority_verification.sql",
         "supabase/migrations/verification/ai_consent_authority_rollback_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": false,
-      "rollback_risk": "low while inactive and before real grants exist; Production migration/application and later enforcement activation each require separate owner authorization.",
-      "verification_status": "Real-Postgres RLS/RPC/replay/immutability/rollback verification is routed by scripts/ai-consent-tier1-relevance.mjs through .github/workflows/carson-tier1-db-contracts.yml, an existing required main merge gate. Relevant migration, rollback, verification, registry, routing or workflow changes cannot receive a green Tier-1 result unless the complete proof succeeds in its isolated PostgreSQL database.",
+      "rollback_risk": "low while inactive and before real grants exist; the original Production application was rolled back after inherited service_role TRUNCATE/UPDATE/DELETE privileges were detected. Any corrected Production reapplication and later enforcement activation each require separate owner authorization.",
+      "verification_status": "Real-Postgres protection now reproduces the Production Supabase default-ACL incident before applying the historical rollback, then applies the ACL-safe reapplication artifact and proves the exact effective privilege matrix, including service_role TRUNCATE/UPDATE/DELETE/REFERENCES/TRIGGER denial. The full sequence is routed by scripts/ai-consent-tier1-relevance.mjs through .github/workflows/carson-tier1-db-contracts.yml, an existing required main merge gate.",
       "unresolved": [
-        "Production schema application is not authorized.",
+        "Corrected Production schema reapplication is not authorized.",
         "Provider gating activation, consent UI/wording, evidence retention, lawful basis, and live provider configuration remain separate blocked work."
       ]
     },
