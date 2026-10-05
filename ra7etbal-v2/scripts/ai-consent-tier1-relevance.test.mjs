@@ -5,7 +5,10 @@ describe("required Tier-1 AI-consent DB-contract routing", () => {
   it.each([
     "ra7etbal-v2/supabase/migrations/20261004120000_ai_consent_authority_foundation.sql",
     "ra7etbal-v2/supabase/migrations/20261004120000_ai_consent_authority_foundation.rollback.sql",
+    "ra7etbal-v2/supabase/migrations/20261004203000_ai_consent_authority_foundation_acl_safe.sql",
+    "ra7etbal-v2/supabase/migrations/20261004203000_ai_consent_authority_foundation_acl_safe.rollback.sql",
     "ra7etbal-v2/supabase/migrations/verification/ai_consent_authority_bootstrap.sql",
+    "ra7etbal-v2/supabase/migrations/verification/ai_consent_authority_acl_incident_reproduction.sql",
     "ra7etbal-v2/supabase/migrations/verification/ai_consent_authority_verification.sql",
     "ra7etbal-v2/supabase/migrations/verification/ai_consent_authority_rollback_verification.sql",
     "ra7etbal-v2/carson-protected-registry.json",

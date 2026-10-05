@@ -109,25 +109,49 @@ jobs:
           PGDATABASE: ai_consent_verify
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_bootstrap.sql"
 
-      - name: Apply exact AI-consent forward migration
+      - name: Apply historical AI-consent migration under Supabase-parity defaults
         if: steps.relevance.outputs.ai_consent_relevant == 'true'
         env:
           PGDATABASE: ai_consent_verify
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004120000_ai_consent_authority_foundation.sql"
 
-      - name: Prove AI-consent RLS, RPC, replay, withdrawal and immutability contracts
+      - name: Reproduce the historical Production service-role ACL incident
         if: steps.relevance.outputs.ai_consent_relevant == 'true'
         env:
           PGDATABASE: ai_consent_verify
-        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_verification.sql"
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_acl_incident_reproduction.sql"
 
-      - name: Apply bounded AI-consent rollback
+      - name: Apply historical bounded AI-consent rollback
         if: steps.relevance.outputs.ai_consent_relevant == 'true'
         env:
           PGDATABASE: ai_consent_verify
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004120000_ai_consent_authority_foundation.rollback.sql"
 
-      - name: Prove AI-consent rollback stayed inside Slice 1 boundary
+      - name: Prove historical rollback stayed inside Slice 1 boundary
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_rollback_verification.sql"
+
+      - name: Apply ACL-safe AI-consent reapplication migration
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004203000_ai_consent_authority_foundation_acl_safe.sql"
+
+      - name: Prove normalized ACL, RLS, RPC, replay, withdrawal and immutability contracts
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/ai_consent_authority_verification.sql"
+
+      - name: Apply ACL-safe bounded AI-consent rollback
+        if: steps.relevance.outputs.ai_consent_relevant == 'true'
+        env:
+          PGDATABASE: ai_consent_verify
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20261004203000_ai_consent_authority_foundation_acl_safe.rollback.sql"
+
+      - name: Prove corrected rollback stayed inside Slice 1 boundary
         if: steps.relevance.outputs.ai_consent_relevant == 'true'
         env:
           PGDATABASE: ai_consent_verify
