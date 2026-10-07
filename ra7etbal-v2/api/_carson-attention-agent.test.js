@@ -468,6 +468,9 @@ describe("capturesNamedInAgentAnswer", () => {
     };
     expect(capturesNamedInAgentAnswer(withReminder, "Next: Call Loulya.")).toEqual(["c1"]);
     expect(capturesNamedInAgentAnswer(withReminder, "Overdue: pay rent to landlord.")).toEqual([]);
+    // A reminder with the very same label makes the mention ambiguous.
+    const sameLabel = { ok: true, overdueReminders: [{ id: "r2", label: "Pay rent", type: "reminder" }], unresolvedCaptures: [{ id: "c2", label: "Pay rent", type: "todo" }] };
+    expect(capturesNamedInAgentAnswer(sameLabel, "Overdue: Pay rent.")).toEqual([]);
     // Shown on its own as well as inside the longer label: counts.
     expect(capturesNamedInAgentAnswer(withReminder, "Call Loulya. Also on your list: Call.")).toEqual(["c0", "c1"]);
   });

@@ -191,11 +191,17 @@ export function capturesNamedInAgentAnswer(evidence, finalOutput) {
       const label = labelOf(capture);
       if (!label) return false;
       const lower = label.toLowerCase();
+      // A longer label containing this one, or a non-capture item with the
+      // very same label, makes that appearance ambiguous — don't count it.
+      const captures = new Set(evidence.unresolvedCaptures ?? []);
       const covering = allItems
         .filter((other) => other !== capture)
-        .map(labelOf)
-        .filter((other) => other.length > label.length && other.toLowerCase().includes(lower))
-        .flatMap((other) => phraseRanges(finalOutput, other));
+        .filter((other) => {
+          const otherLabel = labelOf(other).toLowerCase();
+          if (otherLabel === lower) return !captures.has(other);
+          return otherLabel.length > lower.length && otherLabel.includes(lower);
+        })
+        .flatMap((other) => phraseRanges(finalOutput, labelOf(other)));
       return phraseRanges(finalOutput, label).some(
         ([start, end]) => !covering.some(([coverStart, coverEnd]) => coverStart <= start && end <= coverEnd),
       );
