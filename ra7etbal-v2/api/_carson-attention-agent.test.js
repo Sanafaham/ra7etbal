@@ -456,6 +456,28 @@ describe("capturesNamedInAgentAnswer", () => {
     expect(capturesNamedInAgentAnswer(evidence, "Pick up food; check on Nimala's wedding.")).toEqual([]);
   });
 
+  it("never marks a capture whose label appears only inside a longer evidence item's label", () => {
+    const withReminder = {
+      ...evidence,
+      overdueReminders: [{ id: "r1", label: "Pay rent to landlord", type: "reminder" }],
+      unresolvedCaptures: [
+        { id: "c0", label: "Call", type: "todo" },
+        { id: "c1", label: "Call Loulya", type: "todo" },
+        { id: "c2", label: "Pay rent", type: "todo" },
+      ],
+    };
+    expect(capturesNamedInAgentAnswer(withReminder, "Next: Call Loulya.")).toEqual(["c1"]);
+    expect(capturesNamedInAgentAnswer(withReminder, "Overdue: pay rent to landlord.")).toEqual([]);
+    // Shown on its own as well as inside the longer label: counts.
+    expect(capturesNamedInAgentAnswer(withReminder, "Call Loulya. Also on your list: Call.")).toEqual(["c0", "c1"]);
+  });
+
+  it("treats Arabic combining marks as part of the word", () => {
+    const arabic = { ok: true, unresolvedCaptures: [{ id: "a1", label: "كتب", type: "note" }] };
+    expect(capturesNamedInAgentAnswer(arabic, "اشترِ كتبًا")).toEqual([]);
+    expect(capturesNamedInAgentAnswer(arabic, "عندك: كتب.")).toEqual(["a1"]);
+  });
+
   it("returns nothing for failed evidence or an empty answer", () => {
     expect(capturesNamedInAgentAnswer({ ...evidence, ok: false }, "Buy groceries")).toEqual([]);
     expect(capturesNamedInAgentAnswer(null, "Buy groceries")).toEqual([]);

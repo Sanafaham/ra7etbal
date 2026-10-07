@@ -154,22 +154,53 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Letters, combining marks (e.g. Arabic harakat) and digits continue a word.
+const WORD_CHAR = "\\p{L}\\p{M}\\p{N}";
+
+// Every [start, end) range where `label` appears in `text` as a whole phrase,
+// case-insensitive.
+function phraseRanges(text, label) {
+  const pattern = new RegExp(`(?<![${WORD_CHAR}])${escapeRegExp(label)}(?![${WORD_CHAR}])`, "giu");
+  const ranges = [];
+  for (const match of text.matchAll(pattern)) ranges.push([match.index, match.index + match[0].length]);
+  return ranges;
+}
+
 /**
  * P3 Step 3 / S2 — which unresolved captures this free-text answer actually
  * showed the owner. Only a capture whose exact label appears in the final
- * answer (case-insensitive, as a whole phrase, not inside a longer word)
- * counts. Fetched, available-to-the-model, or paraphrased captures do not:
- * an unmarked capture only shows again later, while a false mark hides it.
+ * answer (case-insensitive, as a whole phrase) counts — and not where that
+ * appearance is only part of a longer label of another evidence item (e.g.
+ * capture "Call" inside reminder "Call Loulya"). Fetched, available-to-the-
+ * model, or paraphrased captures do not count: an unmarked capture only
+ * shows again later, while a false mark hides it.
  */
 export function capturesNamedInAgentAnswer(evidence, finalOutput) {
   if (!evidence || evidence.ok !== true || typeof finalOutput !== "string" || !finalOutput) return [];
+  const labelOf = (item) => (typeof item?.label === "string" ? item.label.trim() : "");
+  const allItems = [
+    ...(evidence.needsYou ?? []),
+    ...(evidence.overdueReminders ?? []),
+    ...(evidence.upcomingReminders ?? []),
+    ...(evidence.waiting ?? []),
+    ...(evidence.later ?? []),
+    ...(evidence.unresolvedCaptures ?? []),
+  ];
   return (evidence.unresolvedCaptures ?? [])
-    .filter((item) => {
-      const label = typeof item?.label === "string" ? item.label.trim() : "";
+    .filter((capture) => {
+      const label = labelOf(capture);
       if (!label) return false;
-      return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(label)}($|[^\\p{L}\\p{N}])`, "iu").test(finalOutput);
+      const lower = label.toLowerCase();
+      const covering = allItems
+        .filter((other) => other !== capture)
+        .map(labelOf)
+        .filter((other) => other.length > label.length && other.toLowerCase().includes(lower))
+        .flatMap((other) => phraseRanges(finalOutput, other));
+      return phraseRanges(finalOutput, label).some(
+        ([start, end]) => !covering.some(([coverStart, coverEnd]) => coverStart <= start && end <= coverEnd),
+      );
     })
-    .map((item) => item.id);
+    .map((capture) => capture.id);
 }
 
 /**
