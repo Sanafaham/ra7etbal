@@ -7,7 +7,7 @@ const readSource = (path: string) => readFileSync(new URL(path, import.meta.url)
 describe("AI transfer manifests", () => {
   it("covers every approved provider path family with unique static identifiers", () => {
     const values = Object.values(AI_TRANSFER_MANIFESTS);
-    expect(values).toHaveLength(16);
+    expect(values).toHaveLength(17);
     expect(new Set(values.map((value) => value.id)).size).toBe(values.length);
     expect(new Set(values.map((value) => value.provider))).toEqual(new Set(["anthropic", "elevenlabs", "openai"]));
   });
@@ -18,7 +18,49 @@ describe("AI transfer manifests", () => {
   });
   it("marks every raw image/audio path and no text-only path as raw bytes", () => {
     const raw = Object.values(AI_TRANSFER_MANIFESTS).filter((value) => value.rawBytesMayLeave).map((value) => value.id);
-    expect(raw).toEqual(expect.arrayContaining(["anthropic.proof_photo", "anthropic.owner_whatsapp_image", "elevenlabs.voice_carson", "openai.audio_transcription"]));
+    expect(raw).toEqual(expect.arrayContaining(["anthropic.proof_photo", "anthropic.owner_whatsapp_image", "anthropic.carson_image_description", "elevenlabs.voice_carson", "openai.audio_transcription"]));
+  });
+  it("represents Carson image description as raw image to Anthropic and derived text only to ElevenLabs", () => {
+    expect(AI_TRANSFER_MANIFESTS.anthropicCarsonImageDescription).toEqual({
+      id: "anthropic.carson_image_description",
+      provider: "anthropic",
+      purpose: "carson_image_description",
+      possibleDataCategories: ["image"],
+      inputModes: ["text", "voice"],
+      rawBytesMayLeave: true,
+      conversationContextMayBeIncluded: false,
+      memoryMayBeIncluded: false,
+    });
+
+    for (const elevenlabs of [
+      AI_TRANSFER_MANIFESTS.elevenlabsTypedCarson,
+      AI_TRANSFER_MANIFESTS.elevenlabsVoiceCarson,
+    ]) {
+      expect(elevenlabs.possibleDataCategories).toContain("derived_image_description");
+      expect(elevenlabs.possibleDataCategories).not.toEqual(expect.arrayContaining(["image", "file"]));
+    }
+  });
+  it("binds the image-description manifest to the current Anthropic-only raw-image path", () => {
+    const widgetSource = readSource("../components/home/ElevenLabsAgentWidget.tsx");
+    const describeStart = widgetSource.indexOf("async function describeImageForCarson");
+    const describeEnd = widgetSource.indexOf("async function describePhotosForCarson", describeStart);
+    const describeSource = widgetSource.slice(describeStart, describeEnd);
+
+    expect(describeStart).toBeGreaterThan(-1);
+    expect(describeEnd).toBeGreaterThan(describeStart);
+    expect(describeSource).toContain('type: "image"');
+    expect(describeSource).toContain("data: base64");
+    expect(describeSource).toContain('model: "claude-haiku-4-5-20251001"');
+    expect(describeSource).toContain("callAnthropicProxy(payload)");
+    expect(describeSource).not.toMatch(/openai|elevenlabs/i);
+
+    expect(widgetSource).toContain("conversation.sendUserMessage(agentMessage)");
+    expect(widgetSource).toContain("Current photo description:\\n${typedPhotoContext}");
+    expect(widgetSource).toContain("conversationRef.current?.sendContextualUpdate(");
+    expect(widgetSource).toContain("Current photo description:\\n${currentDescription}");
+    expect(AI_TRANSFER_MANIFESTS.openaiAttentionReasoning.possibleDataCategories).not.toEqual(
+      expect.arrayContaining(["image", "file", "derived_image_description"]),
+    );
   });
   it("keeps OpenAI transcription and attention as distinct least-authority call families", () => {
     expect(AI_TRANSFER_MANIFESTS.openaiAudioTranscription).toEqual({
