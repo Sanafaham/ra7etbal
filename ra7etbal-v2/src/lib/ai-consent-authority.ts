@@ -5,7 +5,8 @@ export type AiDataCategory =
   | "user_text" | "conversation_history" | "carson_memory" | "people_data"
   | "task_data" | "reminder_data" | "delegation_data" | "calendar_data"
   | "image" | "file" | "audio" | "account_identifier" | "operational_context"
-  | "staff_message" | "household_rules" | "weather_data" | "persistent_instructions";
+  | "staff_message" | "household_rules" | "weather_data" | "persistent_instructions"
+  | "derived_image_description";
 
 export interface AiTransferRequirement {
   contractVersion: string;
