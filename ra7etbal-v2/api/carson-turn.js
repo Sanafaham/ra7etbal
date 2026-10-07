@@ -165,6 +165,13 @@ export async function markPresentedAttentionCapturesThroughServerPath({ authoriz
   }
 }
 
+// Never rejects: a failed write must not affect the answer.
+function startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, authorization, result) {
+  return Promise.resolve()
+    .then(() => markPresentedAttentionCaptures({ authorization, result }))
+    .catch(() => {});
+}
+
 export async function readCalendarThroughExistingHandler({ authorization, range }, handler = googleCalendarHandler) {
   let statusCode = 200;
   let payload = null;
@@ -348,14 +355,14 @@ async function handleVoiceBoundaryRequest(
   const text = result?.handled
     ? (result.ownerResult ?? "I couldn't confirm that. Please try again.")
     : "Hi! What can I help with?";
-  if (result?.handled && result.ownerResult) {
-    try {
-      await markPresentedAttentionCaptures({ authorization: ownerTurn.authorization, result });
-    } catch {
-      // Best-effort — never fails the answer.
-    }
-  }
-  return streamOwnerResultAsChatCompletion(res, { completionId, text });
+  // Started before streaming so it adds no latency; awaited before the
+  // handler returns so the write is not dropped.
+  const marking = result?.handled && result.ownerResult
+    ? startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, ownerTurn.authorization, result)
+    : null;
+  const streamed = streamOwnerResultAsChatCompletion(res, { completionId, text });
+  if (marking) await marking;
+  return streamed;
 }
 
 export function createCarsonTurnHandler({
@@ -475,14 +482,12 @@ export function createCarsonTurnHandler({
     } else if (dedupKey) {
       dedupStore.delete(dedupKey);
     }
-    if (result.handled) {
-      try {
-        await markPresentedAttentionCaptures({ authorization: ownerTurn.authorization, result });
-      } catch {
-        // Best-effort — never fails the answer.
-      }
-    }
-    return res.status(result.status).json(result);
+    const marking = result.handled
+      ? startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, ownerTurn.authorization, result)
+      : null;
+    const sent = res.status(result.status).json(result);
+    if (marking) await marking;
+    return sent;
   };
 }
 

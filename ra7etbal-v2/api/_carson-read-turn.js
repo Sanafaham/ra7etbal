@@ -537,10 +537,14 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // actually saw, not just the primary selection, or a later "what else?"
     // could re-surface an item already shown in the contrasted clause
     // (CodeRabbit finding).
+    // Only a contrast answer renders the contrasted clause; for every other
+    // intent renderAttentionDecision ignores contrastedEvidenceIds, so they
+    // were never shown and must not count as surfaced (P3 Step 3 / S2 — this
+    // now also decides which captures get last_surfaced_at).
     const surfacedEvidenceIds = Array.from(
       new Set([
         ...validated.decision.selectedEvidenceIds,
-        ...(validated.decision.contrastedEvidenceIds ?? []),
+        ...(validated.decision.responseIntent === "contrast" ? (validated.decision.contrastedEvidenceIds ?? []) : []),
       ]),
     );
 

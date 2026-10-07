@@ -158,6 +158,64 @@ describe("typed attention answer — the presentation boundary", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_todos?id=in.(todo-1)"]);
   });
 
+  it.each(["list", "rank", "explain", "defer_timing"])(
+    "S2-I: a %s answer never marks a capture the model put only in contrastedEvidenceIds (not rendered)",
+    async (responseIntent) => {
+      process.env.SUPABASE_URL = "https://example.supabase.co";
+      process.env.SUPABASE_ANON_KEY = "anon-key";
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+      vi.stubGlobal("fetch", fetchMock);
+      const evidence = evidenceWith({ waiting: [WAITING], unresolvedCaptures: [TODO] });
+      const reasonOverEvidence = vi.fn().mockResolvedValue({
+        responseIntent,
+        selectedEvidenceIds: ["task-w"],
+        rankedEvidenceIds: null,
+        contrastedEvidenceIds: ["todo-1"],
+        needsClarification: null,
+      });
+      const { handler } = typedHandler({
+        evidence,
+        reasonOverEvidence,
+        markPresentedAttentionCaptures: markPresentedAttentionCapturesThroughServerPath,
+      });
+      const response = res();
+      await handler(
+        req({ ...TURN, transcript: "Tell me more about those", previousCapability: "attention_summary_read", previousGroundingStatus: "grounded" }),
+        response,
+      );
+      expect(response.payload.ownerResult).not.toContain("Buy groceries");
+      expect(response.payload.surfacedEvidenceIds).not.toContain("todo-1");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a contrast answer that renders the contrasted capture does mark it", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_ANON_KEY = "anon-key";
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal("fetch", fetchMock);
+    const evidence = evidenceWith({ waiting: [WAITING], unresolvedCaptures: [TODO] });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "contrast",
+      selectedEvidenceIds: ["task-w"],
+      rankedEvidenceIds: null,
+      contrastedEvidenceIds: ["todo-1"],
+      needsClarification: null,
+    });
+    const { handler } = typedHandler({
+      evidence,
+      reasonOverEvidence,
+      markPresentedAttentionCaptures: markPresentedAttentionCapturesThroughServerPath,
+    });
+    const response = res();
+    await handler(
+      req({ ...TURN, transcript: "What can wait?", previousCapability: "attention_summary_read", previousGroundingStatus: "grounded" }),
+      response,
+    );
+    expect(response.payload.ownerResult).toContain("Buy groceries");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_todos?id=in.(todo-1)"]);
+  });
+
   it("S2-G: a grounded answer without captures writes nothing", async () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_ANON_KEY = "anon-key";
