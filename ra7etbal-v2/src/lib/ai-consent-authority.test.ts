@@ -34,4 +34,29 @@ describe("AI consent authority evaluator", () => {
     expect(evaluateAiConsentAuthority(next, [grant])).toMatchObject({ authorized: false, reason: "stale_version" });
     expect(evaluateAiConsentAuthority(next, [{ ...grant, id: "grant-b", contractVersion: "ai-v2" }]).authorized).toBe(true);
   });
+  it("keeps OpenAI attention authority purpose- and category-scoped", () => {
+    const attentionRequirement: AiTransferRequirement = {
+      contractVersion: "ai-v1",
+      provider: "openai",
+      providerCategory: "ai_model_provider",
+      purpose: "operational_attention_reasoning",
+      requiredDataCategories: ["user_text", "task_data", "people_data", "operational_context"],
+    };
+    const attentionGrant: AiConsentGrant = {
+      ...grant,
+      id: "grant-openai-attention",
+      providerScope: "openai",
+      purpose: "operational_attention_reasoning",
+      dataCategories: ["user_text", "task_data", "people_data", "operational_context"],
+    };
+
+    expect(evaluateAiConsentAuthority(attentionRequirement, [attentionGrant])).toEqual({
+      authorized: true,
+      reason: "authorized",
+      grantEventId: "grant-openai-attention",
+    });
+    expect(evaluateAiConsentAuthority({ ...attentionRequirement, purpose: "audio_transcription" }, [attentionGrant])).toMatchObject({ authorized: false, reason: "wrong_purpose" });
+    expect(evaluateAiConsentAuthority({ ...attentionRequirement, requiredDataCategories: [...attentionRequirement.requiredDataCategories, "audio"] }, [attentionGrant])).toMatchObject({ authorized: false, reason: "missing_data_category" });
+    expect(evaluateAiConsentAuthority({ ...attentionRequirement, provider: "anthropic" }, [attentionGrant])).toMatchObject({ authorized: false, reason: "wrong_provider" });
+  });
 });
