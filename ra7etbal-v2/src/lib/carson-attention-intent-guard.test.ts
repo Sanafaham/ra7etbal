@@ -3,6 +3,7 @@ import {
   matchesAttentionIntent,
   matchesAttentionFollowUp,
   resolveAttentionGuardedMessage,
+  resolvePresentedAttentionCaptureIds,
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "./carson-attention-intent-guard";
 
@@ -199,5 +200,54 @@ describe("resolveAttentionGuardedMessage — grounded result is authoritative, n
       groundedResult: grounded,
     });
     expect(result).toBe(grounded);
+  });
+});
+
+// P3 Step 3 / S2 — voice: captures count as surfaced only when the grounded
+// attention text itself reaches the owner-visible bubble.
+describe("resolvePresentedAttentionCaptureIds — RETRIEVED / PREFETCHED ≠ SURFACED TO OWNER", () => {
+  const grounded = {
+    text: "Nothing needs your direct decision right now. Also on your mind: Buy groceries (on your to-do list).",
+    captureIds: [{ id: "t2", kind: "todo" as const }],
+  };
+
+  it("S2-F: the bubble showing the grounded text presents exactly its captures", () => {
+    const displayedMessage = resolveAttentionGuardedMessage({
+      agentMessage: "Model's own reply",
+      attentionIntentDetected: true,
+      groundedResult: grounded.text,
+    });
+    expect(resolvePresentedAttentionCaptureIds({ attentionIntentDetected: true, grounded, displayedMessage })).toEqual([
+      { id: "t2", kind: "todo" },
+    ]);
+  });
+
+  it("S2-B/H: a prefetch that has not resolved yet presents nothing — the bubble shows the unavailable fallback", () => {
+    const displayedMessage = resolveAttentionGuardedMessage({
+      agentMessage: "Model's own reply",
+      attentionIntentDetected: true,
+      groundedResult: null,
+    });
+    expect(displayedMessage).toBe(ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE);
+    expect(resolvePresentedAttentionCaptureIds({ attentionIntentDetected: true, grounded: null, displayedMessage })).toEqual([]);
+  });
+
+  it("S2-C/H: a grounded result that never reaches the bubble presents nothing (a later guard rewrote the display)", () => {
+    expect(
+      resolvePresentedAttentionCaptureIds({ attentionIntentDetected: true, grounded, displayedMessage: "Something else entirely." }),
+    ).toEqual([]);
+  });
+
+  it("presents nothing on a turn without attention intent, even if a stale grounded result exists", () => {
+    expect(
+      resolvePresentedAttentionCaptureIds({ attentionIntentDetected: false, grounded, displayedMessage: grounded.text }),
+    ).toEqual([]);
+  });
+
+  it("S2-G: a grounded answer without captures presents nothing", () => {
+    const noCaptures = { text: "Nothing needs your attention right now.", captureIds: [] };
+    expect(
+      resolvePresentedAttentionCaptureIds({ attentionIntentDetected: true, grounded: noCaptures, displayedMessage: noCaptures.text }),
+    ).toEqual([]);
   });
 });

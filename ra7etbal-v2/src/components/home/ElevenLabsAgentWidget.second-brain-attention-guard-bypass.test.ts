@@ -33,16 +33,16 @@ describe("legacy attention-intent guard is inert for Second Brain voice turns", 
     );
   });
 
-  it("the client-side prefetch (fetchAttentionSummary) is reached only through that same ref — no separate secondBrainVoiceEnabled check was duplicated elsewhere, so there is exactly one gate to keep in sync", () => {
+  it("the client-side prefetch (fetchAttentionPresentation) is reached only through that same ref — no separate secondBrainVoiceEnabled check was duplicated elsewhere, so there is exactly one gate to keep in sync", () => {
     const guardBlock = SOURCE.slice(
       SOURCE.indexOf("attentionIntentForCurrentTranscriptRef.current =\n"),
       SOURCE.indexOf("} else if (role === \"agent\") {"),
     );
     expect(guardBlock).toContain("if (attentionIntentForCurrentTranscriptRef.current) {");
-    expect(guardBlock).toContain("fetchAttentionSummary()");
+    expect(guardBlock).toContain("fetchAttentionPresentation()");
     // Exactly the one occurrence from the ref assignment itself — not a
     // second, independent secondBrainVoiceEnabled check guarding the
-    // fetchAttentionSummary() call directly, which could drift out of sync
+    // fetchAttentionPresentation() call directly, which could drift out of sync
     // with the ref assignment above.
     expect((guardBlock.match(/secondBrainVoiceEnabled/g) ?? []).length).toBe(1);
   });

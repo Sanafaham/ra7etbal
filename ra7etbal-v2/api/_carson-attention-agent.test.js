@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAttentionAgentCoordinator, describeEvidenceForAgent, DEFAULT_ATTENTION_AGENT_MODEL } from "./_carson-attention-agent.js";
+import {
+  createAttentionAgentCoordinator,
+  describeEvidenceForAgent,
+  DEFAULT_ATTENTION_AGENT_MODEL,
+  capturesNamedInAgentAnswer,
+} from "./_carson-attention-agent.js";
 
 const EVIDENCE = {
   ok: true,
@@ -420,5 +425,65 @@ describe("First acceptance journey (2026-08-30) — wiring proof across the four
     // grounding is enforced by execution state, not the model's wording.
     expect(result.groundingStatus).toBe("failed");
     expect(result.ownerResult).toBe("I couldn't check your live Ra7etBal state right now — please try again in a moment.");
+  });
+});
+
+// P3 Step 3 / S2 — only captures whose exact label the agent's final answer
+// shows count as presented. Under-marking is the safe failure direction.
+describe("capturesNamedInAgentAnswer", () => {
+  const evidence = {
+    ok: true,
+    unresolvedCaptures: [
+      { id: "t1", label: "Buy groceries", type: "todo" },
+      { id: "t2", label: "Call", type: "todo" },
+      { id: "n1", label: "Check on Nimala's wedding invitation (RSVP?)", type: "note" },
+    ],
+  };
+
+  it("matches an exact label case-insensitively, including inside markdown", () => {
+    expect(capturesNamedInAgentAnswer(evidence, "- **BUY GROCERIES** — on your list")).toEqual(["t1"]);
+  });
+
+  it("handles labels with regex-special characters literally", () => {
+    expect(capturesNamedInAgentAnswer(evidence, "Also: check on Nimala's wedding invitation (RSVP?).")).toEqual(["n1"]);
+  });
+
+  it("never matches a label inside a longer word", () => {
+    expect(capturesNamedInAgentAnswer(evidence, "Recall the plan.")).toEqual([]);
+  });
+
+  it("never matches a paraphrase or a partial label", () => {
+    expect(capturesNamedInAgentAnswer(evidence, "Pick up food; check on Nimala's wedding.")).toEqual([]);
+  });
+
+  it("never marks a capture whose label appears only inside a longer evidence item's label", () => {
+    const withReminder = {
+      ...evidence,
+      overdueReminders: [{ id: "r1", label: "Pay rent to landlord", type: "reminder" }],
+      unresolvedCaptures: [
+        { id: "c0", label: "Call", type: "todo" },
+        { id: "c1", label: "Call Loulya", type: "todo" },
+        { id: "c2", label: "Pay rent", type: "todo" },
+      ],
+    };
+    expect(capturesNamedInAgentAnswer(withReminder, "Next: Call Loulya.")).toEqual(["c1"]);
+    expect(capturesNamedInAgentAnswer(withReminder, "Overdue: pay rent to landlord.")).toEqual([]);
+    // A reminder with the very same label makes the mention ambiguous.
+    const sameLabel = { ok: true, overdueReminders: [{ id: "r2", label: "Pay rent", type: "reminder" }], unresolvedCaptures: [{ id: "c2", label: "Pay rent", type: "todo" }] };
+    expect(capturesNamedInAgentAnswer(sameLabel, "Overdue: Pay rent.")).toEqual([]);
+    // Shown on its own as well as inside the longer label: counts.
+    expect(capturesNamedInAgentAnswer(withReminder, "Call Loulya. Also on your list: Call.")).toEqual(["c0", "c1"]);
+  });
+
+  it("treats Arabic combining marks as part of the word", () => {
+    const arabic = { ok: true, unresolvedCaptures: [{ id: "a1", label: "كتب", type: "note" }] };
+    expect(capturesNamedInAgentAnswer(arabic, "اشترِ كتبًا")).toEqual([]);
+    expect(capturesNamedInAgentAnswer(arabic, "عندك: كتب.")).toEqual(["a1"]);
+  });
+
+  it("returns nothing for failed evidence or an empty answer", () => {
+    expect(capturesNamedInAgentAnswer({ ...evidence, ok: false }, "Buy groceries")).toEqual([]);
+    expect(capturesNamedInAgentAnswer(null, "Buy groceries")).toEqual([]);
+    expect(capturesNamedInAgentAnswer(evidence, "")).toEqual([]);
   });
 });

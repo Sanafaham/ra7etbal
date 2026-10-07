@@ -68,6 +68,7 @@ import {
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "../../shared/carson-attention-intent-classifier.js";
 export { matchesAttentionIntent, matchesAttentionFollowUp, ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE };
+import type { AttentionCaptureRef, AttentionPresentation } from "./carson-operations-center";
 
 export interface ResolveAttentionGuardedMessageInput {
   /** The agent's own separately-generated reply for this turn. */
@@ -110,4 +111,30 @@ export function resolveAttentionGuardedMessage({
   if (!attentionIntentDetected) return agentMessage;
   if (!groundedResult) return ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
   return groundedResult;
+}
+
+export interface ResolvePresentedAttentionCaptureIdsInput {
+  attentionIntentDetected: boolean;
+  /** This turn's grounded attention result (prefetch or tool), or null. */
+  grounded: AttentionPresentation | null;
+  /** The exact text about to be shown in the owner-visible bubble. */
+  displayedMessage: string;
+}
+
+/**
+ * P3 Step 3 / S2 — RETRIEVED / PREFETCHED ≠ SURFACED TO OWNER. Returns the
+ * captures that actually reached the owner-visible bubble this turn: only
+ * when the bubble shows the grounded attention text itself. A prefetch or
+ * tool result the owner never sees (no grounded result yet, the grounding-
+ * unavailable fallback, or a reply rewritten by a later guard) returns [],
+ * so nothing is marked surfaced.
+ */
+export function resolvePresentedAttentionCaptureIds({
+  attentionIntentDetected,
+  grounded,
+  displayedMessage,
+}: ResolvePresentedAttentionCaptureIdsInput): AttentionCaptureRef[] {
+  if (!attentionIntentDetected || !grounded) return [];
+  if (displayedMessage !== grounded.text) return [];
+  return grounded.captureIds;
 }

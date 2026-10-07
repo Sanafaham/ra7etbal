@@ -63,7 +63,13 @@ import {
   extractAutomationInstructionParam,
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
-import { fetchTaskDeliveryStatus, fetchOperationsSummary, fetchAttentionSummary } from "../../lib/carson-operations-center";
+import {
+  fetchTaskDeliveryStatus,
+  fetchOperationsSummary,
+  fetchAttentionPresentation,
+  markAttentionCapturesSurfaced,
+  type AttentionPresentation,
+} from "../../lib/carson-operations-center";
 import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
 import { lookupCommunicationHistory } from "../../lib/carson-communication-history";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
@@ -145,6 +151,7 @@ import {
   matchesAttentionIntent,
   matchesAttentionFollowUp,
   resolveAttentionGuardedMessage,
+  resolvePresentedAttentionCaptureIds,
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "../../lib/carson-attention-intent-guard";
 import { reduceCarsonTranscriptTurn, type CarsonTranscriptTurnState } from "../../lib/carson-transcript-turn-state";
@@ -1635,8 +1642,10 @@ export default function ElevenLabsAgentWidget({
   const attentionToolRanForCurrentTranscriptRef = useRef(false);
   // The turn's live grounded result — populated either by the prefetch
   // kicked off the instant a matching utterance arrives, or by
-  // get_items_needing_attention's own real return value if it runs.
-  const attentionGuardResultRef = useRef<string | null>(null);
+  // get_items_needing_attention's own real return value if it runs. Carries
+  // the captures that text includes; they are marked surfaced only if the
+  // text actually reaches the owner-visible bubble (P3 Step 3 / S2).
+  const attentionGuardResultRef = useRef<AttentionPresentation | null>(null);
   // True only when the immediately preceding turn was itself answered from
   // real grounded evidence. Currently informational only — see
   // lastTurnWasAttentionIntentRef below for what actually gates follow-up
@@ -6735,7 +6744,7 @@ export default function ElevenLabsAgentWidget({
           },
           // Second Brain proof — grounded "what needs my attention" read.
           // Structured evidence -> deterministic render happens inside
-          // fetchAttentionSummary(); this tool never lets the model
+          // fetchAttentionPresentation(); this tool never lets the model
           // supply or override the underlying data (see
           // carson-operations-center.ts's fetchAttentionEvidence /
           // renderAttentionSummary doc comment for the grounding
@@ -6747,12 +6756,17 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             attentionToolRanForCurrentTranscriptRef.current = true;
             const requestTurnOperationId = currentOwnerTurnOperationIdRef.current;
-            const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, () =>
-              fetchAttentionSummary(),
-            );
+            // Never marks captures surfaced: this result goes to the model,
+            // not the owner (P3 Step 3 / S2).
+            let toolCaptureIds: AttentionPresentation["captureIds"] = [];
+            const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, async () => {
+              const presentation = await fetchAttentionPresentation();
+              toolCaptureIds = presentation.captureIds;
+              return presentation.text;
+            });
             // Capture the tool's OWN real return value as this turn's
             // grounded result too — not just the prefetch kicked off on the
-            // user-turn side. Both call the same read-only fetchAttentionSummary(),
+            // user-turn side. Both call the same read-only fetchAttentionPresentation(),
             // so either source is equally authoritative; this just ensures a
             // genuine tool invocation always has a grounded result ready for
             // resolveAttentionGuardedMessage, closing the gap where the tool
@@ -6763,7 +6777,7 @@ export default function ElevenLabsAgentWidget({
             resultPromise
               .then((text) => {
                 if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
-                if (typeof text === "string") attentionGuardResultRef.current = text;
+                if (typeof text === "string") attentionGuardResultRef.current = { text, captureIds: toolCaptureIds };
               })
               .catch(() => {});
             return resultPromise;
@@ -7146,11 +7160,12 @@ export default function ElevenLabsAgentWidget({
               // elsewhere in this file (see canonicalConsequentialResultRef's
               // own turnOperationId check).
               const requestTurnOperationId = turnOperationId;
-              fetchAttentionSummary()
-                .then((text) => {
+              // Prefetch never marks captures surfaced (P3 Step 3 / S2).
+              fetchAttentionPresentation()
+                .then((presentation) => {
                   if (sessionGenerationRef.current !== requestGeneration) return;
                   if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
-                  attentionGuardResultRef.current = text;
+                  attentionGuardResultRef.current = presentation;
                 })
                 .catch(() => {
                   // Best-effort only — no correction available is a real,
@@ -7212,7 +7227,7 @@ export default function ElevenLabsAgentWidget({
             const attentionGuardedMessage = resolveAttentionGuardedMessage({
               agentMessage: message,
               attentionIntentDetected: attentionIntentForCurrentTranscriptRef.current,
-              groundedResult: attentionGuardResultRef.current,
+              groundedResult: attentionGuardResultRef.current?.text ?? null,
             });
             lastAttentionTurnWasGroundedRef.current =
               attentionIntentForCurrentTranscriptRef.current &&
@@ -7345,6 +7360,18 @@ export default function ElevenLabsAgentWidget({
             }
             setLastCarsonMessage(mergedDisplayMessage);
             setVoiceConversation([...sessionTranscriptRef.current]);
+            // Owner-visible presentation boundary (P3 Step 3 / S2): the
+            // bubble now shows this text — mark only the captures in the
+            // grounded attention text it shows, once.
+            const presentedAttentionCaptureIds = resolvePresentedAttentionCaptureIds({
+              attentionIntentDetected: attentionIntentForCurrentTranscriptRef.current,
+              grounded: attentionGuardResultRef.current,
+              displayedMessage: finalDisplayMessage,
+            });
+            if (presentedAttentionCaptureIds.length > 0 && attentionGuardResultRef.current) {
+              attentionGuardResultRef.current = { ...attentionGuardResultRef.current, captureIds: [] };
+              markAttentionCapturesSurfaced(presentedAttentionCaptureIds);
+            }
 
             if (requestedChannel === "text") {
               if (typedResponseTimeoutRef.current) {

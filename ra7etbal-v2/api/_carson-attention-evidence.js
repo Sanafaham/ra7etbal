@@ -137,10 +137,12 @@ async function fetchUnresolvedCaptureCandidates(ctx, now) {
   ];
 }
 
+const MARK_SURFACED_TIMEOUT_MS = 1500;
+
 /**
- * Best-effort, non-blocking — mirrors markCarsonNotesSurfaced()/
- * markCarsonTodosSurfaced()'s exact contract: a failed write here must
- * never fail or delay the read the caller is waiting on.
+ * Best-effort — mirrors markCarsonNotesSurfaced()/markCarsonTodosSurfaced()'s
+ * contract: a failed write must never fail the answer. Bounded, because the
+ * caller awaits it just before responding.
  */
 async function markSurfaced(ctx, table, ids) {
   if (ids.length === 0) return;
@@ -155,6 +157,7 @@ async function markSurfaced(ctx, table, ids) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ last_surfaced_at: new Date().toISOString() }),
+        signal: AbortSignal.timeout(MARK_SURFACED_TIMEOUT_MS),
       },
     );
   } catch {
@@ -287,16 +290,42 @@ export async function fetchAttentionEvidenceForServer({ supabaseUrl, anonKey, au
     recurringSourceFailed,
   });
 
-  // Same "only mark what was truly surfaced" contract as the browser path
-  // (see carson-operations-center.ts) — best-effort, never blocks the read.
-  if (evidence.selectedCaptureIds && evidence.selectedCaptureIds.length > 0) {
-    const noteIds = evidence.selectedCaptureIds.filter((c) => c.kind === "note").map((c) => c.id);
-    const todoIds = evidence.selectedCaptureIds.filter((c) => c.kind === "todo").map((c) => c.id);
-    if (noteIds.length > 0) markSurfaced(ctx, "carson_notes", noteIds).catch(() => {});
-    if (todoIds.length > 0) markSurfaced(ctx, "carson_todos", todoIds).catch(() => {});
-  }
-
+  // Retrieval never writes last_surfaced_at (P3 Step 3 / S2). Retrieved is
+  // not surfaced: the owner may never see this evidence. Marking happens
+  // only at the owner-visible presentation boundary — see
+  // markPresentedAttentionCapturesSurfaced below.
   return evidence;
+}
+
+/**
+ * The unresolved captures an attention turn result actually showed the
+ * owner: only a handled, grounded answer, and only the captures that
+ * answer rendered (its surfacedEvidenceIds). A nothing_new or clarify
+ * answer renders no evidence items, so it presents none.
+ */
+export function presentedAttentionCaptureIds(result) {
+  if (!result || result.handled !== true || result.groundingStatus !== "grounded") return [];
+  if (result.capability !== "attention_summary_read") return [];
+  if (result.responseIntent === "nothing_new" || result.responseIntent === "clarify") return [];
+  const evidence = result.evidence;
+  if (!evidence || evidence.ok !== true) return [];
+  const surfaced = new Set(Array.isArray(result.surfacedEvidenceIds) ? result.surfacedEvidenceIds : []);
+  return (evidence.unresolvedCaptures ?? [])
+    .filter((item) => surfaced.has(item.id))
+    .map((item) => ({ id: item.id, kind: item.type }));
+}
+
+/**
+ * Called at the owner-visible presentation boundary (api/carson-turn.js,
+ * just before the answer is returned). Marks exactly the captures that
+ * answer presented; anything else marks nothing. Never throws.
+ */
+export async function markPresentedAttentionCapturesSurfaced(ctx, result) {
+  const presented = presentedAttentionCaptureIds(result);
+  if (presented.length === 0) return;
+  const noteIds = presented.filter((c) => c.kind === "note").map((c) => c.id);
+  const todoIds = presented.filter((c) => c.kind === "todo").map((c) => c.id);
+  await Promise.all([markSurfaced(ctx, "carson_notes", noteIds), markSurfaced(ctx, "carson_todos", todoIds)]);
 }
 
 export async function fetchAttentionSummaryForServer(ctx) {

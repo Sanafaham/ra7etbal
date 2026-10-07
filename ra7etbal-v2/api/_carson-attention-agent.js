@@ -132,6 +132,7 @@ function buildAttentionStateTool({ fetchEvidence, accountId, authorization, exec
         };
       }
       executionState.evidenceOk = true;
+      executionState.evidence = evidence;
       return { ok: true, ...describeEvidenceForAgent(evidence) };
     },
   });
@@ -147,6 +148,65 @@ function logAgentRunDiagnostic(fields) {
   } catch {
     // Diagnostic logging must never affect or interrupt the actual turn.
   }
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Letters, combining marks (e.g. Arabic harakat) and digits continue a word.
+const WORD_CHAR = "\\p{L}\\p{M}\\p{N}";
+
+// Every [start, end) range where `label` appears in `text` as a whole phrase,
+// case-insensitive.
+function phraseRanges(text, label) {
+  const pattern = new RegExp(`(?<![${WORD_CHAR}])${escapeRegExp(label)}(?![${WORD_CHAR}])`, "giu");
+  const ranges = [];
+  for (const match of text.matchAll(pattern)) ranges.push([match.index, match.index + match[0].length]);
+  return ranges;
+}
+
+/**
+ * P3 Step 3 / S2 — which unresolved captures this free-text answer actually
+ * showed the owner. Only a capture whose exact label appears in the final
+ * answer (case-insensitive, as a whole phrase) counts — and not where that
+ * appearance is only part of a longer label of another evidence item (e.g.
+ * capture "Call" inside reminder "Call Loulya"). Fetched, available-to-the-
+ * model, or paraphrased captures do not count: an unmarked capture only
+ * shows again later, while a false mark hides it.
+ */
+export function capturesNamedInAgentAnswer(evidence, finalOutput) {
+  if (!evidence || evidence.ok !== true || typeof finalOutput !== "string" || !finalOutput) return [];
+  const labelOf = (item) => (typeof item?.label === "string" ? item.label.trim() : "");
+  const allItems = [
+    ...(evidence.needsYou ?? []),
+    ...(evidence.overdueReminders ?? []),
+    ...(evidence.upcomingReminders ?? []),
+    ...(evidence.waiting ?? []),
+    ...(evidence.later ?? []),
+    ...(evidence.unresolvedCaptures ?? []),
+  ];
+  return (evidence.unresolvedCaptures ?? [])
+    .filter((capture) => {
+      const label = labelOf(capture);
+      if (!label) return false;
+      const lower = label.toLowerCase();
+      // A longer label containing this one, or a non-capture item with the
+      // very same label, makes that appearance ambiguous — don't count it.
+      const captures = new Set(evidence.unresolvedCaptures ?? []);
+      const covering = allItems
+        .filter((other) => other !== capture)
+        .filter((other) => {
+          const otherLabel = labelOf(other).toLowerCase();
+          if (otherLabel === lower) return !captures.has(other);
+          return otherLabel.length > lower.length && otherLabel.includes(lower);
+        })
+        .flatMap((other) => phraseRanges(finalOutput, labelOf(other)));
+      return phraseRanges(finalOutput, label).some(
+        ([start, end]) => !covering.some(([coverStart, coverEnd]) => coverStart <= start && end <= coverEnd),
+      );
+    })
+    .map((capture) => capture.id);
 }
 
 /**
@@ -167,7 +227,7 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       return { handled: false, status: 400, code: "invalid_owner_turn" };
     }
 
-    const executionState = { called: false, evidenceOk: false };
+    const executionState = { called: false, evidenceOk: false, evidence: null };
     const attentionStateTool = buildAttentionStateTool({
       fetchEvidence,
       accountId: ownerTurn.accountId,
@@ -244,6 +304,11 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       capability: "attention_summary_read",
       groundingStatus: "grounded",
       ownerResult: finalOutput,
+      // P3 Step 3 / S2: the evidence this answer was grounded in, and only
+      // the captures it actually named — read by the presentation boundary
+      // in api/carson-turn.js to set last_surfaced_at.
+      evidence: executionState.evidence,
+      surfacedEvidenceIds: capturesNamedInAgentAnswer(executionState.evidence, finalOutput),
     };
   };
 }

@@ -389,27 +389,51 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     capturesFailed,
   });
 
-  // last_surfaced_at must mean "actually included in this rendered
-  // response" — never "merely retrieved." Only the classifier's selected
-  // subset qualifies; anything filtered out is never marked, so it remains
-  // eligible to be genuinely surfaced later instead of silently
-  // disappearing. Best-effort, non-blocking: a failed write here must not
-  // fail the read the user is waiting on.
-  if (evidence.selectedCaptureIds && evidence.selectedCaptureIds.length > 0) {
-    const noteIds = evidence.selectedCaptureIds.filter((c) => c.kind === "note").map((c) => c.id);
-    const todoIds = evidence.selectedCaptureIds.filter((c) => c.kind === "todo").map((c) => c.id);
-    if (noteIds.length > 0) markCarsonNotesSurfaced(noteIds).catch(() => {});
-    if (todoIds.length > 0) markCarsonTodosSurfaced(todoIds).catch(() => {});
-  }
-
+  // Retrieval never writes last_surfaced_at (P3 Step 3 / S2). Retrieved or
+  // prefetched is not surfaced: the guard prefetch and a tool result sent
+  // only to the model may never reach the owner. Marking happens only at
+  // the owner-visible presentation boundary — markAttentionCapturesSurfaced.
   return evidence;
 }
 
-export async function fetchAttentionSummary(): Promise<string> {
+export type AttentionCaptureRef = { id: string; kind: "note" | "todo" };
+
+/** A rendered attention answer plus the captures that text includes. */
+export type AttentionPresentation = { text: string; captureIds: AttentionCaptureRef[] };
+
+const ATTENTION_READ_FAILED_TEXT =
+  "I couldn't check what needs your attention right now — the live check didn't complete.";
+
+// renderAttentionSummary renders every unresolvedCaptures item of an ok
+// evidence object ("Also on your mind: …") and none of a failed one.
+function renderedCaptureIds(evidence: AttentionSummaryEvidence): AttentionCaptureRef[] {
+  if (!evidence.ok) return [];
+  return evidence.unresolvedCaptures
+    .filter((item) => item.type === "note" || item.type === "todo")
+    .map((item) => ({ id: item.id, kind: item.type as "note" | "todo" }));
+}
+
+export async function fetchAttentionPresentation(): Promise<AttentionPresentation> {
   try {
     const evidence = await fetchAttentionEvidence();
-    return renderAttentionSummary(evidence);
+    return { text: renderAttentionSummary(evidence), captureIds: renderedCaptureIds(evidence) };
   } catch {
-    return "I couldn't check what needs your attention right now — the live check didn't complete.";
+    return { text: ATTENTION_READ_FAILED_TEXT, captureIds: [] };
   }
+}
+
+export async function fetchAttentionSummary(): Promise<string> {
+  return (await fetchAttentionPresentation()).text;
+}
+
+/**
+ * Records that these captures reached the owner. Call only at the
+ * owner-visible presentation boundary, with exactly the captures that
+ * presentation showed. Best-effort: a failed write never affects the answer.
+ */
+export function markAttentionCapturesSurfaced(captureIds: AttentionCaptureRef[]): void {
+  const noteIds = captureIds.filter((c) => c.kind === "note").map((c) => c.id);
+  const todoIds = captureIds.filter((c) => c.kind === "todo").map((c) => c.id);
+  if (noteIds.length > 0) markCarsonNotesSurfaced(noteIds).catch(() => {});
+  if (todoIds.length > 0) markCarsonTodosSurfaced(todoIds).catch(() => {});
 }
