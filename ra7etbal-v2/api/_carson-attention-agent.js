@@ -132,6 +132,7 @@ function buildAttentionStateTool({ fetchEvidence, accountId, authorization, exec
         };
       }
       executionState.evidenceOk = true;
+      executionState.evidence = evidence;
       return { ok: true, ...describeEvidenceForAgent(evidence) };
     },
   });
@@ -147,6 +148,28 @@ function logAgentRunDiagnostic(fields) {
   } catch {
     // Diagnostic logging must never affect or interrupt the actual turn.
   }
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * P3 Step 3 / S2 — which unresolved captures this free-text answer actually
+ * showed the owner. Only a capture whose exact label appears in the final
+ * answer (case-insensitive, as a whole phrase, not inside a longer word)
+ * counts. Fetched, available-to-the-model, or paraphrased captures do not:
+ * an unmarked capture only shows again later, while a false mark hides it.
+ */
+export function capturesNamedInAgentAnswer(evidence, finalOutput) {
+  if (!evidence || evidence.ok !== true || typeof finalOutput !== "string" || !finalOutput) return [];
+  return (evidence.unresolvedCaptures ?? [])
+    .filter((item) => {
+      const label = typeof item?.label === "string" ? item.label.trim() : "";
+      if (!label) return false;
+      return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(label)}($|[^\\p{L}\\p{N}])`, "iu").test(finalOutput);
+    })
+    .map((item) => item.id);
 }
 
 /**
@@ -167,7 +190,7 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       return { handled: false, status: 400, code: "invalid_owner_turn" };
     }
 
-    const executionState = { called: false, evidenceOk: false };
+    const executionState = { called: false, evidenceOk: false, evidence: null };
     const attentionStateTool = buildAttentionStateTool({
       fetchEvidence,
       accountId: ownerTurn.accountId,
@@ -244,6 +267,11 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       capability: "attention_summary_read",
       groundingStatus: "grounded",
       ownerResult: finalOutput,
+      // P3 Step 3 / S2: the evidence this answer was grounded in, and only
+      // the captures it actually named — read by the presentation boundary
+      // in api/carson-turn.js to set last_surfaced_at.
+      evidence: executionState.evidence,
+      surfacedEvidenceIds: capturesNamedInAgentAnswer(executionState.evidence, finalOutput),
     };
   };
 }

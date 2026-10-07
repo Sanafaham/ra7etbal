@@ -165,11 +165,15 @@ export async function markPresentedAttentionCapturesThroughServerPath({ authoriz
   }
 }
 
-// Never rejects: a failed write must not affect the answer.
-function startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, authorization, result) {
-  return Promise.resolve()
-    .then(() => markPresentedAttentionCaptures({ authorization, result }))
-    .catch(() => {});
+// Awaited BEFORE the answer is sent or streamed: Vercel does not guarantee
+// work that continues after the response. Bounded (markSurfaced's timeout)
+// and never throws — a failed write must not affect the answer.
+async function markPresentedAttentionCapturesBeforeResponse(markPresentedAttentionCaptures, authorization, result) {
+  try {
+    await markPresentedAttentionCaptures({ authorization, result });
+  } catch {
+    // Best-effort — never fails the answer.
+  }
 }
 
 export async function readCalendarThroughExistingHandler({ authorization, range }, handler = googleCalendarHandler) {
@@ -355,14 +359,10 @@ async function handleVoiceBoundaryRequest(
   const text = result?.handled
     ? (result.ownerResult ?? "I couldn't confirm that. Please try again.")
     : "Hi! What can I help with?";
-  // Started before streaming so it adds no latency; awaited before the
-  // handler returns so the write is not dropped.
-  const marking = result?.handled && result.ownerResult
-    ? startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, ownerTurn.authorization, result)
-    : null;
-  const streamed = streamOwnerResultAsChatCompletion(res, { completionId, text });
-  if (marking) await marking;
-  return streamed;
+  if (result?.handled && result.ownerResult) {
+    await markPresentedAttentionCapturesBeforeResponse(markPresentedAttentionCaptures, ownerTurn.authorization, result);
+  }
+  return streamOwnerResultAsChatCompletion(res, { completionId, text });
 }
 
 export function createCarsonTurnHandler({
@@ -482,12 +482,10 @@ export function createCarsonTurnHandler({
     } else if (dedupKey) {
       dedupStore.delete(dedupKey);
     }
-    const marking = result.handled
-      ? startPresentedAttentionCaptureMark(markPresentedAttentionCaptures, ownerTurn.authorization, result)
-      : null;
-    const sent = res.status(result.status).json(result);
-    if (marking) await marking;
-    return sent;
+    if (result.handled) {
+      await markPresentedAttentionCapturesBeforeResponse(markPresentedAttentionCaptures, ownerTurn.authorization, result);
+    }
+    return res.status(result.status).json(result);
   };
 }
 

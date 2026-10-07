@@ -303,3 +303,188 @@ describe("voice boundary answer — the presentation boundary", () => {
     expect(result.surfacedEvidenceIds).toContain("todo-1");
   });
 });
+
+// ── P3 Step 3 / S2 blocker corrections ────────────────────────────────────
+
+describe("typed OpenAI-agent attention path (CARSON_OPENAI_AGENT_ATTENTION_V1) — presentation marking", () => {
+  const ALSO = capture("todo-2", "todo", "Review the Rahet Bal home screen");
+
+  function agentHandler({ evidence, finalOutput, markPresentedAttentionCaptures = markPresentedAttentionCapturesThroughServerPath }) {
+    vi.stubEnv("CARSON_OPENAI_AGENT_ATTENTION_V1", "1");
+    const runAgent = vi.fn(async (agent) => {
+      await agent.tools[0].invoke({}, "{}");
+      return { finalOutput, newItems: [{ type: "tool_call_item" }] };
+    });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+      fetchAttentionEvidence: vi.fn().mockResolvedValue({ evidence, text: "unused on the agent path" }),
+      runAgent,
+      buildAgent: (opts) => ({ __fakeAgent: true, ...opts }),
+      markPresentedAttentionCaptures,
+      dedupStore: new Map(),
+    });
+    return handler;
+  }
+
+  function stubSupabase() {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_ANON_KEY = "anon-key";
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("S2-6: an agent answer containing a capture's exact label (any case) returns and marks that capture", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ unresolvedCaptures: [TODO] }),
+      finalOutput: "Needs attention now:\n- **buy groceries** — on your to-do list.",
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload.groundingStatus).toBe("grounded");
+    expect(response.payload.surfacedEvidenceIds).toEqual(["todo-1"]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_todos?id=in.(todo-1)"]);
+  });
+
+  it("S2-7/9: of several fetched captures, only the one whose exact label is rendered is marked", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ unresolvedCaptures: [NOTE, TODO, ALSO] }),
+      finalOutput: "Also on your mind: Check on Nimala's wedding invitation.",
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload.surfacedEvidenceIds).toEqual(["note-1"]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_notes?id=in.(note-1)"]);
+  });
+
+  it("S2-8: a paraphrased capture is not marked", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ unresolvedCaptures: [TODO] }),
+      finalOutput: "You still need to pick up some food from the shop.",
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload.surfacedEvidenceIds).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["S2-11 clarification", "Could you tell me which list you mean?"],
+    ["S2-12 nothing-new", "Nothing else needs your attention beyond what I already mentioned."],
+  ])("%s answer marks nothing even though captures were fetched", async (_name, finalOutput) => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({ evidence: evidenceWith({ unresolvedCaptures: [NOTE, TODO] }), finalOutput });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload.surfacedEvidenceIds).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("S2-13: a capture-free agent answer marks nothing", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ waiting: [WAITING] }),
+      finalOutput: "Christopher: car is still waiting.",
+    });
+    await handler(req(TURN), res());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("S2-10: a failed or unavailable agent answer marks nothing", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ ok: false, unresolvedCaptures: [TODO] }),
+      finalOutput: "Buy groceries",
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.payload.groundingStatus).toBe("failed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("server presentation write order — the mark is awaited before the owner-visible response", () => {
+  function recordingMark(events) {
+    return vi.fn(async () => {
+      events.push("mark-start");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      events.push("mark-done");
+    });
+  }
+
+  it("S2-15: typed — the mark completes before the JSON answer is sent", async () => {
+    const events = [];
+    const { handler } = typedHandler({
+      evidence: evidenceWith({ unresolvedCaptures: [TODO] }),
+      markPresentedAttentionCaptures: recordingMark(events),
+    });
+    const response = res();
+    const json = response.json.bind(response);
+    response.json = (value) => {
+      events.push("response-sent");
+      return json(value);
+    };
+    await handler(req(TURN), response);
+    expect(events).toEqual(["mark-start", "mark-done", "response-sent"]);
+  });
+
+  it("S2-16: voice boundary — the mark completes before the stream begins", async () => {
+    process.env.CARSON_SECOND_BRAIN_SESSION_SECRET = "session-signing-secret-for-tests-32b!!";
+    process.env.CARSON_SECOND_BRAIN_PROVIDER_SECRET = "provider-secret-for-tests-only-32bytes!!";
+    const { token } = createSessionBinding({ accountId: "owner-1", jwt: "owner-jwt-voice" });
+    const events = [];
+    const handler = createCarsonTurnHandler({
+      classifyOperationalIntent: vi.fn().mockResolvedValue("operational_state_read"),
+      fetchAttentionEvidence: vi.fn().mockResolvedValue({
+        evidence: evidenceWith({ unresolvedCaptures: [TODO] }),
+        text: "Also on your mind: Buy groceries (on your to-do list).",
+      }),
+      markPresentedAttentionCaptures: recordingMark(events),
+      dedupStore: new Map(),
+    });
+    const response = res();
+    const setHeader = response.setHeader.bind(response);
+    const write = response.write.bind(response);
+    response.setHeader = (k, v) => {
+      events.push("stream-begun");
+      return setHeader(k, v);
+    };
+    response.write = (chunk) => {
+      events.push("stream-write");
+      return write(chunk);
+    };
+    await handler(
+      {
+        method: "POST",
+        headers: { authorization: "Bearer provider-secret-for-tests-only-32bytes!!", "x-carson-second-brain-binding": token },
+        body: { messages: [{ role: "user", content: "What needs my attention?" }] },
+      },
+      response,
+    );
+    expect(events.slice(0, 2)).toEqual(["mark-start", "mark-done"]);
+    expect(events).toContain("stream-write");
+  });
+
+  it("S2-17: no presented captures — no write happens before or after the response", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_ANON_KEY = "anon-key";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { handler } = typedHandler({
+      evidence: evidenceWith({ waiting: [WAITING] }),
+      markPresentedAttentionCaptures: markPresentedAttentionCapturesThroughServerPath,
+    });
+    const response = res();
+    await handler(req(TURN), response);
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
