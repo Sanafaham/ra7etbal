@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { fetchAttentionEvidenceForServer, fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
+import {
+  fetchAttentionEvidenceForServer,
+  fetchAttentionSummaryForServer,
+  presentedAttentionCaptureIds,
+} from "./_carson-attention-evidence.js";
 
 const CTX = {
   supabaseUrl: "https://example.supabase.co",
@@ -119,5 +123,77 @@ describe("fetchAttentionEvidenceForServer — security boundary", () => {
 
     expect(evidence.ok).toBe(false);
     expect(text).toBe("I couldn't check what needs your attention right now — the live check didn't complete.");
+  });
+});
+
+// P3 Step 3 / S2 — retrieval never writes last_surfaced_at.
+describe("fetchAttentionEvidenceForServer — S2: retrieval is read-only", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("S2-A: retrieving selected captures issues no PATCH and leaves them eligible on the next read", async () => {
+    const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const fetchMock = vi.fn(async (url) => {
+      const table = tableFromUrl(url);
+      if (table === "carson_notes") {
+        return jsonResponse([{ id: "n1", note: "Check on Nimala's wedding invitation", created_at: old, updated_at: old, dismissed_at: null, last_surfaced_at: null }]);
+      }
+      if (table === "carson_todos") {
+        return jsonResponse([{ id: "t1", title: "Buy groceries", status: "active", created_at: old, updated_at: old, last_surfaced_at: null }]);
+      }
+      return jsonResponse([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await fetchAttentionEvidenceForServer(CTX);
+    const second = await fetchAttentionSummaryForServer(CTX);
+
+    expect(first.unresolvedCaptures.map((c) => c.id).sort()).toEqual(["n1", "t1"]);
+    expect(second.evidence.unresolvedCaptures.map((c) => c.id).sort()).toEqual(["n1", "t1"]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.method ?? "GET").toBe("GET");
+    }
+  });
+});
+
+describe("presentedAttentionCaptureIds — S2: only what the answer actually rendered", () => {
+  const capture = (id, type) => ({ id, type, label: id, category: "unresolvedCaptures" });
+  const grounded = (overrides = {}) => ({
+    handled: true,
+    capability: "attention_summary_read",
+    groundingStatus: "grounded",
+    responseIntent: "list",
+    evidence: { ok: true, unresolvedCaptures: [capture("n1", "note"), capture("t1", "todo")] },
+    surfacedEvidenceIds: ["n1", "t1"],
+    ...overrides,
+  });
+
+  it("returns the presented captures with their table kind", () => {
+    expect(presentedAttentionCaptureIds(grounded())).toEqual([
+      { id: "n1", kind: "note" },
+      { id: "t1", kind: "todo" },
+    ]);
+  });
+
+  it("S2-I: excludes captures that were fetched but not rendered", () => {
+    expect(presentedAttentionCaptureIds(grounded({ surfacedEvidenceIds: ["t1", "task-x"] }))).toEqual([{ id: "t1", kind: "todo" }]);
+  });
+
+  it("S2-G/H: presents nothing for failed, unhandled, non-attention, nothing_new or clarify answers", () => {
+    expect(presentedAttentionCaptureIds(null)).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ groundingStatus: "failed" }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ handled: false }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ capability: "calendar_read" }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ responseIntent: "nothing_new" }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ responseIntent: "clarify" }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ evidence: { ok: false, unresolvedCaptures: [capture("n1", "note")] } }))).toEqual([]);
+    expect(presentedAttentionCaptureIds(grounded({ surfacedEvidenceIds: undefined }))).toEqual([]);
+  });
+
+  it("an agent-coordinator answer (free text, no surfacedEvidenceIds or evidence) presents nothing verifiable", () => {
+    expect(
+      presentedAttentionCaptureIds({ handled: true, capability: "attention_summary_read", groundingStatus: "grounded", ownerResult: "text" }),
+    ).toEqual([]);
   });
 });

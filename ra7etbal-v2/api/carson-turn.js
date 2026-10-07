@@ -1,6 +1,6 @@
 import googleCalendarHandler from "./google-calendar.js";
 import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator, ATTENTION_CAPABILITY } from "./_carson-read-turn.js";
-import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
+import { fetchAttentionSummaryForServer, markPresentedAttentionCapturesSurfaced } from "./_carson-attention-evidence.js";
 import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
 import { createAttentionAgentCoordinator } from "./_carson-attention-agent.js";
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
@@ -151,6 +151,20 @@ export async function fetchAttentionEvidenceThroughServerPath({ authorization })
   return fetchAttentionSummaryForServer({ supabaseUrl, anonKey, authorization });
 }
 
+// P3 Step 3 / S2: the owner-visible presentation boundary for attention
+// answers. Marks only the captures this result actually presented; a
+// failed, unavailable or capture-free answer marks nothing. Never throws.
+export async function markPresentedAttentionCapturesThroughServerPath({ authorization, result }) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey || !authorization) return;
+  try {
+    await markPresentedAttentionCapturesSurfaced({ supabaseUrl, anonKey, authorization }, result);
+  } catch {
+    // Best-effort — never fails the answer.
+  }
+}
+
 export async function readCalendarThroughExistingHandler({ authorization, range }, handler = googleCalendarHandler) {
   let statusCode = 200;
   let payload = null;
@@ -236,7 +250,11 @@ export async function coordinateOwnerTurn(ownerTurn, { coordinateAttention, coor
  * generation — so what ElevenLabs speaks IS the grounded ownerResult, not
  * ElevenLabs' own hosted model's paraphrase of it.
  */
-async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coordinateCalendar, classifyOperationalIntent }) {
+async function handleVoiceBoundaryRequest(
+  req,
+  res,
+  { coordinateAttention, coordinateCalendar, classifyOperationalIntent, markPresentedAttentionCaptures },
+) {
   let expectedProviderSecret;
   try {
     expectedProviderSecret = providerSecret();
@@ -330,6 +348,13 @@ async function handleVoiceBoundaryRequest(req, res, { coordinateAttention, coord
   const text = result?.handled
     ? (result.ownerResult ?? "I couldn't confirm that. Please try again.")
     : "Hi! What can I help with?";
+  if (result?.handled && result.ownerResult) {
+    try {
+      await markPresentedAttentionCaptures({ authorization: ownerTurn.authorization, result });
+    } catch {
+      // Best-effort — never fails the answer.
+    }
+  }
   return streamOwnerResultAsChatCompletion(res, { completionId, text });
 }
 
@@ -340,6 +365,7 @@ export function createCarsonTurnHandler({
   readCalendar = readCalendarThroughExistingHandler,
   fetchAttentionEvidence = fetchAttentionEvidenceThroughServerPath,
   reasonOverEvidence = reasonOverOperationalEvidenceWithClaude,
+  markPresentedAttentionCaptures = markPresentedAttentionCapturesThroughServerPath,
   // OpenAI Agents SDK vertical slice (2026-08-30, owner decision after
   // repeated Stage 1/2 production canary failures) — runAgent/buildAgent
   // are DI-only for tests; production always uses their real defaults
@@ -386,7 +412,12 @@ export function createCarsonTurnHandler({
     // shape alone (an OpenAI-style messages array, no typed transcript
     // field) so the existing typed path is completely untouched.
     if (looksLikeVoiceBoundaryRequest(req)) {
-      return handleVoiceBoundaryRequest(req, res, { coordinateAttention, coordinateCalendar, classifyOperationalIntent });
+      return handleVoiceBoundaryRequest(req, res, {
+        coordinateAttention,
+        coordinateCalendar,
+        classifyOperationalIntent,
+        markPresentedAttentionCaptures,
+      });
     }
 
     const accountId = await authenticate(req);
@@ -443,6 +474,13 @@ export function createCarsonTurnHandler({
       remember(dedupStore, dedupKey, result);
     } else if (dedupKey) {
       dedupStore.delete(dedupKey);
+    }
+    if (result.handled) {
+      try {
+        await markPresentedAttentionCaptures({ authorization: ownerTurn.authorization, result });
+      } catch {
+        // Best-effort — never fails the answer.
+      }
     }
     return res.status(result.status).json(result);
   };

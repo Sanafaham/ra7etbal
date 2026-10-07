@@ -38,9 +38,13 @@ vi.mock("./carson-todos", () => ({
   markCarsonTodosSurfaced: mocks.markCarsonTodosSurfaced,
 }));
 
-const { fetchAttentionEvidence, fetchAttentionSummary, renderAttentionSummary } = await import(
-  "./carson-operations-center"
-);
+const {
+  fetchAttentionEvidence,
+  fetchAttentionSummary,
+  fetchAttentionPresentation,
+  markAttentionCapturesSurfaced,
+  renderAttentionSummary,
+} = await import("./carson-operations-center");
 
 // A digest that LOADED SUCCESSFULLY for an owner with no automations — which is
 // what these tests mock for the happy path. recurringSourceLinksLoaded is true
@@ -353,36 +357,112 @@ describe("fetchAttentionEvidence — unresolved Notes/To-dos (Second Brain Phase
     expect(renderAttentionSummary(evidence)).not.toMatch(/Paris/);
   });
 
-  it("marks surfaced only the notes/todos actually selected by classification — never merely-retrieved ones", async () => {
+  // P3 Step 3 / S2 — RETRIEVED / PREFETCHED ≠ SURFACED TO OWNER. Retrieval
+  // (the voice guard prefetch, the get_items_needing_attention tool, the
+  // typed read) must never write last_surfaced_at.
+  it("S2-A: retrieval never writes last_surfaced_at, even when captures are selected", async () => {
     const selected = [
       { id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true },
       { id: "t1", kind: "todo" as const, text: "Review the Rahet Bal home screen", ageDays: 45, neverSurfaced: true, actionable: true },
     ];
     mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(selected);
-    mocks.classifyAttentionWorthyCaptures.mockReturnValue(selected);
-    await fetchAttentionEvidence();
-    expect(mocks.markCarsonNotesSurfaced).toHaveBeenCalledWith(["n1"]);
-    expect(mocks.markCarsonTodosSurfaced).toHaveBeenCalledWith(["t1"]);
+    const evidence = await fetchAttentionEvidence();
+    await fetchAttentionSummary();
+    await fetchAttentionPresentation();
+    expect(evidence.unresolvedCaptures.map((c) => c.id)).toEqual(["n1", "t1"]);
+    expect(mocks.markCarsonNotesSurfaced).not.toHaveBeenCalled();
+    expect(mocks.markCarsonTodosSurfaced).not.toHaveBeenCalled();
   });
 
   it("does not mark anything surfaced when classification selects nothing", async () => {
     mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([
       { id: "n1", kind: "note" as const, text: "Restaurant I liked in Paris", ageDays: 200, neverSurfaced: true, actionable: false },
     ]);
-    mocks.classifyAttentionWorthyCaptures.mockReturnValue([]);
-    await fetchAttentionEvidence();
+    const presentation = await fetchAttentionPresentation();
+    expect(presentation.captureIds).toEqual([]);
+    expect(mocks.markCarsonNotesSurfaced).not.toHaveBeenCalled();
+    expect(mocks.markCarsonTodosSurfaced).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchAttentionPresentation / markAttentionCapturesSurfaced — P3 Step 3 / S2", () => {
+  // A small stateful store standing in for carson_notes/carson_todos, so the
+  // classifier's real neverSurfaced filter sees exactly what the writes did.
+  function useCaptureStore() {
+    const surfaced = new Map<string, string | null>([
+      ["n1", null],
+      ["t1", null],
+      ["t2", null],
+    ]);
+    const rows = [
+      { id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60 },
+      { id: "t1", kind: "todo" as const, text: "Review the Rahet Bal home screen", ageDays: 45 },
+      { id: "t2", kind: "todo" as const, text: "Buy groceries", ageDays: 10 },
+    ];
+    mocks.fetchUnresolvedCaptureCandidates.mockImplementation(async () =>
+      rows.map((r) => ({ ...r, actionable: true, neverSurfaced: !surfaced.get(r.id) })),
+    );
+    const write = async (ids: string[]) => {
+      for (const id of ids) surfaced.set(id, "2026-10-07T00:00:00.000Z");
+    };
+    mocks.markCarsonNotesSurfaced.mockImplementation(write);
+    mocks.markCarsonTodosSurfaced.mockImplementation(write);
+    return surfaced;
+  }
+
+  it("S2-D: a prefetch followed by the tool's own retrieval still returns the eligible captures", async () => {
+    const surfaced = useCaptureStore();
+    const prefetch = await fetchAttentionPresentation();
+    const tool = await fetchAttentionPresentation();
+    expect(prefetch.captureIds.map((c) => c.id)).toEqual(["n1", "t1", "t2"]);
+    expect(tool.captureIds).toEqual(prefetch.captureIds);
+    expect(tool.text).toMatch(/Also on your mind: Check on Nimala's wedding invitation/);
+    expect([...surfaced.values()].every((v) => v === null)).toBe(true);
+  });
+
+  it("captureIds are exactly the captures the rendered text includes, with their kind", async () => {
+    useCaptureStore();
+    const presentation = await fetchAttentionPresentation();
+    expect(presentation.captureIds).toEqual([
+      { id: "n1", kind: "note" },
+      { id: "t1", kind: "todo" },
+      { id: "t2", kind: "todo" },
+    ]);
+    for (const label of ["Check on Nimala's wedding invitation", "Review the Rahet Bal home screen", "Buy groceries"]) {
+      expect(presentation.text).toContain(label);
+    }
+  });
+
+  it("S2-H: a failed read presents no captures", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    const signedOut = await fetchAttentionPresentation();
+    expect(signedOut.captureIds).toEqual([]);
+    mocks.supabaseGetUser.mockRejectedValue(new Error("network"));
+    const thrown = await fetchAttentionPresentation();
+    expect(thrown.captureIds).toEqual([]);
+    expect(thrown.text).toMatch(/couldn't check/i);
+  });
+
+  it("S2-E/F/I: marking writes exactly the presented ids; captures fetched but not presented stay unsurfaced", async () => {
+    const surfaced = useCaptureStore();
+    markAttentionCapturesSurfaced([{ id: "n1", kind: "note" }, { id: "t1", kind: "todo" }]);
+    await Promise.resolve();
+    expect(mocks.markCarsonNotesSurfaced).toHaveBeenCalledWith(["n1"]);
+    expect(mocks.markCarsonTodosSurfaced).toHaveBeenCalledWith(["t1"]);
+    expect(surfaced.get("t2")).toBeNull();
+    const next = await fetchAttentionPresentation();
+    expect(next.captureIds).toEqual([{ id: "t2", kind: "todo" }]);
+  });
+
+  it("S2-G: marking an empty presentation writes nothing", () => {
+    markAttentionCapturesSurfaced([]);
     expect(mocks.markCarsonNotesSurfaced).not.toHaveBeenCalled();
     expect(mocks.markCarsonTodosSurfaced).not.toHaveBeenCalled();
   });
 
-  it("a failed mark-surfaced write does not fail the overall read the user is waiting on", async () => {
-    const selected = [{ id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true }];
-    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(selected);
-    mocks.classifyAttentionWorthyCaptures.mockReturnValue(selected);
+  it("a failed mark-surfaced write never throws to the caller", () => {
     mocks.markCarsonNotesSurfaced.mockRejectedValue(new Error("write failed"));
-    const evidence = await fetchAttentionEvidence();
-    expect(evidence.ok).toBe(true);
-    expect(evidence.unresolvedCaptures).toHaveLength(1);
+    expect(() => markAttentionCapturesSurfaced([{ id: "n1", kind: "note" }])).not.toThrow();
   });
 });
 
