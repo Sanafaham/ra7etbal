@@ -237,3 +237,89 @@ describe("review fixes (PR #422)", () => {
     expect(groundRecipientInstruction("ask J.R. to clean the car", "ask J.R. to clean the car", "J.R.")).toBeNull();
   });
 });
+
+describe("coordinated actions: every action given to the recipient stays (live gate run 36768330026)", () => {
+  it.each([
+    ["Ask Christopher to prepare lunch and tell Grace it is ready.", "prepare lunch and tell Grace it is ready"],
+    ["Ask Christopher to call the butcher and tell me what he says.", "call the butcher and tell me what he says"],
+    ["Ask Christopher to collect the package and put it in my room.", "collect the package and put it in my room"],
+    ["Ask Christopher to check the delivery and call the driver if it is late.", "check the delivery and call the driver if it is late"],
+  ])("%j keeps %j whole", async (utterance, span) => {
+    expect(await decide(utterance, span)).toEqual({ kind: "delegation", recipientInstruction: span });
+  });
+
+  it("the prompt assigns every joined action to the recipient and only oversight to Carson", async () => {
+    const { buildClassificationPrompt } = await import("./communication-vs-delegation");
+    const prompt = buildClassificationPrompt("Ask Christopher to prepare lunch and tell Grace it is ready.", "Christopher");
+    expect(prompt).toMatch(/Every action the owner asks Christopher to do belongs to Christopher/);
+    expect(prompt).toMatch(/gives Christopher both A and B/);
+    expect(prompt).toMatch(/An action belongs to Carson only when it is about overseeing this assignment/);
+    expect(prompt).toMatch(/never leave out any of Christopher's actions/);
+    expect(prompt).toMatch(/RECIPIENT: UNCLEAR/);
+    // The old exclusion of any "reporting back to the owner" is what pulled
+    // recipient actions that inform someone into Carson's share.
+    expect(prompt).not.toMatch(/reporting back to the owner/);
+  });
+
+  it("the axis text that decides COMMUNICATION vs DELEGATION (C-02) is unchanged", async () => {
+    const { buildClassificationPrompt } = await import("./communication-vs-delegation");
+    const prompt = buildClassificationPrompt("Tell Grace dinner is at eight.", "Grace");
+    expect(prompt).toContain(
+      "COMMUNICATION: the person only needs to receive this — come somewhere, wait somewhere, meet someone, receive information, or respond personally.",
+    );
+    expect(prompt).toContain("DELEGATION: the person is being directly instructed to complete, produce, or verify something as a piece of work.");
+    expect(prompt).toContain("Answer on the first line with exactly one word: COMMUNICATION or DELEGATION.");
+  });
+});
+
+describe("structured answer with a CARSON line and the UNCLEAR fail-closed answer", () => {
+  it("reads RECIPIENT after a CARSON line", async () => {
+    const { parseStaffInstructionAnswer } = await import("./communication-vs-delegation");
+    expect(parseStaffInstructionAnswer("DELEGATION\nCARSON: track this until he confirms it\nRECIPIENT: prepare lunch for me")).toEqual({
+      classification: "delegation",
+      recipientSpan: "prepare lunch for me",
+      failed: false,
+    });
+    expect(parseStaffInstructionAnswer("DELEGATION\nCARSON: NONE\nRECIPIENT: prepare lunch and tell Grace it is ready").recipientSpan).toBe(
+      "prepare lunch and tell Grace it is ready",
+    );
+  });
+
+  it.each(["UNCLEAR", "unclear.", "Unclear", "NONE"])(
+    "RECIPIENT: %s → nothing is sent (recipient_instruction_not_grounded)",
+    async (answer) => {
+      getSessionMock.mockResolvedValue({ data: { session: { access_token: "jwt" } } });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: "text", text: `DELEGATION\nCARSON: NONE\nRECIPIENT: ${answer}` }] }) }),
+      );
+      expect(
+        await interpretStaffInstruction("Ask Christopher to follow up with the butcher and let me know what he says.", { recipientName: "Christopher" }),
+      ).toEqual({ kind: "unsafe", reason: "recipient_instruction_not_grounded" });
+    },
+  );
+
+  it("the single model call has room for both spans (max_tokens 200) and is still ONE request", async () => {
+    getSessionMock.mockResolvedValue({ data: { session: { access_token: "jwt" } } });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: "text", text: "DELEGATION\nCARSON: NONE\nRECIPIENT: check the pool pump" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    await interpretStaffInstruction("Ask Christopher to check the pool pump.", { recipientName: "Christopher" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(200);
+  });
+
+  it("only a line that starts with RECIPIENT: is read (a CARSON line mentioning it is ignored)", async () => {
+    const { parseStaffInstructionAnswer } = await import("./communication-vs-delegation");
+    expect(
+      parseStaffInstructionAnswer("DELEGATION\nCARSON: tell the recipient: track this\nRECIPIENT: prepare lunch").recipientSpan,
+    ).toBe("prepare lunch");
+  });
+
+  it("the prompt keeps oversight Carson's even when joined with \"and\", and keeps recipient work that sounds like oversight", async () => {
+    const { buildClassificationPrompt } = await import("./communication-vs-delegation");
+    const prompt = buildClassificationPrompt("Ask Christopher to prepare lunch and track this until he confirms it.", "Christopher");
+    expect(prompt).toMatch(/This stays Carson's even when it is joined to Christopher's actions with "and"\./);
+    expect(prompt).toMatch(/Work that merely sounds like oversight is still Christopher's when Christopher does it/);
+    expect(prompt).toMatch(/do not write this reasoning out/);
+  });
+});

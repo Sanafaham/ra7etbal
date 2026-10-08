@@ -79,6 +79,13 @@ describe("RULE 2B — owner → assistant management language is not the recipie
     expect(prompt).toMatch(/track\s+the grocery delivery/);
   });
 
+  it("assigns every joined action to the recipient and leaves out only oversight (coordinated-action rule)", () => {
+    expect(prompt).toMatch(/Decide by who the user gave each action to, never by the words used\./);
+    expect(prompt).toMatch(/lunch and tell Grace it is ready" → both/);
+    expect(prompt).toMatch(/Leave out only actions about overseeing the assignment itself/);
+    expect(prompt).toMatch(/keep it in the recipient's task and never drop\s+it silently/);
+  });
+
   it("carries the Production canary worked example with the owner's name", () => {
     expect(prompt).toMatch(/description: "Prepare lunch for Sana"/);
   });
