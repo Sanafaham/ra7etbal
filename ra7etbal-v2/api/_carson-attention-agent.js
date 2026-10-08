@@ -50,6 +50,8 @@
 
 import { Agent, run, tool } from "@openai/agents";
 import { z } from "zod";
+import { matchesAttentionIntent, matchesWaitingFollowUp } from "../shared/carson-attention-intent-classifier.js";
+import { renderAlsoOnYourMindLine } from "../shared/carson-attention-summary.js";
 
 export const DEFAULT_ATTENTION_AGENT_MODEL = "gpt-5.6-sol";
 
@@ -95,7 +97,26 @@ Rules:
 - A future due date does not by itself mean something is unimportant or safe to ignore. An item having no due date does not mean it is safe to ignore either. Overdue does not automatically outrank a needsYou decision that has no due date at all.
 - When asked what can wait (or an equivalent phrasing), describe which items are genuinely not due yet or have no due date, based on each item's own due date — and be explicit that timing alone doesn't tell you what's truly safe to deprioritize or unimportant.
 - Keep answers concise, natural, and specific — name the actual items by their label, don't just give counts, unless the owner's question is itself just a count question.
-- If the owner's message isn't actually about their live operational state, answer naturally without calling the tool.`;
+- If the owner's message isn't actually about their live operational state, answer naturally without calling the tool.
+
+Output format:
+- Put your complete reply to the owner, written exactly as you would otherwise reply, in "answer".
+- Set "answerKind" to describe that reply:
+  - "summary": the owner asked broadly what needs their attention, and "answer" is your overview of their live state.
+  - "narrow": the question or your answer is about one person, item, category or timing (for example what they are waiting on, what is pending with someone, or whether they are clear to do something).
+  - "clarification": you are asking the owner a question instead of answering.
+  - "nothing_new": you are telling the owner there is nothing (else) to report.
+- If you are unsure, use "narrow".`;
+
+// P3 Step 3 / S2b — the agent's structured final result (same single run:
+// the SDK sends this as the Responses API text.format JSON schema). answer
+// is the owner-visible reply; answerKind only gates whether the server may
+// add omitted eligible captures — it is never marking authority.
+export const ATTENTION_ANSWER_KINDS = Object.freeze(["summary", "narrow", "clarification", "nothing_new"]);
+export const ATTENTION_AGENT_OUTPUT = z.object({
+  answer: z.string(),
+  answerKind: z.enum(ATTENTION_ANSWER_KINDS),
+});
 
 // Tool built fresh per turn, closing over this turn's own authorization —
 // the tool's execute function performs the fetch itself (the model decides
@@ -210,6 +231,83 @@ export function capturesNamedInAgentAnswer(evidence, finalOutput) {
 }
 
 /**
+ * P3 Step 3 / S2b. Production 2026-10-08 10:42 UTC: capture retrieval
+ * succeeded, three captures were eligible, and the agent's answer to "What
+ * needs my attention?" named none of them, so the owner never saw them.
+ *
+ * Eligible captures the model omitted are appended in the established
+ * "Also on your mind: …" wording ONLY when every one of these holds:
+ *   - the run completed and was grounded (attention_agent_ok, evidence.ok);
+ *   - the agent's structured answerKind is "summary";
+ *   - the owner's message is the existing general attention question
+ *     (matchesAttentionIntent), not the existing waiting-only shape;
+ *   - the answer itself presents at least one live evidence item by exact
+ *     label (a substantive answer, not a bare clarification);
+ *   - at least one eligible capture is missing from the answer.
+ * answerKind alone and a named item alone are each insufficient.
+ *
+ * surfacedEvidenceIds is derived on the server from the FINAL answer
+ * (exact-label named + appended) — never from anything the model reports —
+ * and stays the only input to the awaited presentation-boundary mark.
+ * Never throws; on any unexpected error the original result is returned.
+ */
+export function presentOmittedAttentionCaptures(ownerTurn, result) {
+  try {
+    if (
+      !result ||
+      result.handled !== true ||
+      result.code !== "attention_agent_ok" ||
+      result.groundingStatus !== "grounded" ||
+      result.capability !== "attention_summary_read" ||
+      typeof result.ownerResult !== "string" ||
+      !result.ownerResult
+    ) {
+      return result;
+    }
+    if (result.answerKind !== "summary") return result;
+    const evidence = result.evidence;
+    if (!evidence || evidence.ok !== true) return result;
+    const captures = (evidence.unresolvedCaptures ?? []).filter(
+      (capture) => typeof capture?.label === "string" && capture.label.trim(),
+    );
+    if (captures.length === 0) return result;
+
+    const transcript = typeof ownerTurn?.transcript === "string" ? ownerTurn.transcript : "";
+    if (!matchesAttentionIntent(transcript) || matchesWaitingFollowUp(transcript)) return result;
+
+    const answer = result.ownerResult;
+    const presentsLiveEvidence = [
+      ...(evidence.needsYou ?? []),
+      ...(evidence.overdueReminders ?? []),
+      ...(evidence.upcomingReminders ?? []),
+      ...(evidence.waiting ?? []),
+      ...(evidence.later ?? []),
+      ...captures,
+    ].some((item) => {
+      const label = typeof item?.label === "string" ? item.label.trim() : "";
+      return label && phraseRanges(answer, label).length > 0;
+    });
+    if (!presentsLiveEvidence) return result;
+
+    const named = new Set(capturesNamedInAgentAnswer(evidence, answer));
+    const omitted = captures.filter((capture) => !named.has(capture.id));
+    if (omitted.length === 0) return result;
+
+    const omittedIds = new Set(omitted.map((capture) => capture.id));
+    return {
+      ...result,
+      ownerResult: `${answer}\n\n${renderAlsoOnYourMindLine(omitted)}`,
+      // Evidence order; each presented capture exactly once.
+      surfacedEvidenceIds: captures
+        .filter((capture) => named.has(capture.id) || omittedIds.has(capture.id))
+        .map((capture) => capture.id),
+    };
+  } catch {
+    return result;
+  }
+}
+
+/**
  * Coordinator for the OpenAI-agent-based attention path
  * (CARSON_OPENAI_AGENT_ATTENTION_V1). Deliberately mirrors
  * createAttentionReadCoordinator's dependency-injection shape
@@ -241,6 +339,7 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       instructions: ATTENTION_AGENT_INSTRUCTIONS,
       model,
       tools: [attentionStateTool],
+      outputType: ATTENTION_AGENT_OUTPUT,
     });
 
     // Standalone per turn — no previousResponseId, no client-supplied
@@ -260,7 +359,20 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       ? result.newItems.filter((item) => item?.type === "tool_call_item").length
       : 0;
 
-    const finalOutput = typeof result?.finalOutput === "string" ? result.finalOutput.trim() : "";
+    // Structured final result (ATTENTION_AGENT_OUTPUT). A plain-text final
+    // output (no structure) is still accepted as the answer but carries no
+    // answerKind, so nothing is ever added to it.
+    const structured = result?.finalOutput;
+    const finalOutput =
+      typeof structured === "string"
+        ? structured.trim()
+        : typeof structured?.answer === "string"
+          ? structured.answer.trim()
+          : "";
+    const answerKind =
+      typeof structured === "object" && ATTENTION_ANSWER_KINDS.includes(structured?.answerKind)
+        ? structured.answerKind
+        : null;
     // The actual grounding gate: not "did text come back" but "did a
     // successful live tool call actually happen for THIS run."
     const grounded = executionState.called && executionState.evidenceOk;
@@ -297,18 +409,21 @@ export function createAttentionAgentCoordinator({ fetchEvidence, runAgent = run,
       latencyMs,
     });
 
-    return {
+    // Shared by the typed path and the Second Brain voice boundary (both call
+    // this coordinator), so both receive the identical final answer.
+    return presentOmittedAttentionCaptures(ownerTurn, {
       handled: true,
       status: 200,
       code: "attention_agent_ok",
       capability: "attention_summary_read",
       groundingStatus: "grounded",
+      answerKind,
       ownerResult: finalOutput,
       // P3 Step 3 / S2: the evidence this answer was grounded in, and only
       // the captures it actually named — read by the presentation boundary
       // in api/carson-turn.js to set last_surfaced_at.
       evidence: executionState.evidence,
       surfacedEvidenceIds: capturesNamedInAgentAnswer(executionState.evidence, finalOutput),
-    };
+    });
   };
 }

@@ -79,6 +79,7 @@ export function composeAttentionEvidence(input: {
 }): AttentionSummaryEvidence;
 
 export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string;
+export function renderAlsoOnYourMindLine(captures: AttentionItem[]): string;
 
 export type AttentionResponseIntent =
   | "list"
