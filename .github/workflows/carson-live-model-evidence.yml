@@ -1,5 +1,11 @@
 name: carson-live-model-evidence
 
+# EVIDENCE BRANCH ONLY (claude/second-brain-consequential-v2-evidence):
+# runs the frozen V2 Second Brain consequential model gate
+# (scripts/second-brain-consequential-v2-evidence, frozen at ee2ba17) once
+# per candidate model. Each matrix job calls exactly ONE named model; no
+# fallback. Results are printed and uploaded as an artifact. Not for merge.
+
 # Bounded live-model evidence gate for the tracked-delegation content
 # boundary (PR #422, Production canary 965f5963). Runs the EXISTING
 # ra7etbal-v2/scripts/staff-instruction-live-evidence.ts, which imports the
@@ -40,6 +46,10 @@ concurrency:
 
 jobs:
   live-model-evidence:
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [claude-sonnet-4-6, claude-haiku-4-5-20251001]
     if: >-
       github.event.label.name == 'run-live-model-evidence' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -74,9 +84,20 @@ jobs:
             exit 1
           fi
 
-      - name: Run live-model evidence (3 independent runs per phrase)
+      - name: V2 deterministic tests (no model calls)
+        run: npx --no-install vitest run scripts/second-brain-consequential-v2-evidence/
+
+      - name: V2 frozen model gate (3 runs per case, 10 per C-02-critical case, one model)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY }}
-          VITE_SUPABASE_URL: http://127.0.0.1:9
-          VITE_SUPABASE_ANON_KEY: evidence-placeholder
-        run: npx --no-install vite-node scripts/staff-instruction-live-evidence.ts -- --runs 3
+        run: |
+          set -o pipefail
+          npx --no-install vite-node scripts/second-brain-consequential-v2-evidence/run.ts -- --model ${{ matrix.model }} --runs 3 --critical-runs 10 --concurrency 4 | tee "/tmp/v2-${{ matrix.model }}.log"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2-results-${{ matrix.model }}
+          path: /tmp/v2-${{ matrix.model }}.log
+          if-no-files-found: error
