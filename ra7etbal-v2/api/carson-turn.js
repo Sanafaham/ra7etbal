@@ -2,7 +2,7 @@ import googleCalendarHandler from "./google-calendar.js";
 import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator, ATTENTION_CAPABILITY } from "./_carson-read-turn.js";
 import { fetchAttentionSummaryForServer, markPresentedAttentionCapturesSurfaced } from "./_carson-attention-evidence.js";
 import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
-import { createAttentionAgentCoordinator } from "./_carson-attention-agent.js";
+import { createAttentionAgentCoordinator, presentOmittedAttentionCaptures } from "./_carson-attention-agent.js";
 import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 import {
   providerSecret,
@@ -473,7 +473,12 @@ export function createCarsonTurnHandler({
 
     // Admission logic lives in coordinateOwnerTurn (above) — unchanged
     // behavior, now shared with the voice boundary branch above.
-    const pendingResult = coordinateOwnerTurn(ownerTurn, { coordinateAttention, coordinateCalendar, classifyOperationalIntent });
+    // P3 Step 3 / S2b: typed only — eligible captures the agent's answer
+    // omitted are added to the final answer (and to surfacedEvidenceIds)
+    // before dedup caching, the awaited mark, and the response. The voice
+    // boundary branch above is deliberately not changed.
+    const pendingResult = coordinateOwnerTurn(ownerTurn, { coordinateAttention, coordinateCalendar, classifyOperationalIntent })
+      .then((turnResult) => presentOmittedAttentionCaptures(ownerTurn, turnResult));
 
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);
     const result = await pendingResult;

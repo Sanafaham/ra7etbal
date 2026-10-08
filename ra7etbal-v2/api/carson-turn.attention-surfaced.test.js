@@ -352,7 +352,25 @@ describe("typed OpenAI-agent attention path (CARSON_OPENAI_AGENT_ATTENTION_V1) â
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_todos?id=in.(todo-1)"]);
   });
 
-  it("S2-7/9: of several fetched captures, only the one whose exact label is rendered is marked", async () => {
+  it("S2-7/9: of several fetched captures, only the one whose exact label is rendered is marked (no S2b append on this turn)", async () => {
+    const fetchMock = stubSupabase();
+    const handler = agentHandler({
+      evidence: evidenceWith({ unresolvedCaptures: [NOTE, TODO, ALSO] }),
+      finalOutput: "Also on your mind: Check on Nimala's wedding invitation.",
+    });
+    const response = res();
+    // A follow-up is outside the S2b general-question scope, so the model's
+    // answer is final as written.
+    await handler(
+      req({ ...TURN, transcript: "What else?", previousCapability: "attention_summary_read", previousGroundingStatus: "grounded" }),
+      response,
+    );
+    expect(response.payload.ownerResult).toBe("Also on your mind: Check on Nimala's wedding invitation.");
+    expect(response.payload.surfacedEvidenceIds).toEqual(["note-1"]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_notes?id=in.(note-1)"]);
+  });
+
+  it("S2-7/9 + S2b: on a general attention question the omitted captures are added to the final answer, and exactly the final answer's captures are marked", async () => {
     const fetchMock = stubSupabase();
     const handler = agentHandler({
       evidence: evidenceWith({ unresolvedCaptures: [NOTE, TODO, ALSO] }),
@@ -360,8 +378,14 @@ describe("typed OpenAI-agent attention path (CARSON_OPENAI_AGENT_ATTENTION_V1) â
     });
     const response = res();
     await handler(req(TURN), response);
-    expect(response.payload.surfacedEvidenceIds).toEqual(["note-1"]);
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://example.supabase.co/rest/v1/carson_notes?id=in.(note-1)"]);
+    expect(response.payload.ownerResult).toBe(
+      "Also on your mind: Check on Nimala's wedding invitation.\n\nAlso on your mind: Buy groceries (on your to-do list); Review the Rahet Bal home screen (on your to-do list).",
+    );
+    expect(response.payload.surfacedEvidenceIds).toEqual(["note-1", "todo-1", "todo-2"]);
+    expect(fetchMock.mock.calls.map(([url]) => url).sort()).toEqual([
+      "https://example.supabase.co/rest/v1/carson_notes?id=in.(note-1)",
+      "https://example.supabase.co/rest/v1/carson_todos?id=in.(todo-1,todo-2)",
+    ]);
   });
 
   it("S2-8: a paraphrased capture is not marked", async () => {

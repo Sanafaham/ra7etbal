@@ -269,15 +269,20 @@ export function renderAttentionSummary(evidence) {
   }
 
   if (evidence.unresolvedCaptures.length > 0) {
-    lines.push(
-      `Also on your mind: ${evidence.unresolvedCaptures
-        .map((i) => `${i.label} (${i.type === "todo" ? "on your to-do list" : "a note you made"})`)
-        .join("; ")}.`,
-    );
+    lines.push(renderAlsoOnYourMindLine(evidence.unresolvedCaptures));
   }
   if (partialNote) lines.push(partialNote);
 
   return lines.join(" ");
+}
+
+// The established owner-facing wording for unresolved captures. Shared so the
+// typed OpenAI-agent path (P3 Step 3 / S2b) presents captures in exactly the
+// same words as the deterministic summary above.
+export function renderAlsoOnYourMindLine(captures) {
+  return `Also on your mind: ${captures
+    .map((i) => `${i.label} (${i.type === "todo" ? "on your to-do list" : "a note you made"})`)
+    .join("; ")}.`;
 }
 
 // ── renderAttentionDecision — Second Brain stateful reasoning (2026-08-28) ──

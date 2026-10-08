@@ -50,6 +50,8 @@
 
 import { Agent, run, tool } from "@openai/agents";
 import { z } from "zod";
+import { matchesAttentionIntent, matchesWaitingFollowUp } from "../shared/carson-attention-intent-classifier.js";
+import { renderAlsoOnYourMindLine } from "../shared/carson-attention-summary.js";
 
 export const DEFAULT_ATTENTION_AGENT_MODEL = "gpt-5.6-sol";
 
@@ -207,6 +209,82 @@ export function capturesNamedInAgentAnswer(evidence, finalOutput) {
       );
     })
     .map((capture) => capture.id);
+}
+
+/**
+ * P3 Step 3 / S2b — typed answer only (api/carson-turn.js's typed branch;
+ * never the Second Brain voice boundary). Production 2026-10-08 10:42 UTC:
+ * capture retrieval succeeded, three captures were eligible, and the
+ * model's free-text answer to "What needs my attention?" named none of them,
+ * so the owner never saw them. Eligible captures must not depend on model
+ * wording: on a completed, grounded agent answer to a general attention
+ * question that presents at least one live evidence item, any eligible
+ * capture the model left out is appended in the established "Also on your
+ * mind: …" wording, and surfacedEvidenceIds becomes exactly the captures
+ * the FINAL answer presents (model-named + appended) — still the only input
+ * to the awaited presentation-boundary mark, so S2 is unchanged: nothing is
+ * marked unless it is in the answer the owner receives.
+ *
+ * Left exactly as the model wrote it: failed/ungrounded answers, the
+ * flag-off read path, waiting-only questions, follow-ups and Stage-1-only
+ * phrasings (the existing classifiers' general-attention question is the
+ * only scope), and answers that name no live evidence item at all
+ * (clarifications, "nothing new") — a capture line there could mislead.
+ * Never throws; on any unexpected error the original result is returned.
+ */
+export function presentOmittedAttentionCaptures(ownerTurn, result) {
+  try {
+    if (
+      !result ||
+      result.handled !== true ||
+      result.code !== "attention_agent_ok" ||
+      result.groundingStatus !== "grounded" ||
+      result.capability !== "attention_summary_read" ||
+      typeof result.ownerResult !== "string" ||
+      !result.ownerResult
+    ) {
+      return result;
+    }
+    const evidence = result.evidence;
+    if (!evidence || evidence.ok !== true) return result;
+    const captures = (evidence.unresolvedCaptures ?? []).filter(
+      (capture) => typeof capture?.label === "string" && capture.label.trim(),
+    );
+    if (captures.length === 0) return result;
+
+    const transcript = typeof ownerTurn?.transcript === "string" ? ownerTurn.transcript : "";
+    if (!matchesAttentionIntent(transcript) || matchesWaitingFollowUp(transcript)) return result;
+
+    const answer = result.ownerResult;
+    const presentsLiveEvidence = [
+      ...(evidence.needsYou ?? []),
+      ...(evidence.overdueReminders ?? []),
+      ...(evidence.upcomingReminders ?? []),
+      ...(evidence.waiting ?? []),
+      ...(evidence.later ?? []),
+      ...captures,
+    ].some((item) => {
+      const label = typeof item?.label === "string" ? item.label.trim() : "";
+      return label && phraseRanges(answer, label).length > 0;
+    });
+    if (!presentsLiveEvidence) return result;
+
+    const named = new Set(capturesNamedInAgentAnswer(evidence, answer));
+    const omitted = captures.filter((capture) => !named.has(capture.id));
+    if (omitted.length === 0) return result;
+
+    const omittedIds = new Set(omitted.map((capture) => capture.id));
+    return {
+      ...result,
+      ownerResult: `${answer}\n\n${renderAlsoOnYourMindLine(omitted)}`,
+      // Evidence order; each presented capture exactly once.
+      surfacedEvidenceIds: captures
+        .filter((capture) => named.has(capture.id) || omittedIds.has(capture.id))
+        .map((capture) => capture.id),
+    };
+  } catch {
+    return result;
+  }
 }
 
 /**
