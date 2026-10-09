@@ -1511,7 +1511,9 @@
         "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts",
         "src/lib/carson-recurring-manifestations.consumers.test.ts",
         "api/carson-turn.attention-surfaced.test.js",
-        "src/components/home/ElevenLabsAgentWidget.attention-surfaced-boundary.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.attention-surfaced-boundary.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.voice-attention-live-names.test.ts",
+        "src/lib/carson-operations-center.voice-live-names.test.ts"
       ],
       "protected_suite": false,
       "golden_journey_required": false,

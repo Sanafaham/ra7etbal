@@ -30,13 +30,18 @@ describe("ElevenLabsAgentWidget — attention follow-up grounding independent of
   });
 
   it("gates isAttentionFollowUpTurn on lastTurnWasAttentionIntentRef, not on grounding success", () => {
+    // P3 Step 3 / S3: the voice follow-up is now recognised by
+    // resolveVoiceAttentionFollowUp (which includes matchesAttentionFollowUp),
+    // still gated only on lastTurnWasAttentionIntentRef.
     expect(SOURCE).toContain(
-      "matchesAttentionFollowUp(message) && lastTurnWasAttentionIntentRef.current",
+      "const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current\n" +
+        "              ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)",
     );
     // The old, fixed gate must not remain as the follow-up condition.
     expect(SOURCE).not.toContain(
       "matchesAttentionFollowUp(message) && lastAttentionTurnWasGroundedRef.current",
     );
+    expect(SOURCE).not.toContain("lastAttentionTurnWasGroundedRef.current\n              ? resolveVoiceAttentionFollowUp");
   });
 
   it("sets lastTurnWasAttentionIntentRef unconditionally from attentionIntentForCurrentTranscriptRef — not gated on attentionGuardResultRef being non-null", () => {

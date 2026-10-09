@@ -30,7 +30,7 @@ import type { Task } from "../types/task";
 // attention read path calls the exact same functions after doing its own
 // (necessarily different) I/O. Re-exported so every existing caller's
 // import path (`./carson-operations-center`) and behavior are unchanged.
-import { composeAttentionEvidence, renderAttentionSummary } from "../../shared/carson-attention-summary.js";
+import { composeAttentionEvidence, renderAttentionSummary, renderAlsoOnYourMindLine } from "../../shared/carson-attention-summary.js";
 import type { AttentionItem, AttentionSummaryEvidence } from "../../shared/carson-attention-summary";
 export { renderAttentionSummary };
 export type { AttentionItem, AttentionSummaryEvidence };
@@ -398,8 +398,123 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
 
 export type AttentionCaptureRef = { id: string; kind: "note" | "todo" };
 
-/** A rendered attention answer plus the captures that text includes. */
-export type AttentionPresentation = { text: string; captureIds: AttentionCaptureRef[] };
+/**
+ * A rendered attention answer plus the captures that text includes.
+ * assignees: the people with an open item in this live evidence (P3 Step 3 /
+ * S3) — lets a "What about <name>?" follow-up be recognised only for a person
+ * the owner was just told about.
+ */
+export type AttentionPresentation = {
+  text: string;
+  captureIds: AttentionCaptureRef[];
+  assignees?: string[];
+  /** Voice only: the live read succeeded (P3 Step 3 / S3). */
+  evidenceOk?: boolean;
+};
+
+/**
+ * P3 Step 3 / S3 — legacy voice only. What the owner asked for this turn:
+ * the initial summary, every item of the summary's categories ("Which
+ * ones?", "Tell me the rest"), or one person's open items in any category
+ * ("What about Christopher?").
+ */
+export type VoiceAttentionRequest = { kind: "summary" } | { kind: "all" } | { kind: "person"; name: string };
+
+/** Owner decision (2026-10-09): at most five item names in a voice summary. */
+export const VOICE_ATTENTION_NAME_LIMIT = 5;
+
+const VOICE_NAMED_CATEGORIES = [
+  ["overdueReminders", "Overdue reminders"],
+  ["upcomingReminders", "Upcoming reminders"],
+  ["waiting", "Waiting on others"],
+] as const;
+
+const VOICE_PERSON_CATEGORIES = ["needsYou", "overdueReminders", "upcomingReminders", "waiting", "later"] as const;
+
+function voiceNamedLine(title: string, items: AttentionItem[], shown: number): string {
+  const names = items.slice(0, shown).map((item) => item.label);
+  const more = items.length - names.length;
+  if (names.length === 0) return `${title} (${items.length}).`;
+  return `${title} (${items.length}): ${names.join("; ")}${more > 0 ? `; and ${more} more` : ""}.`;
+}
+
+/**
+ * P3 Step 3 / S3 — legacy voice only. Production (conv_1501m3fmxeh4eknvqy7m07n55qat,
+ * 2026-09-26): the live voice result gave counts only ("7 overdue reminders
+ * and 3 thing you're waiting ons"), so every item Carson then named came from
+ * the session-start {{ra7etbal_state}} list, which is never refreshed during a
+ * call. This names the live items themselves.
+ *
+ * - summary: the existing decisions line, then overdue / upcoming / waiting
+ *   with their exact counts and at most VOICE_ATTENTION_NAME_LIMIT names in
+ *   total, one per category in turn so each category gets a name first;
+ *   "and N more" for the rest.
+ * - all: the same lines (overdue / upcoming / waiting) with every name.
+ * - person: every open item assigned to that person, from live evidence only.
+ *
+ * Failed, empty and capture lines are exactly renderAttentionSummary's, so the
+ * truthful-failure wording and the S2 capture presentation are unchanged.
+ * Typed never calls this (it renders on the server).
+ */
+export function renderVoiceAttentionSummary(
+  evidence: AttentionSummaryEvidence,
+  request: VoiceAttentionRequest = { kind: "summary" },
+): string {
+  if (!evidence.ok) return renderAttentionSummary(evidence);
+  const partialNote =
+    evidence.completeness === "partial" ? "I couldn't check everything just now, so this may be incomplete." : "";
+
+  if (request.kind === "person") {
+    const wanted = request.name.trim().toLowerCase();
+    const items = VOICE_PERSON_CATEGORIES.flatMap((category) => evidence[category]).filter(
+      (item) => (item.assignee ?? "").trim().toLowerCase() === wanted,
+    );
+    const lines = [
+      items.length === 0
+        ? `Nothing is open with ${request.name} right now.`
+        : `Open with ${request.name} (${items.length}): ${items.map((item) => item.label).join("; ")}.`,
+    ];
+    if (partialNote) lines.push(partialNote);
+    return lines.join(" ");
+  }
+
+  const named = VOICE_NAMED_CATEGORIES.filter(([category]) => evidence[category].length > 0);
+  if (named.length === 0) return renderAttentionSummary(evidence);
+
+  const shown = new Map<string, number>(named.map(([category]) => [category, 0]));
+  if (request.kind === "all") {
+    for (const [category] of named) shown.set(category, evidence[category].length);
+  } else {
+    let budget = VOICE_ATTENTION_NAME_LIMIT;
+    while (budget > 0 && named.some(([category]) => shown.get(category)! < evidence[category].length)) {
+      for (const [category] of named) {
+        if (budget === 0) break;
+        if (shown.get(category)! < evidence[category].length) {
+          shown.set(category, shown.get(category)! + 1);
+          budget -= 1;
+        }
+      }
+    }
+  }
+
+  const lines = [
+    evidence.needsYou.length > 0
+      ? `Needs your decision: ${evidence.needsYou.map((item) => item.label).join("; ")}.`
+      : "Nothing needs your direct decision right now.",
+    ...named.map(([category, title]) => voiceNamedLine(title, evidence[category], shown.get(category)!)),
+  ];
+  if (evidence.unresolvedCaptures.length > 0) lines.push(renderAlsoOnYourMindLine(evidence.unresolvedCaptures));
+  if (partialNote) lines.push(partialNote);
+  return lines.join(" ");
+}
+
+function openAssignees(evidence: AttentionSummaryEvidence): string[] {
+  if (!evidence.ok) return [];
+  const names = VOICE_PERSON_CATEGORIES.flatMap((category) => evidence[category])
+    .map((item) => (item.assignee ?? "").trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
 
 const ATTENTION_READ_FAILED_TEXT =
   "I couldn't check what needs your attention right now — the live check didn't complete.";
@@ -417,6 +532,28 @@ export async function fetchAttentionPresentation(): Promise<AttentionPresentatio
   try {
     const evidence = await fetchAttentionEvidence();
     return { text: renderAttentionSummary(evidence), captureIds: renderedCaptureIds(evidence) };
+  } catch {
+    return { text: ATTENTION_READ_FAILED_TEXT, captureIds: [] };
+  }
+}
+
+/**
+ * P3 Step 3 / S3 — the legacy voice attention read: a fresh, owner-scoped
+ * fetchAttentionEvidence() on every call (never the session-start list),
+ * rendered by renderVoiceAttentionSummary. A person view shows no captures,
+ * so it marks none.
+ */
+export async function fetchVoiceAttentionPresentation(
+  request: VoiceAttentionRequest = { kind: "summary" },
+): Promise<AttentionPresentation> {
+  try {
+    const evidence = await fetchAttentionEvidence();
+    return {
+      text: renderVoiceAttentionSummary(evidence, request),
+      captureIds: request.kind === "person" ? [] : renderedCaptureIds(evidence),
+      assignees: openAssignees(evidence),
+      evidenceOk: evidence.ok,
+    };
   } catch {
     return { text: ATTENTION_READ_FAILED_TEXT, captureIds: [] };
   }

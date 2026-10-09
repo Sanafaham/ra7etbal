@@ -67,8 +67,10 @@ import {
   fetchTaskDeliveryStatus,
   fetchOperationsSummary,
   fetchAttentionPresentation,
+  fetchVoiceAttentionPresentation,
   markAttentionCapturesSurfaced,
   type AttentionPresentation,
+  type VoiceAttentionRequest,
 } from "../../lib/carson-operations-center";
 import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
 import { lookupCommunicationHistory } from "../../lib/carson-communication-history";
@@ -149,9 +151,9 @@ import { issueSecondBrainVoiceBinding, getSupabaseAccessToken as getSecondBrainV
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import {
   matchesAttentionIntent,
-  matchesAttentionFollowUp,
   resolveAttentionGuardedMessage,
   resolvePresentedAttentionCaptureIds,
+  resolveVoiceAttentionFollowUp,
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "../../lib/carson-attention-intent-guard";
 import { reduceCarsonTranscriptTurn, type CarsonTranscriptTurnState } from "../../lib/carson-transcript-turn-state";
@@ -1659,6 +1661,12 @@ export default function ElevenLabsAgentWidget({
   // a FAILED-to-ground first turn still gets its own fresh, independent
   // grounding attempt, instead of inheriting the first turn's failure.
   const lastTurnWasAttentionIntentRef = useRef(false);
+  // P3 Step 3 / S3 — legacy voice only. What this turn's attention read
+  // should show (summary, every item, or one person's items), and the people
+  // with open items in the last grounded voice attention answer (so "What
+  // about Christopher?" is recognised only for someone just mentioned).
+  const voiceAttentionRequestRef = useRef<VoiceAttentionRequest>({ kind: "summary" });
+  const lastVoiceAttentionAssigneesRef = useRef<string[]>([]);
   // Second Brain stateful reasoning (2026-08-28) — typed channel only.
   // Accumulates evidence ids actually surfaced to the owner across the
   // whole active attention conversation (deduped), sent as non-authoritative
@@ -5951,6 +5959,8 @@ export default function ElevenLabsAgentWidget({
       attentionGuardResultRef.current = null;
       lastAttentionTurnWasGroundedRef.current = false;
       lastTurnWasAttentionIntentRef.current = false;
+      lastVoiceAttentionAssigneesRef.current = [];
+      voiceAttentionRequestRef.current = { kind: "summary" };
       previouslySurfacedEvidenceIdsRef.current = [];
       priorAttentionObjectiveRef.current = null;
 
@@ -6744,7 +6754,7 @@ export default function ElevenLabsAgentWidget({
           },
           // Second Brain proof — grounded "what needs my attention" read.
           // Structured evidence -> deterministic render happens inside
-          // fetchAttentionPresentation(); this tool never lets the model
+          // fetchVoiceAttentionPresentation(); this tool never lets the model
           // supply or override the underlying data (see
           // carson-operations-center.ts's fetchAttentionEvidence /
           // renderAttentionSummary doc comment for the grounding
@@ -6759,14 +6769,21 @@ export default function ElevenLabsAgentWidget({
             // Never marks captures surfaced: this result goes to the model,
             // not the owner (P3 Step 3 / S2).
             let toolCaptureIds: AttentionPresentation["captureIds"] = [];
+            let toolAssignees: AttentionPresentation["assignees"];
             const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, async () => {
-              const presentation = await fetchAttentionPresentation();
+              // Voice only (P3 Step 3 / S3). This clientTool is shared with the
+              // typed textOnly session, whose output must stay unchanged.
+              const presentation =
+                requestedChannel === "voice"
+                  ? await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)
+                  : await fetchAttentionPresentation();
               toolCaptureIds = presentation.captureIds;
+              toolAssignees = presentation.assignees;
               return presentation.text;
             });
             // Capture the tool's OWN real return value as this turn's
             // grounded result too — not just the prefetch kicked off on the
-            // user-turn side. Both call the same read-only fetchAttentionPresentation(),
+            // user-turn side. Both call the same read-only fetchVoiceAttentionPresentation(),
             // so either source is equally authoritative; this just ensures a
             // genuine tool invocation always has a grounded result ready for
             // resolveAttentionGuardedMessage, closing the gap where the tool
@@ -6777,7 +6794,9 @@ export default function ElevenLabsAgentWidget({
             resultPromise
               .then((text) => {
                 if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
-                if (typeof text === "string") attentionGuardResultRef.current = { text, captureIds: toolCaptureIds };
+                if (typeof text === "string") {
+                  attentionGuardResultRef.current = { text, captureIds: toolCaptureIds, assignees: toolAssignees };
+                }
               })
               .catch(() => {});
             return resultPromise;
@@ -7145,8 +7164,17 @@ export default function ElevenLabsAgentWidget({
             // guard. The Second Brain server is the single owner of the turn
             // for this flow; this legacy guard is not needed and must not
             // compete with it.
-            const isAttentionFollowUpTurn =
-              matchesAttentionFollowUp(message) && lastTurnWasAttentionIntentRef.current;
+            // P3 Step 3 / S3: a follow-up asking for the items themselves
+            // ("What else?", "Which ones?", "Tell me the rest", "What about
+            // Christopher?") is re-read live, never answered from the
+            // session-start {{ra7etbal_state}} list.
+            const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current
+              ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)
+              : null;
+            const isAttentionFollowUpTurn = voiceAttentionFollowUp !== null;
+            voiceAttentionRequestRef.current = matchesAttentionIntent(message)
+              ? { kind: "summary" }
+              : voiceAttentionFollowUp ?? { kind: "summary" };
             attentionIntentForCurrentTranscriptRef.current =
               !secondBrainVoiceEnabled && (matchesAttentionIntent(message) || isAttentionFollowUpTurn);
             if (attentionIntentForCurrentTranscriptRef.current) {
@@ -7161,11 +7189,24 @@ export default function ElevenLabsAgentWidget({
               // own turnOperationId check).
               const requestTurnOperationId = turnOperationId;
               // Prefetch never marks captures surfaced (P3 Step 3 / S2).
-              fetchAttentionPresentation()
+              const requestedView = voiceAttentionRequestRef.current;
+              fetchVoiceAttentionPresentation(requestedView)
                 .then((presentation) => {
                   if (sessionGenerationRef.current !== requestGeneration) return;
                   if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
                   attentionGuardResultRef.current = presentation;
+                  // P3 Step 3 / S3: give the voice model this live read too,
+                  // so later wording in the call is not taken from the stale
+                  // session-start list. Informational only; never triggers a
+                  // reply and never marks captures. Only a successful whole
+                  // view: a person view or a failed read is not the full
+                  // picture and must not be offered as one.
+                  if (requestedView.kind === "person" || !presentation.evidenceOk) return;
+                  conversationRef.current?.sendContextualUpdate(
+                    `[Live attention check] ${presentation.text} ` +
+                      "Use only this live result for which items are open, and for their names and counts. " +
+                      "The OPEN list given at the start of this session may be out of date.",
+                  );
                 })
                 .catch(() => {
                   // Best-effort only — no correction available is a real,
@@ -7232,6 +7273,9 @@ export default function ElevenLabsAgentWidget({
             lastAttentionTurnWasGroundedRef.current =
               attentionIntentForCurrentTranscriptRef.current &&
               attentionGuardResultRef.current != null;
+            if (attentionIntentForCurrentTranscriptRef.current && attentionGuardResultRef.current?.assignees) {
+              lastVoiceAttentionAssigneesRef.current = attentionGuardResultRef.current.assignees;
+            }
             // Set unconditionally (not gated on grounding success) — this is
             // what allows a follow-up to a failed-to-ground turn to still get
             // its own independent grounding attempt.
@@ -7510,6 +7554,8 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
+          lastVoiceAttentionAssigneesRef.current = [];
+          voiceAttentionRequestRef.current = { kind: "summary" };
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setSessionEndedMsg("Session ended.");
@@ -7576,6 +7622,8 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
+          lastVoiceAttentionAssigneesRef.current = [];
+          voiceAttentionRequestRef.current = { kind: "summary" };
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
