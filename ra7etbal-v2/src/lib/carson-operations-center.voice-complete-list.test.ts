@@ -314,6 +314,8 @@ describe("review findings: captures and grouping", () => {
     const rest = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: summary.page!.givenIds });
     expect(rest.text).not.toContain("Also on your mind");
     expect(rest.captureIds).toEqual([]);
+    // Re-review finding B: given is not spoken, so the capture is re-offered, not dropped.
+    expect(rest.text).toMatch(/Already given in my last answer: [^.]*Look into a new bookshelf\./);
   });
 
   it("a reminder and a task with the same wording are not grouped together", async () => {

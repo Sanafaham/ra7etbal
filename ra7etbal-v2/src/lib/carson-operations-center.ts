@@ -652,12 +652,14 @@ export function buildVoiceAttentionView(
         : [...evidence.needsYou, ...VOICE_NAMED_CATEGORIES.flatMap(([category]) => evidence[category])]
       ).filter((item) => excluded.has(item.id) && inScope(item))
     : [];
-  const previousLine =
-    previouslyGiven.length > 0
-      ? `Already given in my last answer: ${voiceEntries(previouslyGiven, taskWording, person === null)
-          .map((entry) => entry.text)
-          .join("; ")}.`
-      : "";
+  // "Also on your mind" captures given earlier are re-offered too (whole list only).
+  const previouslyGivenCaptures =
+    continuing && person === null ? evidence.unresolvedCaptures.filter((item) => excluded.has(item.id)) : [];
+  const previousNames = [
+    ...voiceEntries(previouslyGiven, taskWording, person === null).map((entry) => entry.text),
+    ...previouslyGivenCaptures.map((item) => item.label),
+  ];
+  const previousLine = previousNames.length > 0 ? `Already given in my last answer: ${previousNames.join("; ")}.` : "";
   const chainIds = continuing ? [...excluded] : [];
 
   if (person === null && !continuing && total === 0 && decisions.length === 0) {
