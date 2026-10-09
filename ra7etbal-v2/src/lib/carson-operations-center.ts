@@ -404,12 +404,19 @@ export type AttentionCaptureRef = { id: string; kind: "note" | "todo" };
  * S3) — lets a "What about <name>?" follow-up be recognised only for a person
  * the owner was just told about.
  */
-export type AttentionPresentation = { text: string; captureIds: AttentionCaptureRef[]; assignees?: string[] };
+export type AttentionPresentation = {
+  text: string;
+  captureIds: AttentionCaptureRef[];
+  assignees?: string[];
+  /** Voice only: the live read succeeded (P3 Step 3 / S3). */
+  evidenceOk?: boolean;
+};
 
 /**
  * P3 Step 3 / S3 — legacy voice only. What the owner asked for this turn:
- * the initial summary, every open item ("Which ones?", "Tell me the rest"),
- * or one person's open items ("What about Christopher?").
+ * the initial summary, every item of the summary's categories ("Which
+ * ones?", "Tell me the rest"), or one person's open items in any category
+ * ("What about Christopher?").
  */
 export type VoiceAttentionRequest = { kind: "summary" } | { kind: "all" } | { kind: "person"; name: string };
 
@@ -442,7 +449,7 @@ function voiceNamedLine(title: string, items: AttentionItem[], shown: number): s
  *   with their exact counts and at most VOICE_ATTENTION_NAME_LIMIT names in
  *   total, one per category in turn so each category gets a name first;
  *   "and N more" for the rest.
- * - all: the same lines with every name.
+ * - all: the same lines (overdue / upcoming / waiting) with every name.
  * - person: every open item assigned to that person, from live evidence only.
  *
  * Failed, empty and capture lines are exactly renderAttentionSummary's, so the
@@ -545,6 +552,7 @@ export async function fetchVoiceAttentionPresentation(
       text: renderVoiceAttentionSummary(evidence, request),
       captureIds: request.kind === "person" ? [] : renderedCaptureIds(evidence),
       assignees: openAssignees(evidence),
+      evidenceOk: evidence.ok,
     };
   } catch {
     return { text: ATTENTION_READ_FAILED_TEXT, captureIds: [] };

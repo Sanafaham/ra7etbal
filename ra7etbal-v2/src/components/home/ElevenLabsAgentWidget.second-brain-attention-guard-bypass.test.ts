@@ -39,7 +39,7 @@ describe("legacy attention-intent guard is inert for Second Brain voice turns", 
       SOURCE.indexOf("} else if (role === \"agent\") {"),
     );
     expect(guardBlock).toContain("if (attentionIntentForCurrentTranscriptRef.current) {");
-    expect(guardBlock).toContain("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)");
+    expect(guardBlock).toContain("fetchVoiceAttentionPresentation(requestedView)");
     // Exactly the one occurrence from the ref assignment itself — not a
     // second, independent secondBrainVoiceEnabled check guarding the
     // fetchAttentionPresentation() call directly, which could drift out of sync

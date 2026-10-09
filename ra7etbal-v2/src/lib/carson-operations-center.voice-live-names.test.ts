@@ -242,6 +242,7 @@ describe("truthful uncertainty and owner scope (S3-6/7)", () => {
     mocks.supabaseGetUser.mockResolvedValue({ data: { user: null }, error: null });
     for (const request of [{ kind: "summary" }, { kind: "all" }, { kind: "person", name: "Christopher" }] as const) {
       const presentation = await fetchVoiceAttentionPresentation(request);
+      expect(presentation.evidenceOk).toBe(false);
       expect(presentation.text).toBe("I couldn't check what needs your attention right now — not signed in.");
       expect(presentation.captureIds).toEqual([]);
       expect(presentation.assignees).toEqual([]);
@@ -274,6 +275,7 @@ describe("truthful uncertainty and owner scope (S3-6/7)", () => {
     expect(mocks.supabaseGetUser).toHaveBeenCalled();
     expect(mocks.listTasks).toHaveBeenCalledTimes(1);
     expect(presentation.assignees).toEqual(["Christopher", "Grace"]);
+    expect(presentation.evidenceOk).toBe(true);
   });
 });
 
@@ -317,7 +319,7 @@ describe("unchanged behaviour (S3-8/9)", () => {
 
 describe("resolveVoiceAttentionFollowUp (voice-only follow-up recognition)", () => {
   const assignees = ["Christopher", "Grace"];
-  it.each(["Which ones?", "which ones", "Tell me the rest", "What are they?", "And the rest?", "List them all.", "What else?", "Is that everything?"])(
+  it.each(["Which ones?", "which ones", "Tell me the rest", "Tell me the rest of them", "What are they?", "What are the rest?", "What\u2019s the rest?", "And the rest?", "List them all.", "What else?", "Is that everything?"])(
     "'%s' asks for every item",
     (utterance) => {
       expect(resolveVoiceAttentionFollowUp(utterance, assignees)).toEqual({ kind: "all" });
@@ -333,7 +335,13 @@ describe("resolveVoiceAttentionFollowUp (voice-only follow-up recognition)", () 
     expect(resolveVoiceAttentionFollowUp(utterance, assignees)).toEqual({ kind: "person", name });
   });
 
-  it.each(["What about dinner?", "What about Loulya?", "Yes.", "Send it to Christopher", "Remind Christopher about the car", "Thanks"])(
+  it("matches an unambiguous first name to a full stored name, never an ambiguous one", () => {
+    expect(resolveVoiceAttentionFollowUp("What about Christopher?", ["Christopher Smith", "Grace"])).toEqual({ kind: "person", name: "Christopher Smith" });
+    expect(resolveVoiceAttentionFollowUp("What about Chris?", ["Chris Adams", "Chris Brown"])).toBeNull();
+    expect(resolveVoiceAttentionFollowUp("What about Smith?", ["Christopher Smith"])).toBeNull();
+  });
+
+  it.each(["What about dinner?", "What about Loulya?", "Yes.", "Send it to Christopher", "Remind Christopher about the car", "Thanks", "and Christopher too", "And Grace, remind her tomorrow"])(
     "'%s' is not taken over",
     (utterance) => {
       expect(resolveVoiceAttentionFollowUp(utterance, assignees)).toBeNull();

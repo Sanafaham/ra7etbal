@@ -66,6 +66,7 @@ import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/ca
 import {
   fetchTaskDeliveryStatus,
   fetchOperationsSummary,
+  fetchAttentionPresentation,
   fetchVoiceAttentionPresentation,
   markAttentionCapturesSurfaced,
   type AttentionPresentation,
@@ -5959,6 +5960,7 @@ export default function ElevenLabsAgentWidget({
       lastAttentionTurnWasGroundedRef.current = false;
       lastTurnWasAttentionIntentRef.current = false;
       lastVoiceAttentionAssigneesRef.current = [];
+      voiceAttentionRequestRef.current = { kind: "summary" };
       previouslySurfacedEvidenceIdsRef.current = [];
       priorAttentionObjectiveRef.current = null;
 
@@ -6769,7 +6771,12 @@ export default function ElevenLabsAgentWidget({
             let toolCaptureIds: AttentionPresentation["captureIds"] = [];
             let toolAssignees: AttentionPresentation["assignees"];
             const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, async () => {
-              const presentation = await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current);
+              // Voice only (P3 Step 3 / S3). This clientTool is shared with the
+              // typed textOnly session, whose output must stay unchanged.
+              const presentation =
+                requestedChannel === "voice"
+                  ? await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)
+                  : await fetchAttentionPresentation();
               toolCaptureIds = presentation.captureIds;
               toolAssignees = presentation.assignees;
               return presentation.text;
@@ -7182,7 +7189,8 @@ export default function ElevenLabsAgentWidget({
               // own turnOperationId check).
               const requestTurnOperationId = turnOperationId;
               // Prefetch never marks captures surfaced (P3 Step 3 / S2).
-              fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)
+              const requestedView = voiceAttentionRequestRef.current;
+              fetchVoiceAttentionPresentation(requestedView)
                 .then((presentation) => {
                   if (sessionGenerationRef.current !== requestGeneration) return;
                   if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
@@ -7190,7 +7198,10 @@ export default function ElevenLabsAgentWidget({
                   // P3 Step 3 / S3: give the voice model this live read too,
                   // so later wording in the call is not taken from the stale
                   // session-start list. Informational only; never triggers a
-                  // reply and never marks captures.
+                  // reply and never marks captures. Only a successful whole
+                  // view: a person view or a failed read is not the full
+                  // picture and must not be offered as one.
+                  if (requestedView.kind === "person" || !presentation.evidenceOk) return;
                   conversationRef.current?.sendContextualUpdate(
                     `[Live attention check] ${presentation.text} ` +
                       "Use only this live result for which items are open, and for their names and counts. " +
@@ -7544,6 +7555,7 @@ export default function ElevenLabsAgentWidget({
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
           lastVoiceAttentionAssigneesRef.current = [];
+          voiceAttentionRequestRef.current = { kind: "summary" };
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setSessionEndedMsg("Session ended.");
@@ -7611,6 +7623,7 @@ export default function ElevenLabsAgentWidget({
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
           lastVoiceAttentionAssigneesRef.current = [];
+          voiceAttentionRequestRef.current = { kind: "summary" };
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");

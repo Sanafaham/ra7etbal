@@ -111,7 +111,11 @@ Goal: verify the real Production "What needs my attention?" journey end to end �
 - **S1 — Night Sweep false all-clear: FIXED + PRODUCTION VERIFIED** (owner accepted 2026-10-07). See the S1 section below.
 - **S2 — `last_surfaced_at` / attention retrieval mutation: FIXED + PRODUCTION VERIFIED — CLOSED** (2026-10-08; typed and voice owner canaries passed). See the S2 section below.
 - **S2b — recovery of the three captures wrongly marked on 2026-08-24 (`ec7457e7`, `3ae6ac9a`, `7c7816de`): CLOSED / PRODUCTION VERIFIED** (2026-10-08). Owner-authorized data repair COMPLETED / DATABASE VERIFIED; capture-presentation correction (PR #451) MERGED, DEPLOYED, PRODUCTION VERIFIED. See the S2b section below.
-- **S3 — attention-summary live-item evidence / stale session-context risk: NOT STARTED.**
+- **S3 — attention-summary live-item evidence / stale session-context risk: ACTIVE / OPEN** (started 2026-10-09).
+  - **Investigation:** typed PASS (names come from a live, owner-scoped server read on every turn, with no session context). Legacy voice FAIL: the live voice result was counts only, so spoken names, and names in follow-up bubbles, came from the session-start `{{ra7etbal_state}}` list, which is never refreshed during a call. Production example: `conv_1501m3fmxeh4eknvqy7m07n55qat` (2026-09-26); the names spoken were still correct that day. Second Brain voice is not verified.
+  - **Correction:** draft PR #453, legacy voice only, NOT MERGED and NOT DEPLOYED. It names up to five live items with exact counts and "and N more", and answers item follow-ups from a fresh live read.
+  - **Closes only after** a real Production voice canary.
+  - **Recorded, not changed:** the existing classifier counts a reminder with `dismissed_at` set as open.
 
 Still open alongside S1 and S2, separately and not in any slice above:
 - **Duplicate capture wording within one attention reply — OPEN** (owner-observed in the 2026-10-08 20:23 S2b canary). Not investigated.

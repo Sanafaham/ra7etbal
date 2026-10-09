@@ -20,13 +20,20 @@ function between(start: string, end: string): string {
 }
 
 describe("legacy voice attention reads and names live items", () => {
-  it("both the prefetch and the get_items_needing_attention tool read live with this turn's request", () => {
+  it("the voice prefetch reads live with this turn's request", () => {
     const prefetch = between("if (attentionIntentForCurrentTranscriptRef.current) {", '} else if (role === "agent") {');
+    expect(prefetch).toContain("const requestedView = voiceAttentionRequestRef.current;");
+    expect(prefetch).toContain("fetchVoiceAttentionPresentation(requestedView)");
+    expect(prefetch).not.toContain("fetchAttentionPresentation()");
+  });
+
+  it("the shared get_items_needing_attention tool uses the voice view only in a voice session; typed keeps the shared counts-only result", () => {
     const tool = between("get_items_needing_attention: (params", "get_commitment_history:");
-    for (const block of [prefetch, tool]) {
-      expect(block).toContain("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)");
-      expect(block).not.toContain("fetchAttentionPresentation()");
-    }
+    expect(tool).toContain(
+      'requestedChannel === "voice"\n' +
+        "                  ? await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)\n" +
+        "                  : await fetchAttentionPresentation();",
+    );
   });
 
   it("an item follow-up is recognised only straight after an attention turn, against the people in that live answer", () => {
@@ -38,8 +45,11 @@ describe("legacy voice attention reads and names live items", () => {
   });
 
   it("the live read is also given to the voice model, informational only, and never marks captures", () => {
-    const prefetch = between("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)\n", ".catch(() => {");
+    const prefetch = between("fetchVoiceAttentionPresentation(requestedView)\n", ".catch(() => {");
     expect(prefetch).toContain("conversationRef.current?.sendContextualUpdate(");
+    // Only a successful whole view is offered as the full picture.
+    expect(prefetch).toContain('if (requestedView.kind === "person" || !presentation.evidenceOk) return;');
+    expect(prefetch.indexOf('if (requestedView.kind === "person"')).toBeLessThan(prefetch.indexOf("sendContextualUpdate("));
     expect(prefetch).toContain("[Live attention check]");
     expect(prefetch).toContain("The OPEN list given at the start of this session may be out of date.");
     expect(prefetch).not.toContain("markAttentionCapturesSurfaced");
@@ -51,6 +61,8 @@ describe("legacy voice attention reads and names live items", () => {
         "              lastVoiceAttentionAssigneesRef.current = attentionGuardResultRef.current.assignees;",
     );
     expect((SOURCE.match(/lastVoiceAttentionAssigneesRef\.current = \[\];/g) ?? []).length).toBe(3);
+    // The request resets with the session too, so a later typed session can never inherit it.
+    expect((SOURCE.match(/voiceAttentionRequestRef\.current = \{ kind: "summary" \};/g) ?? []).length).toBe(3);
   });
 
   it("typed is unchanged: the typed /api/carson-turn path never uses the voice renderer or voice follow-up state", () => {
@@ -58,6 +70,7 @@ describe("legacy voice attention reads and names live items", () => {
     for (const voiceOnly of ["fetchVoiceAttentionPresentation", "voiceAttentionRequestRef", "lastVoiceAttentionAssigneesRef", "resolveVoiceAttentionFollowUp"]) {
       expect(typed).not.toContain(voiceOnly);
     }
-    expect((SOURCE.match(/fetchVoiceAttentionPresentation\(voiceAttentionRequestRef\.current\)/g) ?? []).length).toBe(2);
+    // Exactly two voice reads: the voice prefetch and the voice branch of the tool.
+    expect((SOURCE.match(/fetchVoiceAttentionPresentation\((?:voiceAttentionRequestRef\.current|requestedView)\)/g) ?? []).length).toBe(2);
   });
 });
