@@ -26,13 +26,13 @@ function between(start: string, end: string): string {
 describe("last_surfaced_at is written only at the owner-visible bubble", () => {
   it("S2-B: the attention-intent guard prefetch never marks captures surfaced", () => {
     const prefetch = between("if (attentionIntentForCurrentTranscriptRef.current) {", '} else if (role === "agent") {');
-    expect(prefetch).toContain("fetchAttentionPresentation()");
+    expect(prefetch).toContain("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)");
     expect(prefetch).not.toContain("markAttentionCapturesSurfaced");
   });
 
   it("S2-C: the get_items_needing_attention tool result (sent to the model) never marks captures surfaced", () => {
     const tool = between("get_items_needing_attention: (params", "get_commitment_history:");
-    expect(tool).toContain("fetchAttentionPresentation()");
+    expect(tool).toContain("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)");
     expect(tool).not.toContain("markAttentionCapturesSurfaced");
   });
 

@@ -68,7 +68,7 @@ import {
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "../../shared/carson-attention-intent-classifier.js";
 export { matchesAttentionIntent, matchesAttentionFollowUp, ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE };
-import type { AttentionCaptureRef, AttentionPresentation } from "./carson-operations-center";
+import type { AttentionCaptureRef, AttentionPresentation, VoiceAttentionRequest } from "./carson-operations-center";
 
 export interface ResolveAttentionGuardedMessageInput {
   /** The agent's own separately-generated reply for this turn. */
@@ -137,4 +137,33 @@ export function resolvePresentedAttentionCaptureIds({
   if (!attentionIntentDetected || !grounded) return [];
   if (displayedMessage !== grounded.text) return [];
   return grounded.captureIds;
+}
+
+// P3 Step 3 / S3 — legacy voice follow-ups that ask for the items themselves.
+// Only meaningful straight after an attention answer (the caller gates on
+// that), exactly like matchesAttentionFollowUp. Voice-only: typed is unchanged.
+const VOICE_ATTENTION_LIST_FOLLOWUP_PATTERN =
+  /^\s*(?:(?:and|so|ok(?:ay)?)[,\s]+)?(?:which ones|what are they|tell me the rest|what(?:'s| is) the rest|the rest|list them(?: all)?|name them)\s*[?.!]*\s*$/i;
+const VOICE_ATTENTION_PERSON_FOLLOWUP_PATTERN =
+  /^\s*(?:(?:and|so)[,\s]+)?(?:what about|how about|and)\s+([\p{L}][\p{L}\p{M}' -]{0,40}?)\s*[?.!]*\s*$/iu;
+
+/**
+ * P3 Step 3 / S3 — what a legacy voice follow-up to an attention answer is
+ * asking for, or null when it is not one. "What else?" / "Which ones?" /
+ * "Tell me the rest" ask for every open item; "What about Christopher?" asks
+ * for one person, but only when that person had an open item in the live
+ * evidence the owner was just given (lastAssignees), so "What about dinner?"
+ * is never taken over. The answer itself is always re-read live.
+ */
+export function resolveVoiceAttentionFollowUp(
+  utterance: string,
+  lastAssignees: readonly string[],
+): VoiceAttentionRequest | null {
+  if (matchesAttentionFollowUp(utterance) || VOICE_ATTENTION_LIST_FOLLOWUP_PATTERN.test(utterance)) {
+    return { kind: "all" };
+  }
+  const person = VOICE_ATTENTION_PERSON_FOLLOWUP_PATTERN.exec(utterance)?.[1]?.trim().toLowerCase();
+  if (!person) return null;
+  const name = lastAssignees.find((assignee) => assignee.trim().toLowerCase() === person);
+  return name ? { kind: "person", name } : null;
 }
