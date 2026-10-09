@@ -166,8 +166,10 @@ export function resolveVoiceAttentionFollowUp(
   }
   const person = VOICE_ATTENTION_PERSON_FOLLOWUP_PATTERN.exec(text)?.[1]?.trim().toLowerCase();
   if (!person) return null;
-  const exact = lastAssignees.find((assignee) => assignee.trim().toLowerCase() === person);
-  if (exact) return { kind: "person", name: exact };
   const byFirstName = lastAssignees.filter((assignee) => assignee.trim().toLowerCase().split(/\s+/)[0] === person);
+  const exact = lastAssignees.find((assignee) => assignee.trim().toLowerCase() === person);
+  // Ambiguous ("Christopher" and "Christopher Smith" both open): no guess,
+  // because a person view of one would silently leave out the other.
+  if (exact) return byFirstName.length <= 1 ? { kind: "person", name: exact } : null;
   return byFirstName.length === 1 ? { kind: "person", name: byFirstName[0] } : null;
 }

@@ -339,6 +339,8 @@ describe("resolveVoiceAttentionFollowUp (voice-only follow-up recognition)", () 
     expect(resolveVoiceAttentionFollowUp("What about Christopher?", ["Christopher Smith", "Grace"])).toEqual({ kind: "person", name: "Christopher Smith" });
     expect(resolveVoiceAttentionFollowUp("What about Chris?", ["Chris Adams", "Chris Brown"])).toBeNull();
     expect(resolveVoiceAttentionFollowUp("What about Smith?", ["Christopher Smith"])).toBeNull();
+    expect(resolveVoiceAttentionFollowUp("What about Christopher?", ["Christopher", "Christopher Smith"])).toBeNull();
+    expect(resolveVoiceAttentionFollowUp("What about Christopher Smith?", ["Christopher", "Christopher Smith"])).toEqual({ kind: "person", name: "Christopher Smith" });
   });
 
   it.each(["What about dinner?", "What about Loulya?", "Yes.", "Send it to Christopher", "Remind Christopher about the car", "Thanks", "and Christopher too", "And Grace, remind her tomorrow"])(
