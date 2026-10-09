@@ -430,23 +430,25 @@ export type AttentionPresentation = {
   modelText?: string;
   /** Voice only: the background note offered after a successful read. */
   contextNote?: string;
-  /** Voice only: what this answer named, for a later "the rest" / "continue". */
-  page?: { namedIds: string[]; person: string | null; remaining: number };
+  /** Voice only: what this answer gave the model, for a later "the rest" / "continue". */
+  page?: { givenIds: string[]; person: string | null; remaining: number };
 };
 
 /**
  * P3 Step 3 / S3 — legacy voice only. What the owner asked for this turn:
  * - summary: the initial answer (at most five names, owner decision);
  * - all: every item of the summary's categories ("Which ones?");
- * - rest: the items not named in the previous attention answer ("Tell me
- *   the rest", "What else?", "Continue"). alreadyNamedIds and person come
- *   from that previous answer; person keeps a split person list going;
+ * - rest: the items the previous attention answer did not give the model
+ *   ("Tell me the rest", "What else?", "Continue"), followed by the ones it
+ *   did, because the app cannot know which of those Carson actually said.
+ *   previouslyGivenIds and person come from that previous answer; person
+ *   keeps a split person list going;
  * - person: one person's open items in any category ("What about Christopher?").
  */
 export type VoiceAttentionRequest =
   | { kind: "summary" }
   | { kind: "all" }
-  | { kind: "rest"; alreadyNamedIds?: readonly string[]; person?: string | null }
+  | { kind: "rest"; previouslyGivenIds?: readonly string[]; person?: string | null }
   | { kind: "person"; name: string };
 
 /** Owner decision (2026-10-09): at most five item names in a voice summary. */
@@ -477,9 +479,13 @@ type VoiceEntry = { text: string; ids: string[] };
  * such as "bill task" and "car task" were spoken back as the session-start
  * names instead). Falls back to the shared label when no wording is known.
  */
+function fullWording(item: AttentionItem, taskWording: ReadonlyMap<string, string>): string {
+  const text = (taskWording.get(item.id) ?? "").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").trim();
+  return text || item.label;
+}
+
 function voiceWording(item: AttentionItem, taskWording: ReadonlyMap<string, string>): string {
-  let text = (taskWording.get(item.id) ?? "").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").trim();
-  if (!text) text = item.label;
+  let text = fullWording(item, taskWording);
   if (text.length > VOICE_WORDING_MAX) {
     const cut = text.slice(0, VOICE_WORDING_MAX);
     const lastSpace = cut.lastIndexOf(" ");
@@ -501,8 +507,11 @@ function voiceEntries(
   for (const item of items) {
     const wording = voiceWording(item, taskWording);
     const name = withAssignee && item.assignee ? `${item.assignee}: ${wording}` : wording;
-    const key = name.toLowerCase();
-    const group = groups.get(key) ?? { name, reminder: item.type === "reminder", ids: [] };
+    const reminder = item.type === "reminder";
+    // Same person, same full wording and same kind only: a reminder and a
+    // task, or two long items sharing a cut-off prefix, stay apart.
+    const key = `${reminder}|${withAssignee ? (item.assignee ?? "").toLowerCase() : ""}|${fullWording(item, taskWording).toLowerCase()}`;
+    const group = groups.get(key) ?? { name, reminder, ids: [] };
     group.ids.push(item.id);
     groups.set(key, group);
   }
@@ -520,14 +529,22 @@ const countIds = (entries: readonly VoiceEntry[]) => entries.reduce((sum, entry)
 /** What the voice model is given for one request, and what it names. */
 export type VoiceAttentionView = {
   text: string;
-  /** Item ids this answer names (a later "the rest" leaves them out). */
-  namedIds: string[];
+  /**
+   * Item ids GIVEN TO THE MODEL by this answer and, for "the rest", the
+   * answers before it in the same chain. Not proof they were spoken: the app
+   * has no record of what Carson actually said aloud.
+   */
+  givenIds: string[];
   /** An explicit list request: the model must name every item given. */
   listRequest: boolean;
   /** Items left for "continue" when the list was split for length. */
   remaining: number;
   /** The person a person list (or its continuation) is about. */
   person: string | null;
+  /** A "the rest" / "continue" answer that re-lists what was already given. */
+  continuation?: boolean;
+  /** Captures whose "Also on your mind" line is in this answer's text. */
+  shownCaptureIds?: string[];
 };
 
 /**
@@ -552,7 +569,7 @@ export function buildVoiceAttentionView(
   request: VoiceAttentionRequest = { kind: "summary" },
   taskWording: ReadonlyMap<string, string> = new Map(),
 ): VoiceAttentionView {
-  const none = { namedIds: [], listRequest: false, remaining: 0, person: null };
+  const none = { givenIds: [], listRequest: false, remaining: 0, person: null };
   if (!evidence.ok) return { text: renderAttentionSummary(evidence), ...none };
   const partialNote =
     evidence.completeness === "partial" ? "I couldn't check everything just now, so this may be incomplete." : "";
@@ -560,7 +577,13 @@ export function buildVoiceAttentionView(
 
   if (request.kind === "summary") {
     const named = VOICE_NAMED_CATEGORIES.filter(([category]) => evidence[category].length > 0);
-    if (named.length === 0) return { text: renderAttentionSummary(evidence), ...none };
+    if (named.length === 0) {
+      return {
+        text: renderAttentionSummary(evidence),
+        ...none,
+        shownCaptureIds: evidence.unresolvedCaptures.map((item) => item.id),
+      };
+    }
     const entries = new Map(named.map(([category]) => [category, voiceEntries(evidence[category], taskWording, true)]));
     const shown = new Map<string, number>(named.map(([category]) => [category, 0]));
     let budget = VOICE_ATTENTION_NAME_LIMIT;
@@ -573,26 +596,34 @@ export function buildVoiceAttentionView(
         }
       }
     }
-    const namedIds: string[] = [];
+    const givenIds: string[] = [];
     const lines = [
       evidence.needsYou.length > 0
         ? `Needs your decision: ${evidence.needsYou.map((item) => item.label).join("; ")}.`
         : "Nothing needs your direct decision right now.",
       ...named.map(([category, title]) => {
         const listed = entries.get(category)!.slice(0, shown.get(category)!);
-        namedIds.push(...listed.flatMap((entry) => entry.ids));
+        givenIds.push(...listed.flatMap((entry) => entry.ids));
         const more = evidence[category].length - countIds(listed);
         return `${title} (${evidence[category].length}): ${listed.map((entry) => entry.text).join("; ")}${more > 0 ? `; and ${more} more` : ""}.`;
       }),
     ];
-    namedIds.push(...evidence.needsYou.map((item) => item.id));
-    if (evidence.unresolvedCaptures.length > 0) lines.push(renderAlsoOnYourMindLine(evidence.unresolvedCaptures));
-    return { text: withPartial(lines), ...none, namedIds };
+    givenIds.push(...evidence.needsYou.map((item) => item.id));
+    if (evidence.unresolvedCaptures.length > 0) {
+      lines.push(renderAlsoOnYourMindLine(evidence.unresolvedCaptures));
+      givenIds.push(...evidence.unresolvedCaptures.map((item) => item.id));
+    }
+    return {
+      text: withPartial(lines),
+      ...none,
+      givenIds,
+      shownCaptureIds: evidence.unresolvedCaptures.map((item) => item.id),
+    };
   }
 
   // An explicit list: all, rest, or person.
   const person = request.kind === "person" ? request.name : request.kind === "rest" ? (request.person ?? null) : null;
-  const excluded = new Set(request.kind === "rest" ? (request.alreadyNamedIds ?? []) : []);
+  const excluded = new Set(request.kind === "rest" ? (request.previouslyGivenIds ?? []) : []);
   const keep = (item: AttentionItem) =>
     !excluded.has(item.id) && (person === null || (item.assignee ?? "").trim().toLowerCase() === person.trim().toLowerCase());
 
@@ -610,9 +641,34 @@ export function buildVoiceAttentionView(
   const decisions = person === null ? evidence.needsYou.filter(keep) : [];
   const captures = person === null ? evidence.unresolvedCaptures.filter((item) => !excluded.has(item.id)) : [];
   const continuing = request.kind === "rest" && excluded.size > 0;
+  // The app knows what it GAVE the model last time, not what Carson SAID.
+  // Those items are listed again, separately, so the model (which can see
+  // its own earlier words) can repeat any it did not actually say.
+  const inScope = (item: AttentionItem) =>
+    person === null || (item.assignee ?? "").trim().toLowerCase() === person.trim().toLowerCase();
+  const previouslyGiven = continuing
+    ? (person !== null
+        ? VOICE_PERSON_CATEGORIES.flatMap((category) => evidence[category])
+        : [...evidence.needsYou, ...VOICE_NAMED_CATEGORIES.flatMap(([category]) => evidence[category])]
+      ).filter((item) => excluded.has(item.id) && inScope(item))
+    : [];
+  const previousLine =
+    previouslyGiven.length > 0
+      ? `Already given in my last answer: ${voiceEntries(previouslyGiven, taskWording, person === null)
+          .map((entry) => entry.text)
+          .join("; ")}.`
+      : "";
+  const chainIds = continuing ? [...excluded] : [];
 
   if (person === null && !continuing && total === 0 && decisions.length === 0) {
-    return { text: renderAttentionSummary(evidence), namedIds: [], listRequest: true, remaining: 0, person };
+    return {
+      text: renderAttentionSummary(evidence),
+      givenIds: [],
+      listRequest: true,
+      remaining: 0,
+      person,
+      shownCaptureIds: evidence.unresolvedCaptures.map((item) => item.id),
+    };
   }
   if (total === 0 && decisions.length === 0 && captures.length === 0) {
     // "That's everything" only after a complete read; a partial one never claims it.
@@ -621,26 +677,33 @@ export function buildVoiceAttentionView(
       person !== null
         ? continuing
           ? full
-            ? `That's everything open with ${person}.`
-            : `Nothing else came up for ${person}.`
+            ? `Nothing else is open with ${person} beyond my last answer.`
+            : `Nothing else came up for ${person} beyond my last answer.`
           : `Nothing is open with ${person} right now.`
         : continuing
           ? full
-            ? "That's everything — nothing else is open besides what I just mentioned."
-            : "Nothing else came up besides what I just mentioned."
+            ? "Nothing else is open beyond my last answer."
+            : "Nothing else came up beyond my last answer."
           : renderAttentionSummary(evidence);
-    return { text: withPartial([text]), namedIds: [], listRequest: true, remaining: 0, person };
+    return {
+      text: withPartial(previousLine ? [text, previousLine] : [text]),
+      givenIds: chainIds,
+      listRequest: true,
+      remaining: 0,
+      person,
+      continuation: previousLine !== "",
+    };
   }
 
   let budget = VOICE_FULL_LIST_PAGE_SIZE;
   let listedCount = 0;
-  const namedIds: string[] = [];
+  const givenIds: string[] = [];
   const lines: string[] = [];
-  if (continuing) lines.push(person !== null ? `The rest open with ${person}:` : "Besides what I just mentioned:");
+  if (continuing) lines.push(person !== null ? `Not in my last answer, open with ${person}:` : "Not in my last answer:");
   if (person === null) {
     if (decisions.length > 0) {
       lines.push(`Needs your decision: ${decisions.map((item) => item.label).join("; ")}.`);
-      namedIds.push(...decisions.map((item) => item.id));
+      givenIds.push(...decisions.map((item) => item.id));
     } else if (!continuing) {
       lines.push("Nothing needs your direct decision right now.");
     }
@@ -650,7 +713,7 @@ export function buildVoiceAttentionView(
     const listed = section.entries.slice(0, budget);
     budget -= listed.length;
     listedCount += countIds(listed);
-    namedIds.push(...listed.flatMap((entry) => entry.ids));
+    givenIds.push(...listed.flatMap((entry) => entry.ids));
     const names = listed.map((entry) => entry.text).join("; ");
     lines.push(
       section.title === null
@@ -663,9 +726,18 @@ export function buildVoiceAttentionView(
     lines.push(`That's ${listedCount} of ${total}${continuing ? " left" : ""}; ${remaining} more after these. Say "continue" for the rest.`);
   } else if (captures.length > 0) {
     lines.push(renderAlsoOnYourMindLine(captures));
-    namedIds.push(...captures.map((item) => item.id));
+    givenIds.push(...captures.map((item) => item.id));
   }
-  return { text: withPartial(lines), namedIds, listRequest: true, remaining, person };
+  if (previousLine) lines.push(previousLine);
+  return {
+    text: withPartial(lines),
+    givenIds: [...new Set([...chainIds, ...givenIds])],
+    listRequest: true,
+    remaining,
+    person,
+    continuation: previousLine !== "",
+    shownCaptureIds: remaining === 0 ? captures.map((item) => item.id) : [],
+  };
 }
 
 /** Text-only form, kept for callers that need only the words. */
@@ -714,6 +786,12 @@ export async function fetchAttentionPresentation(): Promise<AttentionPresentatio
 export function voiceAttentionUseNote(evidence: AttentionSummaryEvidence, view: VoiceAttentionView): string {
   if (!evidence.ok) return "";
   const notes: string[] = [];
+  if (view.listRequest && view.continuation) {
+    notes.push(
+      "Say the items not in your last answer by name, in this wording. The app cannot tell what you actually said aloud: " +
+        'if your last answer did not name every item under "Already given in my last answer", name those too.',
+    );
+  }
   if (view.listRequest && view.remaining > 0) {
     notes.push(
       `The owner asked for the items themselves: say every item above by name, in this wording, then say there are ${view.remaining} more and that they can say "continue".`,
@@ -744,7 +822,8 @@ export async function fetchVoiceAttentionPresentation(
     const person = request.kind === "person" ? request.name : view.person;
     return {
       text: view.text,
-      captureIds: view.person !== null ? [] : renderedCaptureIds(evidence),
+      // Only the captures this answer's text shows (voice never marks them; S2).
+      captureIds: renderedCaptureIds(evidence).filter((capture) => (view.shownCaptureIds ?? []).includes(capture.id)),
       assignees: openAssignees(evidence),
       evidenceOk: evidence.ok,
       modelText: useNote ? `${view.text} ${useNote}` : view.text,
@@ -755,7 +834,7 @@ export async function fetchVoiceAttentionPresentation(
           : `[Live attention check] ${view.text} ` +
             "Use only this live result for which items are open, and for their names and counts. " +
             `The OPEN list given at the start of this session may be out of date.${useNote ? ` ${useNote}` : ""}`,
-      page: evidence.ok ? { namedIds: view.namedIds, person: view.person, remaining: view.remaining } : undefined,
+      page: evidence.ok ? { givenIds: view.givenIds, person: view.person, remaining: view.remaining } : undefined,
     };
   } catch {
     return { text: ATTENTION_READ_FAILED_TEXT, captureIds: [] };

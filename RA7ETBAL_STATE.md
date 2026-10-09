@@ -127,7 +127,7 @@ Goal: verify the real Production "What needs my attention?" journey end to end â
   - **Option A (owner-approved best-effort improvement): IMPLEMENTED on branch `claude/s3-spoken-list-reliability`, NOT MERGED, NOT DEPLOYED.** Legacy voice only:
     - original task wording, with same-wording records grouped as separate records;
     - complete lists for "Which ones?", split at 10 entries with a spoken "continue" path;
-    - "the rest" / "continue" give the items the last answer did not name;
+    - "the rest" / "continue" lead with the items not yet given to the model, then re-offer the ones already given. The app knows what it gave the model, never what Carson actually said aloud;
     - a fresh person-scoped background note after a successful read;
     - an instruction to the model to name every listed item;
     - partial and failed reads are never presented as complete.

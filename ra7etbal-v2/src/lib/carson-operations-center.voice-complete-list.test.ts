@@ -112,7 +112,6 @@ const OCT_9 = [
   delegation("d5", "prepare lunch for me and track this until he confirms it.", "Christopher"),
 ];
 const OCT_9_IDS = OCT_9.map((t) => t.id);
-const OVERDUE_IDS = ["r1", "r2", "r3", "r4", "r5", "r6", "r7"];
 const CHRISTOPHER_IDS = ["d1", "d2", "d3", "d4", "d5"];
 
 beforeEach(() => {
@@ -143,7 +142,7 @@ describe("Oct 9 'Which ones?' — every item, in the owner's wording, with an in
     for (const shortened of ["bill task", "car task", "and 4 more", "more after these"]) {
       expect(presentation.modelText).not.toContain(shortened);
     }
-    expect(sorted(presentation.page?.namedIds)).toEqual(sorted(OCT_9_IDS));
+    expect(sorted(presentation.page?.givenIds)).toEqual(sorted(OCT_9_IDS));
     expect(presentation.page?.remaining).toBe(0);
   });
 
@@ -177,7 +176,7 @@ describe("Oct 9 'What about Christopher?' — a fresh person-scoped read is give
         "[For Carson: The owner asked for the items themselves: say every item above by name, in this wording. " +
         'Do not shorten it to "and N more" or "among others".]',
     );
-    expect(sorted(presentation.page?.namedIds)).toEqual(sorted(CHRISTOPHER_IDS));
+    expect(sorted(presentation.page?.givenIds)).toEqual(sorted(CHRISTOPHER_IDS));
   });
 
   it("only that person's current items: another person's items never appear, and a change shows on the next read", async () => {
@@ -206,38 +205,56 @@ describe("Oct 9 'What about Christopher?' — a fresh person-scoped read is give
   });
 });
 
-describe("Oct 9 'Tell me the rest' — the items the last answer did not name", () => {
-  it("after Christopher's items, 'the rest' is the seven overdue reminders, not a repeat", async () => {
+describe("Oct 9 'Tell me the rest' — the items not yet given, then the ones given before", () => {
+  // The app knows what it GAVE the model, never what Carson SAID aloud, so
+  // earlier items are re-offered on a separate line, never silently dropped.
+  it("after Christopher's items, 'the rest' leads with the seven overdue reminders and re-offers Christopher's", async () => {
     const person = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
-    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: person.page!.namedIds, person: null });
+    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: person.page!.givenIds, person: null });
     expect(rest.text).toBe(
-      "Besides what I just mentioned: Overdue reminders (7): Call Loulya (3 separate reminders); Check my mailbox; Check my email; Pay bills; Call the doctor.",
+      "Not in my last answer: Overdue reminders (7): Call Loulya (3 separate reminders); Check my mailbox; Check my email; Pay bills; Call the doctor. " +
+        "Already given in my last answer: Christopher: bring the car around (2 separate tasks); Christopher: Make a pizza for dinner; " +
+        "Christopher: call me now; Christopher: prepare lunch for me and track this until he confirms it.",
     );
-    expect(rest.modelText).toContain("say every item above by name");
-    expect(sorted(rest.page?.namedIds)).toEqual(sorted(OVERDUE_IDS));
+    expect(rest.modelText).toContain("The app cannot tell what you actually said aloud");
+    expect(rest.modelText).toContain('if your last answer did not name every item under "Already given in my last answer", name those too');
+    expect(sorted(rest.page?.givenIds)).toEqual(sorted(OCT_9_IDS));
   });
 
-  it("after the summary, 'the rest' names exactly the items the summary left out", async () => {
-    const summary = await fetchVoiceAttentionPresentation();
-    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: summary.page!.namedIds });
-    expect(sorted([...summary.page!.namedIds, ...rest.page!.namedIds])).toEqual(sorted(OCT_9_IDS));
-    expect(rest.page!.namedIds.some((id) => summary.page!.namedIds.includes(id))).toBe(false);
-    expect(rest.text).toBe(
-      "Besides what I just mentioned: Overdue reminders (2): Pay bills; Call the doctor. " +
-        "Waiting on others (2): Christopher: call me now; Christopher: prepare lunch for me and track this until he confirms it.",
-    );
-  });
-
-  it("when nothing is left after a complete read, it says so; after a partial read it never claims 'everything'", async () => {
+  it("REGRESSION (Oct 9 turn B): every item was given but only three were spoken — 'the rest' still offers all twelve, never 'that's everything'", async () => {
     const all = await fetchVoiceAttentionPresentation({ kind: "all" });
-    const done = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: all.page!.namedIds });
-    expect(done.text).toBe("That's everything — nothing else is open besides what I just mentioned.");
-    mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("timeout"));
-    const partial = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: all.page!.namedIds });
-    expect(partial.text).toBe(
-      "Nothing else came up besides what I just mentioned. I couldn't check everything just now, so this may be incomplete.",
+    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: all.page!.givenIds });
+    expect(rest.text).toBe(
+      "Nothing else is open beyond my last answer. " +
+        "Already given in my last answer: Call Loulya (3 separate reminders); Check my mailbox; Check my email; Pay bills; Call the doctor; " +
+        "Christopher: bring the car around (2 separate tasks); Christopher: Make a pizza for dinner; " +
+        "Christopher: call me now; Christopher: prepare lunch for me and track this until he confirms it.",
     );
-    expect(partial.text).not.toContain("everything —");
+    expect(rest.text).not.toContain("That's everything");
+    expect(rest.modelText).toContain("name those too");
+  });
+
+  it("after the summary, 'the rest' leads with exactly the items the summary left out", async () => {
+    const summary = await fetchVoiceAttentionPresentation();
+    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: summary.page!.givenIds });
+    expect(rest.text.startsWith(
+      "Not in my last answer: Overdue reminders (2): Pay bills; Call the doctor. " +
+        "Waiting on others (2): Christopher: call me now; Christopher: prepare lunch for me and track this until he confirms it. " +
+        "Already given in my last answer: ",
+    )).toBe(true);
+    // A further "the rest" in the same chain has nothing new and re-offers everything given so far.
+    const again = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: rest.page!.givenIds });
+    expect(sorted(rest.page!.givenIds)).toEqual(sorted(OCT_9_IDS));
+    expect(again.text.startsWith("Nothing else is open beyond my last answer. Already given in my last answer: ")).toBe(true);
+  });
+
+  it("after a partial read it never claims the list is complete", async () => {
+    const all = await fetchVoiceAttentionPresentation({ kind: "all" });
+    mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("timeout"));
+    const partial = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: all.page!.givenIds });
+    expect(partial.text.startsWith("Nothing else came up beyond my last answer. ")).toBe(true);
+    expect(partial.text.endsWith("I couldn't check everything just now, so this may be incomplete.")).toBe(true);
+    expect(partial.text).not.toContain("Nothing else is open");
     expect(partial.modelText).toContain("say the list may be incomplete and never call it everything");
   });
 });
@@ -253,10 +270,26 @@ describe("long lists are split out loud, with a reliable 'continue'", () => {
     expect(first.modelText).toContain('then say there are 4 more and that they can say "continue"');
     expect(first.modelText).not.toContain("among others");
     expect(first.page?.remaining).toBe(4);
-    const next = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: first.page!.namedIds });
+    const next = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: first.page!.givenIds });
     expect(next.page?.remaining).toBe(0);
-    expect(next.text).not.toContain("continue");
-    expect(sorted([...first.page!.namedIds, ...next.page!.namedIds])).toEqual(sorted(many.map((t) => t.id)));
+    expect(next.text).not.toContain('"continue"');
+    expect(next.text.startsWith("Not in my last answer: Overdue reminders (4): Errand number 11; Errand number 12; Errand number 13; Errand number 14. ")).toBe(true);
+    expect(sorted(next.page!.givenIds)).toEqual(sorted(many.map((t) => t.id)));
+  });
+
+  it("REVIEW FINDING: a three-page chain never repeats a page and ends with nothing new", async () => {
+    const twentyFive = Array.from({ length: 25 }, (_, i) => overdue(`p${i + 1}`, `Errand number ${i + 1}`, 30 - i));
+    mocks.listTasks.mockResolvedValue(twentyFive);
+    const first = await fetchVoiceAttentionPresentation({ kind: "all" });
+    const second = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: first.page!.givenIds });
+    const third = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: second.page!.givenIds });
+    const fourth = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: third.page!.givenIds });
+    expect(second.text.startsWith("Not in my last answer: Overdue reminders (15): Errand number 11;")).toBe(true);
+    expect(second.page?.remaining).toBe(5);
+    expect(third.text.startsWith("Not in my last answer: Overdue reminders (5): Errand number 21; Errand number 22; Errand number 23; Errand number 24; Errand number 25.")).toBe(true);
+    expect(third.page?.remaining).toBe(0);
+    expect(sorted(third.page!.givenIds)).toEqual(sorted(twentyFive.map((t) => t.id)));
+    expect(fourth.text.startsWith("Nothing else is open beyond my last answer.")).toBe(true);
   });
 
   it("continuing a split person list stays with that person", async () => {
@@ -264,16 +297,38 @@ describe("long lists are split out loud, with a reliable 'continue'", () => {
     mocks.listTasks.mockResolvedValue([...christophers, delegation("g1", "Water the garden", "Grace")]);
     const first = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
     expect(first.page).toMatchObject({ remaining: 2, person: "Christopher" });
-    const next = await fetchVoiceAttentionPresentation({ kind: "rest", alreadyNamedIds: first.page!.namedIds, person: "Christopher" });
-    expect(next.text).toBe("The rest open with Christopher: Job number 11; Job number 12.");
+    const next = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: first.page!.givenIds, person: "Christopher" });
+    expect(next.text.startsWith("Not in my last answer, open with Christopher: Job number 11; Job number 12. Already given in my last answer: Job number 1; ")).toBe(true);
     expect(next.text).not.toContain("Grace");
+  });
+});
+
+describe("review findings: captures and grouping", () => {
+  it("a 'the rest' after the summary does not repeat the 'Also on your mind' line as new", async () => {
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([
+      { id: "n1", kind: "note" as const, text: "Look into a new bookshelf", ageDays: 60, neverSurfaced: true, actionable: true },
+    ]);
+    const summary = await fetchVoiceAttentionPresentation();
+    expect(summary.text).toContain("Also on your mind: Look into a new bookshelf");
+    expect(summary.captureIds).toEqual([{ id: "n1", kind: "note" }]);
+    const rest = await fetchVoiceAttentionPresentation({ kind: "rest", previouslyGivenIds: summary.page!.givenIds });
+    expect(rest.text).not.toContain("Also on your mind");
+    expect(rest.captureIds).toEqual([]);
+  });
+
+  it("a reminder and a task with the same wording are not grouped together", async () => {
+    mocks.listTasks.mockResolvedValue([overdue("r1", "Call the bank", 3), delegation("d1", "Call the bank", "Christopher")]);
+    const { text } = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
+    expect(text).toBe("Open with Christopher (1): Call the bank.");
+    const all = await fetchVoiceAttentionPresentation({ kind: "all" });
+    expect(all.text).not.toContain("separate");
   });
 });
 
 describe("failed reads are never presented as complete", () => {
   it("a failed read gives the honest failure only: no list instruction, no background note, nothing remembered", async () => {
     mocks.supabaseGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    for (const request of [{ kind: "all" }, { kind: "rest", alreadyNamedIds: ["r1"] }, { kind: "person", name: "Christopher" }] as const) {
+    for (const request of [{ kind: "all" }, { kind: "rest", previouslyGivenIds: ["r1"] }, { kind: "person", name: "Christopher" }] as const) {
       const presentation = await fetchVoiceAttentionPresentation(request);
       expect(presentation.evidenceOk).toBe(false);
       expect(presentation.modelText).toBe("I couldn't check what needs your attention right now — not signed in.");

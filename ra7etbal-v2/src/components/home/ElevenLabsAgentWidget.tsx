@@ -1677,8 +1677,9 @@ export default function ElevenLabsAgentWidget({
   // about Christopher?" is recognised only for someone just mentioned).
   const voiceAttentionRequestRef = useRef<VoiceAttentionRequest>({ kind: "summary" });
   const lastVoiceAttentionAssigneesRef = useRef<string[]>([]);
-  // P3 Step 3 / S3: what the last voice attention answer named, so "Tell me
-  // the rest" / "Continue" mean the items it left out, not a repeat.
+  // P3 Step 3 / S3: what the last voice attention answer GAVE the model (not
+  // proof of what Carson said aloud), so "Tell me the rest" / "Continue" can
+  // lead with the items it left out and still re-offer the earlier ones.
   const lastVoiceAttentionPageRef = useRef<AttentionPresentation["page"] | null>(null);
   // Second Brain stateful reasoning (2026-08-28) — typed channel only.
   // Accumulates evidence ids actually surfaced to the owner across the
@@ -7199,13 +7200,16 @@ export default function ElevenLabsAgentWidget({
               ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)
               : null;
             const isAttentionFollowUpTurn = voiceAttentionFollowUp !== null;
+            // A new attention question starts a new chain: an older answer
+            // (or one whose read failed) never shapes a later "the rest".
+            if (matchesAttentionIntent(message)) lastVoiceAttentionPageRef.current = null;
             const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;
             voiceAttentionRequestRef.current = matchesAttentionIntent(message)
               ? { kind: "summary" }
               : voiceAttentionFollowUp?.kind === "rest"
                 ? {
                     kind: "rest",
-                    alreadyNamedIds: lastVoiceAttentionPage?.namedIds ?? [],
+                    previouslyGivenIds: lastVoiceAttentionPage?.givenIds ?? [],
                     person: lastVoiceAttentionPage && lastVoiceAttentionPage.remaining > 0 ? lastVoiceAttentionPage.person : null,
                   }
                 : voiceAttentionFollowUp ?? { kind: "summary" };

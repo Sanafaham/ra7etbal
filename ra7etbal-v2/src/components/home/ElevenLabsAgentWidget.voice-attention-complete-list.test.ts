@@ -47,16 +47,22 @@ describe("voice attention: complete lists and person follow-ups reach the model"
     expect(remember).toBeGreaterThan(turnCheck);
   });
 
-  it("'the rest' leaves out what the last answer named; it stays with a person only while that person's list is split", () => {
+  it("'the rest' starts from what the last answer gave the model; it stays with a person only while that person's list is split", () => {
     const user = between("const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;", "attentionIntentForCurrentTranscriptRef.current =\n");
     expect(user).toContain('voiceAttentionFollowUp?.kind === "rest"');
-    expect(user).toContain("alreadyNamedIds: lastVoiceAttentionPage?.namedIds ?? [],");
+    expect(user).toContain("previouslyGivenIds: lastVoiceAttentionPage?.givenIds ?? [],");
     expect(user).toContain("person: lastVoiceAttentionPage && lastVoiceAttentionPage.remaining > 0 ? lastVoiceAttentionPage.person : null,");
     // The opening question is always the summary.
     expect(user).toContain('voiceAttentionRequestRef.current = matchesAttentionIntent(message)\n              ? { kind: "summary" }');
   });
 
-  it("what was named is forgotten with the session, everywhere the request resets", () => {
+  it("REVIEW FINDING: a new attention question starts a new chain, so an older or failed answer never shapes 'the rest'", () => {
+    const reset = SOURCE.indexOf("if (matchesAttentionIntent(message)) lastVoiceAttentionPageRef.current = null;");
+    expect(reset).toBeGreaterThan(-1);
+    expect(reset).toBeLessThan(SOURCE.indexOf("const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;"));
+  });
+
+  it("what was given is forgotten with the session, everywhere the request resets", () => {
     expect((SOURCE.match(/voiceAttentionRequestRef\.current = \{ kind: "summary" \};\n\s*lastVoiceAttentionPageRef\.current = null;/g) ?? []).length).toBe(3);
   });
 
