@@ -113,9 +113,19 @@ Goal: verify the real Production "What needs my attention?" journey end to end �
 - **S2b — recovery of the three captures wrongly marked on 2026-08-24 (`ec7457e7`, `3ae6ac9a`, `7c7816de`): CLOSED / PRODUCTION VERIFIED** (2026-10-08). Owner-authorized data repair COMPLETED / DATABASE VERIFIED; capture-presentation correction (PR #451) MERGED, DEPLOYED, PRODUCTION VERIFIED. See the S2b section below.
 - **S3 — attention-summary live-item evidence / stale session-context risk: ACTIVE / OPEN** (started 2026-10-09).
   - **Investigation:** typed PASS (names come from a live, owner-scoped server read on every turn, with no session context). Legacy voice FAIL: the live voice result was counts only, so spoken names, and names in follow-up bubbles, came from the session-start `{{ra7etbal_state}}` list, which is never refreshed during a call. Production example: `conv_1501m3fmxeh4eknvqy7m07n55qat` (2026-09-26); the names spoken were still correct that day. Second Brain voice is not verified.
-  - **Correction:** draft PR #453, legacy voice only, NOT MERGED and NOT DEPLOYED. It names up to five live items with exact counts and "and N more", and answers item follow-ups from a fresh live read.
+  - **Correction:** PR #453, legacy voice only. It names up to five live items with exact counts and "and N more", and answers item follow-ups from a fresh live read.
+    - Merged as `41d8a189ad2f71ed26c112d37ad8771eb596ddc0`.
+    - The owner confirmed it READY and active in Production on 2026-10-09.
+    - The 2026-10-09 owner voice canary showed spoken answers sometimes omit information the bubble showed. Spoken-answer accuracy remains the open S3 work.
   - **Closes only after** a real Production voice canary.
   - **Recorded, not changed:** the existing classifier counts a reminder with `dismissed_at` set as open.
+- **Voice bubble removal (owner decision 2026-10-09): IMPLEMENTED, OPEN / awaiting owner acceptance, NOT MERGED, NOT DEPLOYED.**
+  - The default voice conversation bubbles and the transient "Carson heard" notice are removed.
+  - After a call, an optional "Show transcript" control, hidden by default, opens a session text record. It is labelled as possibly differing from speech.
+  - **Narrow S2 amendment, legacy voice only (owner-approved):** a legacy voice turn no longer marks captures surfaced, so they stay eligible for later answers.
+    - Typed S2 marking, existing timestamps and the S2b repair are unchanged.
+    - The server path is unchanged, so a Second Brain voice turn (not Production verified) still marks the captures in the server answer it speaks.
+  - S1, S2 and S2b otherwise remain CLOSED. This does not close S3.
 
 Still open alongside S1 and S2, separately and not in any slice above:
 - **Duplicate capture wording within one attention reply — OPEN** (owner-observed in the 2026-10-08 20:23 S2b canary). Not investigated.

@@ -74,8 +74,13 @@ describe("ElevenLabsAgentWidget — voice conversation history append (not repla
       "voiceConversation.length > 0 && (",
       "function MicIcon",
     );
-    expect(renderBlock).toContain("voiceConversation.map((turn, index) =>");
-    expect(renderBlock).toContain('turn.role === "user"');
+    // Voice bubble removal (owner decision 2026-10-09): the chronological
+    // list now renders inside the optional, hidden-by-default session text
+    // record (src/components/carson/CarsonVoiceSessionTextRecord.tsx).
+    expect(renderBlock).toContain("turns={voiceConversation}");
+    const record = readFileSync(join(__dirname, "../carson/CarsonVoiceSessionTextRecord.tsx"), "utf-8");
+    expect(record).toContain("turns.map((turn, index) =>");
+    expect(record).toContain('turn.role === "user"');
     // Same gate the old single lastCarsonMessage bubble required — visibility
     // behavior is unchanged, only what's shown once visible.
     const gateBlock = blockBetween(
