@@ -142,15 +142,21 @@ export function resolvePresentedAttentionCaptureIds({
 // P3 Step 3 / S3 — legacy voice follow-ups that ask for the items themselves.
 // Only meaningful straight after an attention answer (the caller gates on
 // that), exactly like matchesAttentionFollowUp. Voice-only: typed is unchanged.
-const VOICE_ATTENTION_LIST_FOLLOWUP_PATTERN =
-  /^\s*(?:(?:and|so|ok(?:ay)?)[,\s]+)?(?:which ones|what are they|tell me the rest(?: of them)?|what(?:'s| is| are) the rest(?: of them)?|the rest(?: of them)?|list them(?: all)?|name them)\s*[?.!]*\s*$/i;
+// "Which ones?" asks for every item; "Tell me the rest" / "What else?" /
+// "Continue" ask for the items the last answer did not name (2026-10-09
+// canary: after Christopher's items, "Tell me the rest" meant the others).
+const VOICE_ATTENTION_ALL_FOLLOWUP_PATTERN =
+  /^\s*(?:(?:and|so|ok(?:ay)?)[,\s]+)?(?:which ones|what are they|list them(?: all)?|name them(?: all)?|is that everything)\s*[?.!]*\s*$/i;
+const VOICE_ATTENTION_REST_FOLLOWUP_PATTERN =
+  /^\s*(?:(?:and|so|ok(?:ay)?)[,\s]+)?(?:tell me the rest(?: of them)?|what(?:'s| is| are) the rest(?: of them)?|the rest(?: of them)?|what else(?: is pending)?|anything else|continue|keep going|go on)\s*[?.!]*\s*$/i;
 const VOICE_ATTENTION_PERSON_FOLLOWUP_PATTERN =
   /^\s*(?:(?:and|so)[,\s]+)?(?:what about|how about|and)\s+([\p{L}][\p{L}\p{M}' -]{0,40}?)\s*[?.!]*\s*$/iu;
 
 /**
  * P3 Step 3 / S3 — what a legacy voice follow-up to an attention answer is
- * asking for, or null when it is not one. "What else?" / "Which ones?" /
- * "Tell me the rest" ask for every open item; "What about Christopher?" asks
+ * asking for, or null when it is not one. "Which ones?" asks for every open
+ * item; "Tell me the rest" / "What else?" / "Continue" for the items the last
+ * answer did not name (the caller supplies which); "What about Christopher?" asks
  * for one person, but only when that person had an open item in the last
  * live voice attention answer (lastAssignees), matched by full name or by an
  * unambiguous first name, so "What about dinner?" is never taken over. The
@@ -161,9 +167,8 @@ export function resolveVoiceAttentionFollowUp(
   lastAssignees: readonly string[],
 ): VoiceAttentionRequest | null {
   const text = utterance.replace(/[\u2018\u2019]/g, "'");
-  if (matchesAttentionFollowUp(text) || VOICE_ATTENTION_LIST_FOLLOWUP_PATTERN.test(text)) {
-    return { kind: "all" };
-  }
+  if (VOICE_ATTENTION_ALL_FOLLOWUP_PATTERN.test(text)) return { kind: "all" };
+  if (VOICE_ATTENTION_REST_FOLLOWUP_PATTERN.test(text) || matchesAttentionFollowUp(text)) return { kind: "rest" };
   const person = VOICE_ATTENTION_PERSON_FOLLOWUP_PATTERN.exec(text)?.[1]?.trim().toLowerCase();
   if (!person) return null;
   const byFirstName = lastAssignees.filter((assignee) => assignee.trim().toLowerCase().split(/\s+/)[0] === person);
