@@ -46,12 +46,13 @@ describe("legacy voice attention reads and names live items", () => {
 
   it("the live read is also given to the voice model, informational only, and never marks captures", () => {
     const prefetch = between("fetchVoiceAttentionPresentation(requestedView)\n", ".catch(() => {");
-    expect(prefetch).toContain("conversationRef.current?.sendContextualUpdate(");
-    // Only a successful whole view is offered as the full picture.
-    expect(prefetch).toContain('if (requestedView.kind === "person" || !presentation.evidenceOk) return;');
-    expect(prefetch.indexOf('if (requestedView.kind === "person"')).toBeLessThan(prefetch.indexOf("sendContextualUpdate("));
-    expect(prefetch).toContain("[Live attention check]");
-    expect(prefetch).toContain("The OPEN list given at the start of this session may be out of date.");
+    // 2026-10-09: a person view is sent too, labelled as that person's items
+    // only (the note text lives in fetchVoiceAttentionPresentation). Only a
+    // successful read is ever offered.
+    expect(prefetch).toContain("if (!presentation.evidenceOk || !presentation.contextNote) return;");
+    expect(prefetch).not.toContain('requestedView.kind === "person"');
+    expect(prefetch.indexOf("if (!presentation.evidenceOk")).toBeLessThan(prefetch.indexOf("sendContextualUpdate("));
+    expect(prefetch).toContain("conversationRef.current?.sendContextualUpdate(presentation.contextNote);");
     expect(prefetch).not.toContain("markAttentionCapturesSurfaced");
   });
 

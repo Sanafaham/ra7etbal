@@ -1514,6 +1514,8 @@
         "src/components/home/ElevenLabsAgentWidget.attention-surfaced-boundary.test.ts",
         "src/components/home/ElevenLabsAgentWidget.voice-attention-live-names.test.ts",
         "src/lib/carson-operations-center.voice-live-names.test.ts",
+        "src/lib/carson-operations-center.voice-complete-list.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.voice-attention-complete-list.test.ts",
         "src/components/home/ElevenLabsAgentWidget.voice-bubble-removal.test.ts",
         "src/components/carson/CarsonVoiceSessionTextRecord.test.tsx"
       ],

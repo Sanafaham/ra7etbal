@@ -135,40 +135,40 @@ async function liveLabels(): Promise<{ all: string[]; christopher: string[] }> {
   };
 }
 
+// P3 Step 3 / S3 (2026-10-09): voice names items in the owner's own wording,
+// not the shared shortened labels, and a waiting item carries its person.
 describe("voice summary names live items (S3-1/2)", () => {
   it("S3-1: the summary names live items with exact category counts", async () => {
     const { text } = await fetchVoiceAttentionPresentation();
     expect(text).toMatch(/^Nothing needs your direct decision right now\./);
     expect(text).toContain("Overdue reminders (7):");
     expect(text).toContain("Waiting on others (3):");
-    expect(namesIn(text, (await liveLabels()).all).length).toBeGreaterThan(0);
+    expect(text).toContain("Call Loulya");
   });
 
   it("S3-2: at most five names in a summary, every category named first, and 'and N more' for the rest", async () => {
     const { text } = await fetchVoiceAttentionPresentation();
     expect(VOICE_ATTENTION_NAME_LIMIT).toBe(5);
-    expect(namesIn(text, (await liveLabels()).all)).toHaveLength(5);
     // Round-robin: 3 overdue + 2 waiting names, so 4 overdue and 1 waiting remain.
-    expect(text).toContain("; and 4 more.");
-    expect(text).toContain("; and 1 more.");
-    expect(text).toMatch(/Waiting on others \(3\): [^.;]+; [^.;]+; and 1 more\./);
+    expect(text).toBe(
+      "Nothing needs your direct decision right now. " +
+        "Overdue reminders (7): Call Loulya; Check my mailbox; Check my email; and 4 more. " +
+        "Waiting on others (3): Christopher: bring the car around; Christopher: Make a pizza for dinner; and 1 more.",
+    );
   });
 
   it("names every item and adds no 'more' when five or fewer exist", async () => {
     mocks.listTasks.mockResolvedValue([overdue("r1", "Call Loulya"), delegation("d1", "bring the car around.", "Christopher")]);
     const { text } = await fetchVoiceAttentionPresentation();
-    const labels = await liveLabels();
-    expect(labels.all).toHaveLength(2);
-    expect(text).toContain(`Overdue reminders (1): ${labels.all[0]}.`);
-    expect(text).toContain(`Waiting on others (1): ${labels.all[1]}.`);
+    expect(text).toContain("Overdue reminders (1): Call Loulya.");
+    expect(text).toContain("Waiting on others (1): Christopher: bring the car around.");
     expect(text).not.toContain("more");
   });
 
   it("names upcoming reminders as their own category", async () => {
     mocks.listTasks.mockResolvedValue([task("u1", { description: "Dentist", due_at: ahead(2) })]);
     const { text } = await fetchVoiceAttentionPresentation();
-    const labels = await liveLabels();
-    expect(text).toBe(`Nothing needs your direct decision right now. Upcoming reminders (1): ${labels.all[0]}.`);
+    expect(text).toBe("Nothing needs your direct decision right now. Upcoming reminders (1): Dentist.");
   });
 });
 
@@ -176,25 +176,21 @@ describe("follow-ups re-read live evidence (S3-3/4)", () => {
   it("S3-3: 'all' names every open item from a fresh read", async () => {
     const { text } = await fetchVoiceAttentionPresentation({ kind: "all" });
     expect(mocks.listTasks).toHaveBeenCalledTimes(1);
-    const labels = await liveLabels();
-    expect(labels.all).toHaveLength(10);
-    expect(namesIn(text, labels.all)).toHaveLength(10);
+    for (const name of ["Call Loulya", "Check my mailbox", "Check my email", "Pay bills", "Call the doctor", "Renew the parking permit", "Water the plants", "Christopher: bring the car around", "Christopher: Make a pizza for dinner", "Grace: Collect the dry cleaning"]) {
+      expect(text).toContain(name);
+    }
     expect(text).not.toContain("more");
   });
 
   it("S3-3: a person view lists only that person's open items", async () => {
     const { text, captureIds } = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
-    const labels = await liveLabels();
-    expect(labels.christopher).toHaveLength(2);
-    expect(text).toBe(`Open with Christopher (2): ${labels.christopher.join("; ")}.`);
+    expect(text).toBe("Open with Christopher (2): bring the car around; Make a pizza for dinner.");
     expect(captureIds).toEqual([]);
   });
 
   it("S3-4: changes during an active session show on the next read, never the earlier list", async () => {
     const first = await fetchVoiceAttentionPresentation({ kind: "all" });
-    const before = await liveLabels();
     expect(first.text).toContain("Overdue reminders (7):");
-    expect(before.christopher).toHaveLength(2);
     // Mid-session: Christopher confirms the car, Loulya is called, a new reminder lands.
     mocks.listTasks.mockResolvedValue([
       ...SEPT_26.filter((t) => t.id !== "r1" && t.id !== "d1"),
@@ -203,17 +199,13 @@ describe("follow-ups re-read live evidence (S3-3/4)", () => {
       overdue("r8", "Book the vet", 1),
     ]);
     const second = await fetchVoiceAttentionPresentation({ kind: "all" });
-    const after = await liveLabels();
-    expect(after.all).toHaveLength(9);
-    expect(namesIn(second.text, after.all)).toHaveLength(9);
     expect(second.text).toContain("Overdue reminders (7):");
+    expect(second.text).toContain("Book the vet");
     expect(second.text).toContain("Waiting on others (2):");
-    // The confirmed delegation's label is gone from the live labels and the text.
-    const removed = before.christopher.filter((label) => !after.christopher.includes(label));
-    expect(removed).toHaveLength(1);
-    expect(second.text).not.toContain(removed[0]);
+    expect(second.text).not.toContain("Call Loulya");
+    expect(second.text).not.toContain("bring the car around");
     const person = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
-    expect(person.text).toBe(`Open with Christopher (1): ${after.christopher[0]}.`);
+    expect(person.text).toBe("Open with Christopher (1): Make a pizza for dinner.");
   });
 
   it("S3-5: completed and archived items are never named as open", async () => {
@@ -224,10 +216,8 @@ describe("follow-ups re-read live evidence (S3-3/4)", () => {
       task("x4", { description: "Done delegation", type: "delegation", assigned_to: "Christopher", status: "done", confirmed_at: ago(1) }),
     ]);
     const { text } = await fetchVoiceAttentionPresentation({ kind: "all" });
-    const labels = await liveLabels();
-    expect(labels.all).toHaveLength(1);
-    expect(text).toBe(`Nothing needs your direct decision right now. Overdue reminders (1): ${labels.all[0]}.`);
-    for (const gone of ["Done reminder", "Archived reminder", "Done delegation", "done reminder", "archived reminder"]) expect(text).not.toContain(gone);
+    expect(text).toBe("Nothing needs your direct decision right now. Overdue reminders (1): Call Loulya.");
+    for (const gone of ["Done reminder", "Archived reminder", "Done delegation"]) expect(text).not.toContain(gone);
   });
 
   it("a person with nothing open now gets a truthful 'nothing open', not an old list", async () => {
@@ -319,10 +309,18 @@ describe("unchanged behaviour (S3-8/9)", () => {
 
 describe("resolveVoiceAttentionFollowUp (voice-only follow-up recognition)", () => {
   const assignees = ["Christopher", "Grace"];
-  it.each(["Which ones?", "which ones", "Tell me the rest", "Tell me the rest of them", "What are they?", "What are the rest?", "What\u2019s the rest?", "And the rest?", "List them all.", "What else?", "Is that everything?"])(
+  it.each(["Which ones?", "which ones", "What are they?", "List them all.", "Name them.", "Is that everything?"])(
     "'%s' asks for every item",
     (utterance) => {
       expect(resolveVoiceAttentionFollowUp(utterance, assignees)).toEqual({ kind: "all" });
+    },
+  );
+
+  // 2026-10-09: "Tell me the rest" means the items not yet named, not a repeat.
+  it.each(["Tell me the rest", "Tell me the rest of them", "What are the rest?", "What\u2019s the rest?", "And the rest?", "What else?", "Anything else?", "Continue.", "Keep going", "Go on."])(
+    "'%s' asks for the items not yet named",
+    (utterance) => {
+      expect(resolveVoiceAttentionFollowUp(utterance, assignees)).toEqual({ kind: "rest" });
     },
   );
 

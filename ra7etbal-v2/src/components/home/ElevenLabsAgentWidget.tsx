@@ -1677,6 +1677,9 @@ export default function ElevenLabsAgentWidget({
   // about Christopher?" is recognised only for someone just mentioned).
   const voiceAttentionRequestRef = useRef<VoiceAttentionRequest>({ kind: "summary" });
   const lastVoiceAttentionAssigneesRef = useRef<string[]>([]);
+  // P3 Step 3 / S3: what the last voice attention answer named, so "Tell me
+  // the rest" / "Continue" mean the items it left out, not a repeat.
+  const lastVoiceAttentionPageRef = useRef<AttentionPresentation["page"] | null>(null);
   // Second Brain stateful reasoning (2026-08-28) — typed channel only.
   // Accumulates evidence ids actually surfaced to the owner across the
   // whole active attention conversation (deduped), sent as non-authoritative
@@ -5971,6 +5974,7 @@ export default function ElevenLabsAgentWidget({
       lastTurnWasAttentionIntentRef.current = false;
       lastVoiceAttentionAssigneesRef.current = [];
       voiceAttentionRequestRef.current = { kind: "summary" };
+      lastVoiceAttentionPageRef.current = null;
       previouslySurfacedEvidenceIdsRef.current = [];
       priorAttentionObjectiveRef.current = null;
 
@@ -6782,6 +6786,7 @@ export default function ElevenLabsAgentWidget({
             // not the owner (P3 Step 3 / S2).
             let toolCaptureIds: AttentionPresentation["captureIds"] = [];
             let toolAssignees: AttentionPresentation["assignees"];
+            let toolPresentation: AttentionPresentation | null = null;
             const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, async () => {
               // Voice only (P3 Step 3 / S3). This clientTool is shared with the
               // typed textOnly session, whose output must stay unchanged.
@@ -6791,7 +6796,11 @@ export default function ElevenLabsAgentWidget({
                   : await fetchAttentionPresentation();
               toolCaptureIds = presentation.captureIds;
               toolAssignees = presentation.assignees;
-              return presentation.text;
+              toolPresentation = presentation;
+              // The model gets the voice text plus how to use it (name every
+              // item of a list request); the session text record keeps the
+              // plain text (below).
+              return presentation.modelText ?? presentation.text;
             });
             // Capture the tool's OWN real return value as this turn's
             // grounded result too — not just the prefetch kicked off on the
@@ -6807,7 +6816,13 @@ export default function ElevenLabsAgentWidget({
               .then((text) => {
                 if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
                 if (typeof text === "string") {
-                  attentionGuardResultRef.current = { text, captureIds: toolCaptureIds, assignees: toolAssignees };
+                  const grounded = toolPresentation as AttentionPresentation | null;
+                  attentionGuardResultRef.current = {
+                    text: grounded?.text ?? text,
+                    captureIds: toolCaptureIds,
+                    assignees: toolAssignees,
+                  };
+                  if (grounded?.evidenceOk && grounded.page) lastVoiceAttentionPageRef.current = grounded.page;
                 }
               })
               .catch(() => {});
@@ -7184,9 +7199,16 @@ export default function ElevenLabsAgentWidget({
               ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)
               : null;
             const isAttentionFollowUpTurn = voiceAttentionFollowUp !== null;
+            const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;
             voiceAttentionRequestRef.current = matchesAttentionIntent(message)
               ? { kind: "summary" }
-              : voiceAttentionFollowUp ?? { kind: "summary" };
+              : voiceAttentionFollowUp?.kind === "rest"
+                ? {
+                    kind: "rest",
+                    alreadyNamedIds: lastVoiceAttentionPage?.namedIds ?? [],
+                    person: lastVoiceAttentionPage && lastVoiceAttentionPage.remaining > 0 ? lastVoiceAttentionPage.person : null,
+                  }
+                : voiceAttentionFollowUp ?? { kind: "summary" };
             attentionIntentForCurrentTranscriptRef.current =
               !secondBrainVoiceEnabled && (matchesAttentionIntent(message) || isAttentionFollowUpTurn);
             if (attentionIntentForCurrentTranscriptRef.current) {
@@ -7208,17 +7230,14 @@ export default function ElevenLabsAgentWidget({
                   if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
                   attentionGuardResultRef.current = presentation;
                   // P3 Step 3 / S3: give the voice model this live read too,
-                  // so later wording in the call is not taken from the stale
-                  // session-start list. Informational only; never triggers a
-                  // reply and never marks captures. Only a successful whole
-                  // view: a person view or a failed read is not the full
-                  // picture and must not be offered as one.
-                  if (requestedView.kind === "person" || !presentation.evidenceOk) return;
-                  conversationRef.current?.sendContextualUpdate(
-                    `[Live attention check] ${presentation.text} ` +
-                      "Use only this live result for which items are open, and for their names and counts. " +
-                      "The OPEN list given at the start of this session may be out of date.",
-                  );
+                  // so its wording is not taken from the stale session-start
+                  // list. A background note: not binding, may arrive after
+                  // the model has started speaking, never triggers a reply,
+                  // never marks captures. Only after a successful read; a
+                  // person view is labelled as that person's items only.
+                  if (!presentation.evidenceOk || !presentation.contextNote) return;
+                  lastVoiceAttentionPageRef.current = presentation.page ?? null;
+                  conversationRef.current?.sendContextualUpdate(presentation.contextNote);
                 })
                 .catch(() => {
                   // Best-effort only — no correction available is a real,
@@ -7568,6 +7587,7 @@ export default function ElevenLabsAgentWidget({
           lastTurnWasAttentionIntentRef.current = false;
           lastVoiceAttentionAssigneesRef.current = [];
           voiceAttentionRequestRef.current = { kind: "summary" };
+          lastVoiceAttentionPageRef.current = null;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setSessionEndedMsg("Session ended.");
@@ -7636,6 +7656,7 @@ export default function ElevenLabsAgentWidget({
           lastTurnWasAttentionIntentRef.current = false;
           lastVoiceAttentionAssigneesRef.current = [];
           voiceAttentionRequestRef.current = { kind: "summary" };
+          lastVoiceAttentionPageRef.current = null;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
