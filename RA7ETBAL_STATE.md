@@ -122,7 +122,9 @@ Goal: verify the real Production "What needs my attention?" journey end to end â
 - **Voice bubble removal (owner decision 2026-10-09): IMPLEMENTED, OPEN / awaiting owner acceptance, NOT MERGED, NOT DEPLOYED.**
   - The default voice conversation bubbles and the transient "Carson heard" notice are removed.
   - After a call, an optional "Show transcript" control, hidden by default, opens a session text record. It is labelled as possibly differing from speech.
-  - **Narrow S2 amendment, legacy voice only (owner-approved):** a voice turn no longer marks captures surfaced, so they stay eligible for later answers. Typed S2 marking, server marking, existing timestamps and the S2b repair are unchanged.
+  - **Narrow S2 amendment, legacy voice only (owner-approved):** a legacy voice turn no longer marks captures surfaced, so they stay eligible for later answers.
+    - Typed S2 marking, existing timestamps and the S2b repair are unchanged.
+    - The server path is unchanged, so a Second Brain voice turn (not Production verified) still marks the captures in the server answer it speaks.
   - S1, S2 and S2b otherwise remain CLOSED. This does not close S3.
 
 Still open alongside S1 and S2, separately and not in any slice above:

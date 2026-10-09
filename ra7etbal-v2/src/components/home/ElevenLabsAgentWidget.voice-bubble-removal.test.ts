@@ -47,6 +47,9 @@ describe("no default voice bubbles", () => {
     expect(gate).toContain("turns={voiceConversation}");
     expect(gate).toContain("shown={showVoiceTranscript}");
     expect(SOURCE.split("<CarsonVoiceSessionTextRecord").length - 1).toBe(1);
+    // A typed start that fails before the session reset collapses the record too.
+    const typedStartError = between("? await ensureTypedHistoryLoaded()", "activeChannelRef.current = requestedChannel;");
+    expect(typedStartError).toContain("setShowVoiceTranscript(false);");
   });
 });
 

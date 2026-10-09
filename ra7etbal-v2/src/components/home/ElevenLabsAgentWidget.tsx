@@ -6073,6 +6073,7 @@ export default function ElevenLabsAgentWidget({
         : [];
     } catch (err) {
       startInFlightRef.current = false;
+      setShowVoiceTranscript(false);
       setStatus("error");
       setErrorMsg(`Couldn't load the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
       return;
