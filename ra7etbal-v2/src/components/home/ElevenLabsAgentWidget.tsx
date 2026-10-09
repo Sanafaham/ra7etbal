@@ -2,6 +2,7 @@ import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CarsonTypedChat from "./CarsonTypedChat";
 import CarsonVisualCore from "../carson/CarsonVisualCore";
+import CarsonVoiceSessionTextRecord from "../carson/CarsonVoiceSessionTextRecord";
 import {
   deriveCarsonVisualState,
   shouldShowCarsonVoiceTranscript,
@@ -1033,7 +1034,9 @@ export default function ElevenLabsAgentWidget({
   // every one of its reset sites (new turn, teardown, disconnect, error).
   const carsonTranscriptTurnStateRef = useRef<CarsonTranscriptTurnState>("pending");
   /** Latest finalized user transcript, shown briefly for local voice diagnostics only. */
-  const [lastUserTranscript, setLastUserTranscript] = useState<string | null>(null);
+  // Voice bubble removal (owner decision 2026-10-09): no longer displayed;
+  // the setter is kept so every existing transcript-timing path is unchanged.
+  const [, setLastUserTranscript] = useState<string | null>(null);
   // Chronological voice turn history for the current session, mirrored from
   // sessionTranscriptRef (2026-09-02 — the display-only-shows-latest-turn
   // defect: lastCarsonMessage/lastUserTranscript above are scalars that get
@@ -1045,6 +1048,13 @@ export default function ElevenLabsAgentWidget({
   // drift from what sessionTranscriptRef (and Carson's own memory
   // summarization) considers the turn to be.
   const [voiceConversation, setVoiceConversation] = useState<TranscriptMessage[]>([]);
+  // Voice bubble removal (owner decision 2026-10-09): the voice conversation is
+  // no longer shown by default. After a call the owner can open it on request
+  // as a session text record. Reset with every new session. Because voice no
+  // longer shows the grounded attention text, the S2 capture mark at the
+  // presentation boundary is skipped for voice (requestedChannel !== "voice"):
+  // a capture is never marked surfaced from a voice turn. Typed is unchanged.
+  const [showVoiceTranscript, setShowVoiceTranscript] = useState(false);
   const userTranscriptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
@@ -6168,6 +6178,7 @@ export default function ElevenLabsAgentWidget({
     setLastCarsonMessage(null);
     setLastUserTranscript(null);
     setVoiceConversation([]);
+    setShowVoiceTranscript(false);
     if (userTranscriptTimerRef.current) {
       clearTimeout(userTranscriptTimerRef.current);
       userTranscriptTimerRef.current = null;
@@ -7412,7 +7423,7 @@ export default function ElevenLabsAgentWidget({
               grounded: attentionGuardResultRef.current,
               displayedMessage: finalDisplayMessage,
             });
-            if (presentedAttentionCaptureIds.length > 0 && attentionGuardResultRef.current) {
+            if (requestedChannel !== "voice" && presentedAttentionCaptureIds.length > 0 && attentionGuardResultRef.current) {
               attentionGuardResultRef.current = { ...attentionGuardResultRef.current, captureIds: [] };
               markAttentionCapturesSurfaced(presentedAttentionCaptureIds);
             }
@@ -8994,24 +9005,13 @@ export default function ElevenLabsAgentWidget({
         </div>
       )}
 
-      {/* Unchanged from before this fix — the brief, ephemeral "Carson
-          heard" notice used for the invalid-capture repeat-prompt case
-          (see CARSON_REPEAT_PROMPT above), where nothing is pushed onto
-          sessionTranscriptRef/voiceConversation since it was never a real
-          captured utterance. Redundant with voiceConversation's own user
-          line on an ordinary valid turn, same as it always was. */}
-      {channel === "voice" && status !== "connected" && lastUserTranscript && (
-        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink">
-          Carson heard: “{lastUserTranscript}”
-        </p>
-      )}
-
-      {/* Full chronological voice turn history for this session (2026-09-02
-          — previously only the single latest user line + latest Carson line
-          were shown, so a second exchange replaced the first on screen
-          instead of appending underneath it). Only rendered once there's
-          something to show, under the same conditions the single bubbles
-          used to require. */}
+      {/* Voice bubble removal (owner decision 2026-10-09): the transient
+          "Carson heard" notice and the voice conversation bubbles are no
+          longer shown during or after a call. Once a call has ended, the
+          owner may open the same history on request as a session text
+          record. Display only: transcript capture (sessionTranscriptRef),
+          memory, tools and persistence are unchanged, and opening it marks
+          nothing surfaced. */}
       {channel === "voice" &&
         shouldShowCarsonVoiceTranscript({
           status,
@@ -9019,22 +9019,11 @@ export default function ElevenLabsAgentWidget({
           hasMessage: Boolean(lastCarsonMessage),
         }) &&
         voiceConversation.length > 0 && (
-          <div className="mt-2 flex max-h-[280px] max-w-[280px] flex-col gap-1.5 overflow-y-auto">
-            {voiceConversation.map((turn, index) =>
-              turn.role === "user" ? (
-                <p key={index} className="truncate px-2 text-[11px] text-ink">
-                  Carson heard: “{turn.message}”
-                </p>
-              ) : (
-                <div
-                  key={index}
-                  className="rounded-2xl border border-border bg-surface px-3.5 py-2.5 shadow-sm"
-                >
-                  <p className="text-[12px] leading-relaxed text-ink">{turn.message}</p>
-                </div>
-              ),
-            )}
-          </div>
+          <CarsonVoiceSessionTextRecord
+            turns={voiceConversation}
+            shown={showVoiceTranscript}
+            onToggle={() => setShowVoiceTranscript((shown) => !shown)}
+          />
         )}
     </div>
   );

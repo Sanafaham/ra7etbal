@@ -1513,7 +1513,9 @@
         "api/carson-turn.attention-surfaced.test.js",
         "src/components/home/ElevenLabsAgentWidget.attention-surfaced-boundary.test.ts",
         "src/components/home/ElevenLabsAgentWidget.voice-attention-live-names.test.ts",
-        "src/lib/carson-operations-center.voice-live-names.test.ts"
+        "src/lib/carson-operations-center.voice-live-names.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.voice-bubble-removal.test.ts",
+        "src/components/carson/CarsonVoiceSessionTextRecord.test.tsx"
       ],
       "protected_suite": false,
       "golden_journey_required": false,

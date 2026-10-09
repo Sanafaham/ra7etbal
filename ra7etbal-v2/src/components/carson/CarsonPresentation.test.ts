@@ -17,14 +17,19 @@ const globalsSource = readFileSync(join(__dirname, "../../styles/globals.css"), 
 describe("Carson V1 final presentation", () => {
   it("hides both live voice transcript surfaces without removing their stored state", () => {
     expect(widgetSource).toContain("const [lastCarsonMessage, setLastCarsonMessage]");
-    expect(widgetSource).toContain("const [lastUserTranscript, setLastUserTranscript]");
-    expect(widgetSource).toContain('channel === "voice" && status !== "connected" && lastUserTranscript');
+    // Voice bubble removal (owner decision 2026-10-09): the transient "Carson
+    // heard" notice is gone; its setter is kept so transcript timing is unchanged.
+    expect(widgetSource).toContain("const [, setLastUserTranscript] = useState<string | null>(null);");
+    expect(widgetSource).not.toContain("Carson heard: “{lastUserTranscript}”");
     expect(widgetSource).toContain("shouldShowCarsonVoiceTranscript({");
   });
 
   it("uses the approved dark surface tokens whenever the finalized voice response is displayed", () => {
-    expect(widgetSource).toContain("rounded-2xl border border-border bg-surface");
-    expect(widgetSource).toContain("text-[12px] leading-relaxed text-ink");
+    // Voice bubble removal (owner decision 2026-10-09): the voice response is
+    // now shown only in the optional session text record.
+    const recordSource = readFileSync(join(__dirname, "CarsonVoiceSessionTextRecord.tsx"), "utf8");
+    expect(recordSource).toContain("rounded-2xl border border-border bg-surface");
+    expect(recordSource).toContain("text-[12px] leading-relaxed text-ink");
     expect(widgetSource).not.toContain("text-[12px] leading-relaxed text-text-soft");
     expect(widgetSource).not.toContain("border border-charcoal/10 bg-white/90");
   });
