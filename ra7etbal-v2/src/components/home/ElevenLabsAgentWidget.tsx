@@ -71,7 +71,6 @@ import {
   fetchVoiceAttentionPresentation,
   markAttentionCapturesSurfaced,
   type AttentionPresentation,
-  type VoiceAttentionRequest,
 } from "../../lib/carson-operations-center";
 import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
 import { lookupCommunicationHistory } from "../../lib/carson-communication-history";
@@ -154,7 +153,11 @@ import {
   matchesAttentionIntent,
   resolveAttentionGuardedMessage,
   resolvePresentedAttentionCaptureIds,
-  resolveVoiceAttentionFollowUp,
+  beginVoiceAttentionTurn,
+  recordVoiceAttentionRead,
+  settleVoiceAttentionTurn,
+  INITIAL_VOICE_ATTENTION_CHAIN,
+  type VoiceAttentionChainState,
   ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "../../lib/carson-attention-intent-guard";
 import { reduceCarsonTranscriptTurn, type CarsonTranscriptTurnState } from "../../lib/carson-transcript-turn-state";
@@ -1671,16 +1674,12 @@ export default function ElevenLabsAgentWidget({
   // a FAILED-to-ground first turn still gets its own fresh, independent
   // grounding attempt, instead of inheriting the first turn's failure.
   const lastTurnWasAttentionIntentRef = useRef(false);
-  // P3 Step 3 / S3 — legacy voice only. What this turn's attention read
-  // should show (summary, every item, or one person's items), and the people
-  // with open items in the last grounded voice attention answer (so "What
-  // about Christopher?" is recognised only for someone just mentioned).
-  const voiceAttentionRequestRef = useRef<VoiceAttentionRequest>({ kind: "summary" });
-  const lastVoiceAttentionAssigneesRef = useRef<string[]>([]);
-  // P3 Step 3 / S3: what the last voice attention answer GAVE the model (not
-  // proof of what Carson said aloud), so "Tell me the rest" / "Continue" can
-  // lead with the items it left out and still re-offer the earlier ones.
-  const lastVoiceAttentionPageRef = useRef<AttentionPresentation["page"] | null>(null);
+  // P3 Step 3 / S3 — legacy voice attention follow-up chain, one turn at a
+  // time (carson-attention-intent-guard.ts): this turn's request (summary,
+  // every item, the rest, or one person's items), whether the chain continues,
+  // the people in the last successful read, and what that read GAVE Carson
+  // (not proof of what it said). Keyed to each turn's turnOperationId.
+  const voiceAttentionChainRef = useRef<VoiceAttentionChainState>(INITIAL_VOICE_ATTENTION_CHAIN);
   // Second Brain stateful reasoning (2026-08-28) — typed channel only.
   // Accumulates evidence ids actually surfaced to the owner across the
   // whole active attention conversation (deduped), sent as non-authoritative
@@ -5973,9 +5972,7 @@ export default function ElevenLabsAgentWidget({
       attentionGuardResultRef.current = null;
       lastAttentionTurnWasGroundedRef.current = false;
       lastTurnWasAttentionIntentRef.current = false;
-      lastVoiceAttentionAssigneesRef.current = [];
-      voiceAttentionRequestRef.current = { kind: "summary" };
-      lastVoiceAttentionPageRef.current = null;
+      voiceAttentionChainRef.current = INITIAL_VOICE_ATTENTION_CHAIN;
       previouslySurfacedEvidenceIdsRef.current = [];
       priorAttentionObjectiveRef.current = null;
 
@@ -6793,7 +6790,7 @@ export default function ElevenLabsAgentWidget({
               // typed textOnly session, whose output must stay unchanged.
               const presentation =
                 requestedChannel === "voice"
-                  ? await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)
+                  ? await fetchVoiceAttentionPresentation(voiceAttentionChainRef.current.request)
                   : await fetchAttentionPresentation();
               toolCaptureIds = presentation.captureIds;
               toolAssignees = presentation.assignees;
@@ -6823,7 +6820,15 @@ export default function ElevenLabsAgentWidget({
                     captureIds: toolCaptureIds,
                     assignees: toolAssignees,
                   };
-                  if (grounded?.evidenceOk && grounded.page) lastVoiceAttentionPageRef.current = grounded.page;
+                  // Voice: a complete read Carson asked for keeps the chain
+                  // alive, even on a turn the app could not parse (S3,
+                  // 2026-10-10). Ignored unless this is still the current turn.
+                  if (requestedChannel === "voice" && grounded && requestTurnOperationId) {
+                    voiceAttentionChainRef.current = recordVoiceAttentionRead(voiceAttentionChainRef.current, {
+                      turnId: requestTurnOperationId,
+                      presentation: grounded,
+                    });
+                  }
                 }
               })
               .catch(() => {});
@@ -7196,25 +7201,17 @@ export default function ElevenLabsAgentWidget({
             // ("What else?", "Which ones?", "Tell me the rest", "What about
             // Christopher?") is re-read live, never answered from the
             // session-start {{ra7etbal_state}} list.
-            const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current
-              ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)
-              : null;
-            const isAttentionFollowUpTurn = voiceAttentionFollowUp !== null;
-            // A new attention question starts a new chain: an older answer
-            // (or one whose read failed) never shapes a later "the rest".
-            if (matchesAttentionIntent(message)) lastVoiceAttentionPageRef.current = null;
-            const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;
-            voiceAttentionRequestRef.current = matchesAttentionIntent(message)
-              ? { kind: "summary" }
-              : voiceAttentionFollowUp?.kind === "rest"
-                ? {
-                    kind: "rest",
-                    previouslyGivenIds: lastVoiceAttentionPage?.givenIds ?? [],
-                    person: lastVoiceAttentionPage && lastVoiceAttentionPage.remaining > 0 ? lastVoiceAttentionPage.person : null,
-                  }
-                : voiceAttentionFollowUp ?? { kind: "summary" };
-            attentionIntentForCurrentTranscriptRef.current =
-              !secondBrainVoiceEnabled && (matchesAttentionIntent(message) || isAttentionFollowUpTurn);
+            // P3 Step 3 / S3 (2026-10-10): the chain continues after a
+            // recognised turn OR a complete attention read Carson asked for;
+            // inside it, an unparsed follow-up gets the complete list if
+            // Carson calls the tool. A new attention question starts a new
+            // chain. Typed user messages return earlier and never reach this.
+            voiceAttentionChainRef.current = beginVoiceAttentionTurn(voiceAttentionChainRef.current, {
+              turnId: turnOperationId,
+              utterance: message,
+              enabled: !secondBrainVoiceEnabled,
+            });
+            attentionIntentForCurrentTranscriptRef.current = voiceAttentionChainRef.current.recognised;
             if (attentionIntentForCurrentTranscriptRef.current) {
               const requestGeneration = sessionGenerationRef.current;
               // Turn-scoped, not just session-scoped: sessionGenerationRef only
@@ -7227,7 +7224,7 @@ export default function ElevenLabsAgentWidget({
               // own turnOperationId check).
               const requestTurnOperationId = turnOperationId;
               // Prefetch never marks captures surfaced (P3 Step 3 / S2).
-              const requestedView = voiceAttentionRequestRef.current;
+              const requestedView = voiceAttentionChainRef.current.request;
               fetchVoiceAttentionPresentation(requestedView)
                 .then((presentation) => {
                   if (sessionGenerationRef.current !== requestGeneration) return;
@@ -7239,8 +7236,11 @@ export default function ElevenLabsAgentWidget({
                   // the model has started speaking, never triggers a reply,
                   // never marks captures. Only after a successful read; a
                   // person view is labelled as that person's items only.
+                  voiceAttentionChainRef.current = recordVoiceAttentionRead(voiceAttentionChainRef.current, {
+                    turnId: requestTurnOperationId,
+                    presentation,
+                  });
                   if (!presentation.evidenceOk || !presentation.contextNote) return;
-                  lastVoiceAttentionPageRef.current = presentation.page ?? null;
                   conversationRef.current?.sendContextualUpdate(presentation.contextNote);
                 })
                 .catch(() => {
@@ -7308,8 +7308,11 @@ export default function ElevenLabsAgentWidget({
             lastAttentionTurnWasGroundedRef.current =
               attentionIntentForCurrentTranscriptRef.current &&
               attentionGuardResultRef.current != null;
-            if (attentionIntentForCurrentTranscriptRef.current && attentionGuardResultRef.current?.assignees) {
-              lastVoiceAttentionAssigneesRef.current = attentionGuardResultRef.current.assignees;
+            // Voice: settle whether the attention chain continues into the
+            // next turn (an unrelated turn ends it). May run more than once
+            // per turn; the latest call wins.
+            if (requestedChannel === "voice") {
+              voiceAttentionChainRef.current = settleVoiceAttentionTurn(voiceAttentionChainRef.current);
             }
             // Set unconditionally (not gated on grounding success) — this is
             // what allows a follow-up to a failed-to-ground turn to still get
@@ -7589,9 +7592,7 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
-          lastVoiceAttentionAssigneesRef.current = [];
-          voiceAttentionRequestRef.current = { kind: "summary" };
-          lastVoiceAttentionPageRef.current = null;
+          voiceAttentionChainRef.current = INITIAL_VOICE_ATTENTION_CHAIN;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setSessionEndedMsg("Session ended.");
@@ -7658,9 +7659,7 @@ export default function ElevenLabsAgentWidget({
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
           lastTurnWasAttentionIntentRef.current = false;
-          lastVoiceAttentionAssigneesRef.current = [];
-          voiceAttentionRequestRef.current = { kind: "summary" };
-          lastVoiceAttentionPageRef.current = null;
+          voiceAttentionChainRef.current = INITIAL_VOICE_ATTENTION_CHAIN;
           previouslySurfacedEvidenceIdsRef.current = [];
           priorAttentionObjectiveRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");

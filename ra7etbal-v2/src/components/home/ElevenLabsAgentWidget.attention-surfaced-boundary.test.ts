@@ -32,7 +32,7 @@ describe("last_surfaced_at is written only at the owner-visible bubble", () => {
 
   it("S2-C: the get_items_needing_attention tool result (sent to the model) never marks captures surfaced", () => {
     const tool = between("get_items_needing_attention: (params", "get_commitment_history:");
-    expect(tool).toContain("fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)");
+    expect(tool).toContain("fetchVoiceAttentionPresentation(voiceAttentionChainRef.current.request)");
     expect(tool).not.toContain("markAttentionCapturesSurfaced");
   });
 

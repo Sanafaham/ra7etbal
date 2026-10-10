@@ -430,6 +430,8 @@ export type AttentionPresentation = {
   modelText?: string;
   /** Voice only: the background note offered after a successful read. */
   contextNote?: string;
+  /** Voice only: the read succeeded and was complete (not partial). */
+  complete?: boolean;
   /** Voice only: what this answer gave the model, for a later "the rest" / "continue". */
   page?: { givenIds: string[]; person: string | null; remaining: number };
 };
@@ -447,7 +449,7 @@ export type AttentionPresentation = {
  */
 export type VoiceAttentionRequest =
   | { kind: "summary" }
-  | { kind: "all" }
+  | { kind: "all"; inferred?: boolean }
   | { kind: "rest"; previouslyGivenIds?: readonly string[]; person?: string | null }
   | { kind: "person"; name: string };
 
@@ -785,9 +787,26 @@ export async function fetchAttentionPresentation(): Promise<AttentionPresentatio
  * model is not bound by it, and a background note may not arrive before it
  * speaks. A failed read gets none, so nothing is ever called complete.
  */
-export function voiceAttentionUseNote(evidence: AttentionSummaryEvidence, view: VoiceAttentionView): string {
+export function voiceAttentionUseNote(
+  evidence: AttentionSummaryEvidence,
+  view: VoiceAttentionView,
+  inferred = false,
+): string {
   if (!evidence.ok) return "";
   const notes: string[] = [];
+  if (inferred && view.listRequest) {
+    // The app could not tell what the owner asked (S3, 2026-10-10), so it
+    // does not claim they asked for every item.
+    notes.push(
+      view.remaining > 0
+        ? `Use this complete live list to answer what the owner asked, in this wording. If you list items, there are ${view.remaining} more after these, and the owner can say "continue".`
+        : 'Use this complete live list to answer what the owner asked, in this wording. If you list items, never shorten the list to "and N more" or "among others".',
+    );
+    if (evidence.completeness !== "full") {
+      notes.push("This live check was incomplete: say the list may be incomplete and never call it everything.");
+    }
+    return `[For Carson: ${notes.join(" ")}]`;
+  }
   if (view.listRequest && view.continuation) {
     notes.push(
       "Say the items not in your last answer by name, in this wording. The app cannot tell what you actually said aloud: " +
@@ -820,7 +839,7 @@ export async function fetchVoiceAttentionPresentation(
   try {
     const { evidence, taskWording } = await readAttentionEvidence();
     const view = buildVoiceAttentionView(evidence, request, taskWording);
-    const useNote = voiceAttentionUseNote(evidence, view);
+    const useNote = voiceAttentionUseNote(evidence, view, request.kind === "all" && request.inferred === true);
     const person = request.kind === "person" ? request.name : view.person;
     return {
       text: view.text,
@@ -828,6 +847,7 @@ export async function fetchVoiceAttentionPresentation(
       captureIds: renderedCaptureIds(evidence).filter((capture) => (view.shownCaptureIds ?? []).includes(capture.id)),
       assignees: openAssignees(evidence),
       evidenceOk: evidence.ok,
+      complete: evidence.ok && evidence.completeness === "full",
       modelText: useNote ? `${view.text} ${useNote}` : view.text,
       contextNote: !evidence.ok
         ? undefined

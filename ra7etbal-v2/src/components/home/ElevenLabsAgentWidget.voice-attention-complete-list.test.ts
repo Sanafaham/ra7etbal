@@ -29,46 +29,47 @@ describe("voice attention: complete lists and person follow-ups reach the model"
     expect(tool).toContain(": await fetchAttentionPresentation();");
   });
 
-  it("the prefetch sends the person-scoped note too, but only after a successful read", () => {
+  it("the prefetch records its read for this turn only, and sends the note only after a successful read", () => {
     const prefetch = between("fetchVoiceAttentionPresentation(requestedView)\n", ".catch(() => {");
+    const turnCheck = prefetch.indexOf("currentOwnerTurnOperationIdRef.current !== requestTurnOperationId");
+    const record = prefetch.indexOf("voiceAttentionChainRef.current = recordVoiceAttentionRead(voiceAttentionChainRef.current, {");
     const guard = prefetch.indexOf("if (!presentation.evidenceOk || !presentation.contextNote) return;");
-    expect(guard).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(prefetch.indexOf("lastVoiceAttentionPageRef.current = presentation.page ?? null;"));
+    expect(turnCheck).toBeGreaterThan(-1);
+    expect(record).toBeGreaterThan(turnCheck);
+    expect(guard).toBeGreaterThan(record);
     expect(guard).toBeLessThan(prefetch.indexOf("sendContextualUpdate(presentation.contextNote)"));
-    // Still turn-scoped: a late read from an earlier turn changes nothing.
-    expect(prefetch.indexOf("currentOwnerTurnOperationIdRef.current !== requestTurnOperationId")).toBeLessThan(guard);
   });
 
-  it("the tool remembers what it named only for this turn and only after a successful read", () => {
+  it("S3 2026-10-10: a voice tool read Carson asked for is recorded against its own turn, after the turn check", () => {
     const tool = between("get_items_needing_attention: (params", "get_commitment_history:");
     const turnCheck = tool.indexOf("if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;");
-    const remember = tool.indexOf("if (grounded?.evidenceOk && grounded.page) lastVoiceAttentionPageRef.current = grounded.page;");
+    const record = tool.indexOf('if (requestedChannel === "voice" && grounded && requestTurnOperationId) {');
     expect(turnCheck).toBeGreaterThan(-1);
-    expect(remember).toBeGreaterThan(turnCheck);
+    expect(record).toBeGreaterThan(turnCheck);
+    expect(tool).toContain("turnId: requestTurnOperationId,");
+    // The tool returns this turn's request, decided when the turn began.
+    expect(tool).toContain("fetchVoiceAttentionPresentation(voiceAttentionChainRef.current.request)");
   });
 
-  it("'the rest' starts from what the last answer gave the model; it stays with a person only while that person's list is split", () => {
-    const user = between("const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;", "attentionIntentForCurrentTranscriptRef.current =\n");
-    expect(user).toContain('voiceAttentionFollowUp?.kind === "rest"');
-    expect(user).toContain("previouslyGivenIds: lastVoiceAttentionPage?.givenIds ?? [],");
-    expect(user).toContain("person: lastVoiceAttentionPage && lastVoiceAttentionPage.remaining > 0 ? lastVoiceAttentionPage.person : null,");
-    // The opening question is always the summary.
-    expect(user).toContain('voiceAttentionRequestRef.current = matchesAttentionIntent(message)\n              ? { kind: "summary" }');
+  it("S3 2026-10-10: each voice turn begins the chain with its own turn id; Carson's message settles it", () => {
+    const user = between("voiceAttentionChainRef.current = beginVoiceAttentionTurn(", "if (attentionIntentForCurrentTranscriptRef.current) {");
+    expect(user).toContain("turnId: turnOperationId,");
+    expect(user).toContain("enabled: !secondBrainVoiceEnabled,");
+    expect(user).toContain("attentionIntentForCurrentTranscriptRef.current = voiceAttentionChainRef.current.recognised;");
+    expect(SOURCE).toContain(
+      'if (requestedChannel === "voice") {\n              voiceAttentionChainRef.current = settleVoiceAttentionTurn(voiceAttentionChainRef.current);',
+    );
+    // The old recogniser-only gate is gone from the voice path.
+    expect(SOURCE).not.toContain("const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current");
   });
 
-  it("REVIEW FINDING: a new attention question starts a new chain, so an older or failed answer never shapes 'the rest'", () => {
-    const reset = SOURCE.indexOf("if (matchesAttentionIntent(message)) lastVoiceAttentionPageRef.current = null;");
-    expect(reset).toBeGreaterThan(-1);
-    expect(reset).toBeLessThan(SOURCE.indexOf("const lastVoiceAttentionPage = lastVoiceAttentionPageRef.current;"));
-  });
-
-  it("what was given is forgotten with the session, everywhere the request resets", () => {
-    expect((SOURCE.match(/voiceAttentionRequestRef\.current = \{ kind: "summary" \};\n\s*lastVoiceAttentionPageRef\.current = null;/g) ?? []).length).toBe(3);
+  it("the whole chain is forgotten with the session, everywhere it resets", () => {
+    expect((SOURCE.match(/voiceAttentionChainRef\.current = INITIAL_VOICE_ATTENTION_CHAIN;/g) ?? []).length).toBe(3);
   });
 
   it("typed is unchanged: the typed path never touches the voice list state", () => {
     const typed = between("const isDirectTypedAttentionIntent = matchesAttentionIntent(savedMessage.content);", 'const response = await fetch("/api/carson-turn", {');
-    for (const voiceOnly of ["lastVoiceAttentionPageRef", "modelText", "contextNote"]) expect(typed).not.toContain(voiceOnly);
+    for (const voiceOnly of ["voiceAttentionChainRef", "modelText", "contextNote"]) expect(typed).not.toContain(voiceOnly);
   });
 
   it("voice still never marks captures surfaced, and the bubbles stay removed (PR #454)", () => {
