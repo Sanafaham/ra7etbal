@@ -207,6 +207,10 @@ export type VoiceAttentionChainState = {
   readOk: boolean;
   /** The chain continues into the next turn. */
   contextActive: boolean;
+  /** Carson replied this turn (settleVoiceAttentionTurn ran). */
+  settled: boolean;
+  /** This turn's context was carried over an unanswered fragment. */
+  carried: boolean;
   /** People with an open item in the last successful read. */
   lastAssignees: string[];
   /** What the last successful read gave Carson (not proof of what was said). */
@@ -219,28 +223,34 @@ export const INITIAL_VOICE_ATTENTION_CHAIN: VoiceAttentionChainState = {
   recognised: false,
   readOk: false,
   contextActive: false,
+  settled: false,
+  carried: false,
   lastAssignees: [],
   lastPage: null,
 };
 
 /**
- * A new user turn. enabled is false when the legacy voice guard is off
- * (Second Brain voice). contextActive overrides the chain's own context for a
- * typed session, which keeps its existing follow-up gate.
+ * A new voice user turn. enabled is false when the legacy voice guard is off
+ * (Second Brain voice). Typed sessions never call this.
  */
 export function beginVoiceAttentionTurn(
   state: VoiceAttentionChainState,
-  input: { turnId: string; utterance: string; enabled: boolean; contextActive?: boolean },
+  input: { turnId: string; utterance: string; enabled: boolean },
 ): VoiceAttentionChainState {
   // Decided from the previous turn's own outcome, not from when Carson's
   // message arrived, so a barge-in before Carson finished cannot leave a stale
-  // answer. After a reset (no previous turn) there is no context.
-  const contextActive = input.contextActive ?? (state.recognised || state.readOk);
-  const base = { ...state, turnId: input.turnId, readOk: false };
+  // answer. A previous turn Carson never answered (a speech-to-text fragment
+  // such as "What about Chris-") carries the chain it was in for that one
+  // turn only, so "Which ones?" straight after it still counts. After a reset
+  // (no previous turn) there is no context.
+  const ownOutcome = state.recognised || state.readOk;
+  const carry = state.turnId !== null && !state.settled && !state.carried && !ownOutcome && state.contextActive;
+  const contextActive = ownOutcome || carry;
+  const base = { ...state, turnId: input.turnId, readOk: false, settled: false, carried: carry, contextActive };
   if (!input.enabled) return { ...base, request: { kind: "summary" }, recognised: false };
   if (matchesAttentionIntent(input.utterance)) {
     // A new attention question starts a new chain.
-    return { ...base, request: { kind: "summary" }, recognised: true, lastPage: null };
+    return { ...base, request: { kind: "summary" }, recognised: true, lastPage: null, lastAssignees: [] };
   }
   const followUp = contextActive ? resolveVoiceAttentionFollowUp(input.utterance, state.lastAssignees) : null;
   if (followUp?.kind === "rest") {
@@ -257,8 +267,9 @@ export function beginVoiceAttentionTurn(
   }
   if (followUp) return { ...base, recognised: true, request: followUp };
   // Not recognised. Inside a live chain, if Carson calls the attention tool
-  // anyway it is a follow-up the app could not parse: the complete list.
-  return { ...base, recognised: false, request: contextActive ? { kind: "all" } : { kind: "summary" } };
+  // anyway it is a follow-up the app could not parse: the complete list,
+  // marked inferred because the app does not know what the owner asked.
+  return { ...base, recognised: false, request: contextActive ? { kind: "all", inferred: true } : { kind: "summary" } };
 }
 
 /** A live read (prefetch or tool) finished for turnId. Ignored unless it is the current turn. */
@@ -278,11 +289,11 @@ export function recordVoiceAttentionRead(
 }
 
 /**
- * Carson finished a message this turn: whether the chain continues
- * (recognised, or a complete read reached Carson). An unrelated turn ends it.
- * Informational; the next turn derives the same answer from this turn's own
- * flags, so a barge-in before Carson's last message cannot change it.
+ * Carson replied this turn: whether the chain continues (recognised, or a
+ * complete read reached Carson). An answered unrelated turn ends it. The next
+ * turn derives the same answer from this turn's own flags; settled only
+ * decides whether an unanswered fragment may carry the chain one turn.
  */
 export function settleVoiceAttentionTurn(state: VoiceAttentionChainState): VoiceAttentionChainState {
-  return { ...state, contextActive: state.recognised || state.readOk };
+  return { ...state, settled: true, contextActive: state.recognised || state.readOk };
 }

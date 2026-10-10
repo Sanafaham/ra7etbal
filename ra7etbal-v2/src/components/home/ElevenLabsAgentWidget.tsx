@@ -7205,12 +7205,11 @@ export default function ElevenLabsAgentWidget({
             // recognised turn OR a complete attention read Carson asked for;
             // inside it, an unparsed follow-up gets the complete list if
             // Carson calls the tool. A new attention question starts a new
-            // chain. A typed session keeps its existing follow-up gate.
+            // chain. Typed user messages return earlier and never reach this.
             voiceAttentionChainRef.current = beginVoiceAttentionTurn(voiceAttentionChainRef.current, {
               turnId: turnOperationId,
               utterance: message,
               enabled: !secondBrainVoiceEnabled,
-              contextActive: requestedChannel === "voice" ? undefined : lastTurnWasAttentionIntentRef.current,
             });
             attentionIntentForCurrentTranscriptRef.current = voiceAttentionChainRef.current.recognised;
             if (attentionIntentForCurrentTranscriptRef.current) {

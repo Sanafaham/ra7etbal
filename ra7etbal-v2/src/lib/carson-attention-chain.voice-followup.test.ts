@@ -159,7 +159,10 @@ describe("the exact 2026-10-10 four-turn canary", () => {
     for (const name of OVERDUE_NAMES) expect(t2.tool!.modelText).toContain(name);
     expect(t2.tool!.modelText).toContain("Christopher: bring the car around (2 separate tasks)");
     expect(t2.tool!.modelText).not.toContain("more.");
-    expect(t2.tool!.modelText).toContain("say every item above by name");
+    // The app could not tell what was asked, so it does not claim the owner asked for every item.
+    expect(t2.state.request).toEqual({ kind: "all", inferred: true });
+    expect(t2.tool!.modelText).toContain("Use this complete live list to answer what the owner asked");
+    expect(t2.tool!.modelText).not.toContain("The owner asked for the items themselves");
     expect(t2.state.contextActive).toBe(true);
 
     // 3. "What about Christopher?" — recognised person follow-up, Christopher only (Carson called get_person_history instead).
@@ -223,12 +226,23 @@ describe("context rules", () => {
     expect(t2.state.lastPage).toEqual(t1.state.lastPage);
   });
 
-  it("a new attention question starts a new chain", async () => {
+  it("a new attention question starts a new chain, forgetting the last page and people", async () => {
     const t1 = await turn(INITIAL_VOICE_ATTENTION_CHAIN, "t1", "What needs my attention?", true);
     const t2 = await turn(t1.state, "t2", "Which ones?", true);
+    expect(t2.state.lastAssignees).toEqual(["Christopher"]);
     const t3 = beginVoiceAttentionTurn(t2.state, { turnId: "t3", utterance: "What needs my attention?", enabled: true });
     expect(t3.request).toEqual({ kind: "summary" });
     expect(t3.lastPage).toBeNull();
+    expect(t3.lastAssignees).toEqual([]);
+  });
+
+  it("REVIEW FINDING 5: 'the rest' stays with a person only while that person's list is split", async () => {
+    const page = (remaining: number) => ({ givenIds: ["d1"], person: "Christopher", remaining });
+    const base = { ...INITIAL_VOICE_ATTENTION_CHAIN, turnId: "t1", recognised: true, settled: true, lastAssignees: ["Christopher"] };
+    const split = beginVoiceAttentionTurn({ ...base, lastPage: page(2) }, { turnId: "t2", utterance: "Continue.", enabled: true });
+    expect(split.request).toEqual({ kind: "rest", previouslyGivenIds: ["d1"], person: "Christopher" });
+    const whole = beginVoiceAttentionTurn({ ...base, lastPage: page(0) }, { turnId: "t2", utterance: "Tell me the rest.", enabled: true });
+    expect(whole.request).toEqual({ kind: "rest", previouslyGivenIds: ["d1"], person: null });
   });
 
   it("disabled (Second Brain voice) never recognises anything and never asks for more than the summary", async () => {
@@ -264,10 +278,28 @@ describe("stale and out-of-order callbacks", () => {
     const next = beginVoiceAttentionTurn(s, { turnId: "t2", utterance: "Tell me the rest.", enabled: true });
     expect(next.recognised).toBe(true);
     expect(next.request.kind).toBe("rest");
-    // And an unrelated turn interrupted the same way ends it.
-    const unrelated = beginVoiceAttentionTurn(next, { turnId: "t3", utterance: "Never mind.", enabled: true });
-    const after = beginVoiceAttentionTurn({ ...unrelated, recognised: false, readOk: false }, { turnId: "t4", utterance: "Tell me the rest.", enabled: true });
+  });
+
+  it("REVIEW FINDING 1: an unanswered speech-to-text fragment carries the chain for one turn only", async () => {
+    const t1 = await turn(INITIAL_VOICE_ATTENTION_CHAIN, "t1", "What needs my attention?", true);
+    // "What about Chris-" arrives as its own transcript; Carson neither replies nor calls a tool.
+    const fragment = beginVoiceAttentionTurn(t1.state, { turnId: "t2", utterance: "What about Chris-", enabled: true });
+    expect(fragment.recognised).toBe(false);
+    const whichOnes = beginVoiceAttentionTurn(fragment, { turnId: "t3", utterance: "Which ones?", enabled: true });
+    expect(whichOnes.recognised).toBe(true);
+    expect(whichOnes.request).toEqual({ kind: "all" });
+    // Two unanswered fragments in a row do not stretch it further.
+    const um = beginVoiceAttentionTurn(fragment, { turnId: "t3b", utterance: "Um", enabled: true });
+    const late = beginVoiceAttentionTurn(um, { turnId: "t4", utterance: "Which ones?", enabled: true });
+    expect(late.recognised).toBe(false);
+  });
+
+  it("an answered unrelated turn ends the chain, even with no tool call", async () => {
+    const t1 = await turn(INITIAL_VOICE_ATTENTION_CHAIN, "t1", "What needs my attention?", true);
+    const unrelated = settleVoiceAttentionTurn(beginVoiceAttentionTurn(t1.state, { turnId: "t2", utterance: "Never mind.", enabled: true }));
+    const after = beginVoiceAttentionTurn(unrelated, { turnId: "t3", utterance: "Tell me the rest.", enabled: true });
     expect(after.recognised).toBe(false);
+    expect(after.request).toEqual({ kind: "summary" });
   });
 
   it("settling twice in one turn (speech before and after a tool call) keeps the latest truth", async () => {
@@ -278,7 +310,7 @@ describe("stale and out-of-order callbacks", () => {
     s = recordVoiceAttentionRead(s, { turnId: "t2", presentation: await fetchVoiceAttentionPresentation(s.request) });
     s = settleVoiceAttentionTurn(s);
     expect(s.contextActive).toBe(true);
-    expect(s.request).toEqual({ kind: "all" });
+    expect(s.request).toEqual({ kind: "all", inferred: true });
   });
 });
 
