@@ -30,13 +30,17 @@ describe("ElevenLabsAgentWidget — attention follow-up grounding independent of
   });
 
   it("gates isAttentionFollowUpTurn on lastTurnWasAttentionIntentRef, not on grounding success", () => {
-    // P3 Step 3 / S3: the voice follow-up is now recognised by
-    // resolveVoiceAttentionFollowUp (which includes matchesAttentionFollowUp),
-    // still gated only on lastTurnWasAttentionIntentRef.
+    // P3 Step 3 / S3 (2026-10-10): follow-ups are recognised by
+    // beginVoiceAttentionTurn. A typed session is still gated only on
+    // lastTurnWasAttentionIntentRef; a voice session on the previous turn's
+    // own outcome (recognised, or a complete read reached Carson), which is
+    // likewise independent of whether that turn grounded.
     expect(SOURCE).toContain(
-      "const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current\n" +
-        "              ? resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)",
+      "contextActive: requestedChannel === \"voice\" ? undefined : lastTurnWasAttentionIntentRef.current,",
     );
+    const GUARD = readFileSync(join(__dirname, "../../lib/carson-attention-intent-guard.ts"), "utf-8");
+    expect(GUARD).toContain("const contextActive = input.contextActive ?? (state.recognised || state.readOk);");
+    expect(GUARD).not.toContain("lastAttentionTurnWasGrounded");
     // The old, fixed gate must not remain as the follow-up condition.
     expect(SOURCE).not.toContain(
       "matchesAttentionFollowUp(message) && lastAttentionTurnWasGroundedRef.current",

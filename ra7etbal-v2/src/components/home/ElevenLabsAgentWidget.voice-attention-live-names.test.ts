@@ -22,7 +22,7 @@ function between(start: string, end: string): string {
 describe("legacy voice attention reads and names live items", () => {
   it("the voice prefetch reads live with this turn's request", () => {
     const prefetch = between("if (attentionIntentForCurrentTranscriptRef.current) {", '} else if (role === "agent") {');
-    expect(prefetch).toContain("const requestedView = voiceAttentionRequestRef.current;");
+    expect(prefetch).toContain("const requestedView = voiceAttentionChainRef.current.request;");
     expect(prefetch).toContain("fetchVoiceAttentionPresentation(requestedView)");
     expect(prefetch).not.toContain("fetchAttentionPresentation()");
   });
@@ -31,17 +31,19 @@ describe("legacy voice attention reads and names live items", () => {
     const tool = between("get_items_needing_attention: (params", "get_commitment_history:");
     expect(tool).toContain(
       'requestedChannel === "voice"\n' +
-        "                  ? await fetchVoiceAttentionPresentation(voiceAttentionRequestRef.current)\n" +
+        "                  ? await fetchVoiceAttentionPresentation(voiceAttentionChainRef.current.request)\n" +
         "                  : await fetchAttentionPresentation();",
     );
   });
 
-  it("an item follow-up is recognised only straight after an attention turn, against the people in that live answer", () => {
-    const user = between("const voiceAttentionFollowUp = lastTurnWasAttentionIntentRef.current", "attentionIntentForCurrentTranscriptRef.current =\n");
-    expect(user).toContain("resolveVoiceAttentionFollowUp(message, lastVoiceAttentionAssigneesRef.current)");
-    expect(user).toContain("const isAttentionFollowUpTurn = voiceAttentionFollowUp !== null;");
-    // The initial question always gets the five-name summary.
-    expect(user).toContain("voiceAttentionRequestRef.current = matchesAttentionIntent(message)\n              ? { kind: \"summary\" }");
+  it("an item follow-up is recognised only inside an attention chain, against the people in the last live read", () => {
+    const user = between("voiceAttentionChainRef.current = beginVoiceAttentionTurn(", "if (attentionIntentForCurrentTranscriptRef.current) {");
+    // P3 Step 3 / S3 (2026-10-10): recognition, the people and the chain now
+    // live in beginVoiceAttentionTurn (tested with real reads in
+    // src/lib/carson-attention-chain.voice-followup.test.ts).
+    expect(user).toContain("utterance: message,");
+    const GUARD = readFileSync(join(__dirname, "../../lib/carson-attention-intent-guard.ts"), "utf-8");
+    expect(GUARD).toContain("const followUp = contextActive ? resolveVoiceAttentionFollowUp(input.utterance, state.lastAssignees) : null;");
   });
 
   it("the live read is also given to the voice model, informational only, and never marks captures", () => {
@@ -57,21 +59,18 @@ describe("legacy voice attention reads and names live items", () => {
   });
 
   it("the people for a follow-up come only from this session's last grounded voice attention answer, and are cleared with the session", () => {
-    expect(SOURCE).toContain(
-      "if (attentionIntentForCurrentTranscriptRef.current && attentionGuardResultRef.current?.assignees) {\n" +
-        "              lastVoiceAttentionAssigneesRef.current = attentionGuardResultRef.current.assignees;",
-    );
-    expect((SOURCE.match(/lastVoiceAttentionAssigneesRef\.current = \[\];/g) ?? []).length).toBe(3);
-    // The request resets with the session too, so a later typed session can never inherit it.
-    expect((SOURCE.match(/voiceAttentionRequestRef\.current = \{ kind: "summary" \};/g) ?? []).length).toBe(3);
+    // The people come only from a successful read in the current turn
+    // (recordVoiceAttentionRead), and the whole chain resets with the session.
+    expect(SOURCE).toContain("voiceAttentionChainRef.current = recordVoiceAttentionRead(voiceAttentionChainRef.current, {");
+    expect((SOURCE.match(/voiceAttentionChainRef\.current = INITIAL_VOICE_ATTENTION_CHAIN;/g) ?? []).length).toBe(3);
   });
 
   it("typed is unchanged: the typed /api/carson-turn path never uses the voice renderer or voice follow-up state", () => {
     const typed = between("const isDirectTypedAttentionIntent = matchesAttentionIntent(savedMessage.content);", 'const response = await fetch("/api/carson-turn", {');
-    for (const voiceOnly of ["fetchVoiceAttentionPresentation", "voiceAttentionRequestRef", "lastVoiceAttentionAssigneesRef", "resolveVoiceAttentionFollowUp"]) {
+    for (const voiceOnly of ["fetchVoiceAttentionPresentation", "voiceAttentionChainRef", "beginVoiceAttentionTurn", "resolveVoiceAttentionFollowUp"]) {
       expect(typed).not.toContain(voiceOnly);
     }
     // Exactly two voice reads: the voice prefetch and the voice branch of the tool.
-    expect((SOURCE.match(/fetchVoiceAttentionPresentation\((?:voiceAttentionRequestRef\.current|requestedView)\)/g) ?? []).length).toBe(2);
+    expect((SOURCE.match(/fetchVoiceAttentionPresentation\((?:voiceAttentionChainRef\.current\.request|requestedView)\)/g) ?? []).length).toBe(2);
   });
 });

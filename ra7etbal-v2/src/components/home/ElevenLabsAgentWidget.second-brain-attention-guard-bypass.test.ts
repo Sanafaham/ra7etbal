@@ -27,15 +27,19 @@ const SOURCE = readFileSync(join(__dirname, "ElevenLabsAgentWidget.tsx"), "utf-8
 
 describe("legacy attention-intent guard is inert for Second Brain voice turns", () => {
   it("gates attentionIntentForCurrentTranscriptRef off entirely when secondBrainVoiceEnabled is true — the single point that controls both the client-side re-fetch and the agent-turn override", () => {
+    // P3 Step 3 / S3 (2026-10-10): the same single gate, now passed to
+    // beginVoiceAttentionTurn, which recognises nothing when disabled.
+    expect(SOURCE).toContain("enabled: !secondBrainVoiceEnabled,");
     expect(SOURCE).toContain(
-      "attentionIntentForCurrentTranscriptRef.current =\n" +
-        "              !secondBrainVoiceEnabled && (matchesAttentionIntent(message) || isAttentionFollowUpTurn);",
+      "attentionIntentForCurrentTranscriptRef.current = voiceAttentionChainRef.current.recognised;",
     );
+    const GUARD = readFileSync(join(__dirname, "../../lib/carson-attention-intent-guard.ts"), "utf-8");
+    expect(GUARD).toContain('if (!input.enabled) return { ...base, request: { kind: "summary" }, recognised: false };');
   });
 
   it("the client-side prefetch (fetchAttentionPresentation) is reached only through that same ref — no separate secondBrainVoiceEnabled check was duplicated elsewhere, so there is exactly one gate to keep in sync", () => {
     const guardBlock = SOURCE.slice(
-      SOURCE.indexOf("attentionIntentForCurrentTranscriptRef.current =\n"),
+      SOURCE.indexOf("voiceAttentionChainRef.current = beginVoiceAttentionTurn("),
       SOURCE.indexOf("} else if (role === \"agent\") {"),
     );
     expect(guardBlock).toContain("if (attentionIntentForCurrentTranscriptRef.current) {");

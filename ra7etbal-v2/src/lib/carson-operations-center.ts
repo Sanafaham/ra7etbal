@@ -430,6 +430,8 @@ export type AttentionPresentation = {
   modelText?: string;
   /** Voice only: the background note offered after a successful read. */
   contextNote?: string;
+  /** Voice only: the read succeeded and was complete (not partial). */
+  complete?: boolean;
   /** Voice only: what this answer gave the model, for a later "the rest" / "continue". */
   page?: { givenIds: string[]; person: string | null; remaining: number };
 };
@@ -828,6 +830,7 @@ export async function fetchVoiceAttentionPresentation(
       captureIds: renderedCaptureIds(evidence).filter((capture) => (view.shownCaptureIds ?? []).includes(capture.id)),
       assignees: openAssignees(evidence),
       evidenceOk: evidence.ok,
+      complete: evidence.ok && evidence.completeness === "full",
       modelText: useNote ? `${view.text} ${useNote}` : view.text,
       contextNote: !evidence.ok
         ? undefined
