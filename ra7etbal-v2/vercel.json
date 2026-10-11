@@ -40,5 +40,10 @@
       "source": "/((?!api/|assets/|robots\\.txt$|sitemap\\.xml$|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "security/s01-whatsapp-authorization": false
+    }
+  }
 }
