@@ -207,8 +207,7 @@
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "db_contract_workflows": [
-        ".github/workflows/staff-escalation-migration-verification.yml",
-        ".github/workflows/staff-reply-clarification-verification.yml"
+        ".github/workflows/staff-escalation-migration-verification.yml"
       ],
       "production_canary_required": false,
       "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",

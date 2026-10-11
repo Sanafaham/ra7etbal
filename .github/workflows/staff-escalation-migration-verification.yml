@@ -64,7 +64,7 @@ jobs:
           fi
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
           echo "$CHANGED"
-          PATTERN='^ra7etbal-v2/supabase/migrations/(20260720_create_staff_messages\.sql|20260724_staff_message_response_delivery\.sql|20260726_staff_escalation_owner_decisions(\.rollback)?\.sql|20260727_staff_escalation_owner_notification_lease(\.rollback)?\.sql|verification/(00_bootstrap_minimal_auth|0[1-5]_.*)\.sql)$|^\.github/workflows/staff-escalation-migration-verification\.yml$'
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260720_create_staff_messages\.sql|20260724_staff_message_response_delivery\.sql|20260726_staff_escalation_owner_decisions(\.rollback)?\.sql|20260727_staff_escalation_owner_notification_lease(\.rollback)?\.sql|20261011120000_staff_reply_clarifications(\.rollback)?\.sql|verification/(00_bootstrap_minimal_auth|0[1-5]_.*)\.sql|verification/staff_reply_clarifications_.*)$|^\.github/workflows/staff-escalation-migration-verification\.yml$'
           if echo "$CHANGED" | grep -Eq "$PATTERN"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
@@ -138,3 +138,30 @@ jobs:
       - name: Owner-notification lease verification (after reapply)
         if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/04_owner_notification_lease_verification.sql"
+
+      # P3 staff-reply clarification (2026-10-11): additive table + two
+      # service-role functions on top of the staff_messages / owner-decision
+      # schema verified above. Forward, two-session concurrency, rollback
+      # (existing objects and rows preserved), reapply.
+      - name: Staff-reply clarification — forward apply and verification
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/verification/staff_reply_clarifications_bootstrap.sql"
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/staff_reply_clarifications_verification.sql"
+          bash "$MIGRATIONS/verification/staff_reply_clarifications_concurrency.sh"
+
+      - name: Staff-reply clarification — rollback, preservation check, reapply
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          before=$(psql -qAt -c "SELECT count(*) FROM public.staff_messages")
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.rollback.sql"
+          psql -v ON_ERROR_STOP=1 -qAt -c "DO \$\$ BEGIN
+            IF to_regclass('public.staff_reply_clarifications') IS NOT NULL THEN RAISE EXCEPTION 'FAIL: table survived rollback'; END IF;
+            IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('open_staff_reply_clarification','resolve_staff_reply_clarification')) THEN RAISE EXCEPTION 'FAIL: function survived rollback'; END IF;
+            IF to_regprocedure('public.claim_owner_escalation_notification(uuid,uuid,integer)') IS NULL THEN RAISE EXCEPTION 'FAIL: existing function lost'; END IF;
+          END \$\$;"
+          after=$(psql -qAt -c "SELECT count(*) FROM public.staff_messages")
+          [ "$before" = "$after" ] || { echo "FAIL: staff_messages rows changed by rollback"; exit 1; }
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/staff_reply_clarifications_verification.sql"
