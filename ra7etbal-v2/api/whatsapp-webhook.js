@@ -520,15 +520,17 @@ async function handleClarificationAnswer({
   let clarification = null;
   if (msg.contextMessageId) {
     // A quote-reply to the question itself names the clarification exactly.
+    // A number quoting anything else (a task message, an older reply) is
+    // conflicting evidence: it is never treated as an answer and falls
+    // through to ordinary handling, where exact quote-reply matching applies.
     const asked = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
       `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&response_transport_message_id=eq.${encodeURIComponent(msg.contextMessageId)}&select=id&limit=2`);
-    if (asked.length === 1) {
-      const rows = await restSelect(supabaseUrl, serviceKey, 'staff_reply_clarifications',
-        `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&staff_message_id=eq.${encodeURIComponent(asked[0].id)}&select=id,candidate_task_ids,status&limit=1`);
-      clarification = rows[0] || null;
-    }
-  }
-  if (!clarification) {
+    if (asked.length !== 1) return null;
+    const rows = await restSelect(supabaseUrl, serviceKey, 'staff_reply_clarifications',
+      `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&staff_message_id=eq.${encodeURIComponent(asked[0].id)}&select=id,candidate_task_ids,status&limit=1`);
+    if (!rows[0]) return null;
+    clarification = rows[0];
+  } else {
     // A bare number counts only when exactly one clarification is live.
     const live = await restSelect(supabaseUrl, serviceKey, 'staff_reply_clarifications',
       `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&status=eq.open&deadline_at=gt.${encodeURIComponent(now)}&select=id,candidate_task_ids,status&limit=2`);

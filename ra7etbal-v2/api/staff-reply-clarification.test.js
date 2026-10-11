@@ -465,3 +465,69 @@ describe('multiple open questions and exact evidence', () => {
     expect(h.ownerAlertsSent.size).toBe(1);
   });
 });
+
+describe('PR #458 review fix: a quoted number is an answer only when it quotes the question', () => {
+  it('1. a number quoting the correct question resolves that question', async () => {
+    const h = harness(db);
+    await h.send({ messageId: 'wamid.in-salmon', body: 'Salmon is unavailable' }); // question sent as wamid.out-1
+
+    await h.send({ messageId: 'wamid.in-quoted', body: '1', contextMessageId: 'wamid.out-1' });
+
+    expect(db.staff.find((m) => m.external_message_id === 'wamid.in-salmon').task_id).toBe('task-salmon');
+    expect(lastText(h)).toBe('Thanks, noted. This is about: Get salmon for dinner');
+  });
+
+  it('2. a number quoting an unrelated task message never resolves the open question', async () => {
+    const h = harness(db, { script: () => ({ classification: 'unclear', response: 'What does 2 refer to?', userFacingState: 'Waiting' }) });
+    h.processStaffMessageImpl.mockImplementationOnce(engine(db, BLOCKER));
+    await h.send({ messageId: 'wamid.in-salmon', body: 'Salmon is unavailable' });
+
+    // Exactly one live question exists, but the number quotes the salmon task message instead.
+    await h.send({ messageId: 'wamid.in-quote-task', body: '2', contextMessageId: 'wamid.task-salmon-msg' });
+
+    expect(db.calls).not.toContain('rpc/resolve_staff_reply_clarification');
+    expect(db.clarifications[0].status).toBe('open');
+    expect(db.staff.find((m) => m.external_message_id === 'wamid.in-salmon').task_id).toBeNull();
+    // Ordinary handling with exact quote-reply matching: the new message itself carries the quoted task.
+    expect(h.processStaffMessageImpl.mock.calls.at(-1)[0]).toMatchObject({ taskId: 'task-salmon' });
+    expect(h.ownerAlertsSent.size).toBe(1);
+  });
+
+  it('2b. a number quoting an unknown message never falls back to the bare-number path', async () => {
+    const h = harness(db, { script: () => ({ classification: 'unclear', response: 'Which message do you mean?', userFacingState: 'Waiting' }) });
+    h.processStaffMessageImpl.mockImplementationOnce(engine(db, BLOCKER));
+    await h.send({ messageId: 'wamid.in-salmon', body: 'Salmon is unavailable' });
+
+    await h.send({ messageId: 'wamid.in-quote-unknown', body: '1', contextMessageId: 'wamid.something-else' });
+
+    expect(db.calls).not.toContain('rpc/resolve_staff_reply_clarification');
+    expect(db.staff.find((m) => m.external_message_id === 'wamid.in-salmon').task_id).toBeNull();
+  });
+
+  it('3. a bare number with exactly one live question still works', async () => {
+    const h = harness(db);
+    await h.send({ messageId: 'wamid.in-salmon', body: 'Salmon is unavailable' });
+
+    await h.send({ messageId: 'wamid.in-bare', body: '2' });
+
+    expect(db.staff.find((m) => m.external_message_id === 'wamid.in-salmon').task_id).toBe('task-pizza');
+  });
+
+  it('4. conflicting or repeated answers cannot change a resolved link', async () => {
+    const h = harness(db);
+    await h.send({ messageId: 'wamid.in-salmon', body: 'Salmon is unavailable' });
+    await h.send({ messageId: 'wamid.in-first', body: '1', contextMessageId: 'wamid.out-1' });
+
+    await h.send({ messageId: 'wamid.in-repeat', body: '1', contextMessageId: 'wamid.out-1' });
+    expect(lastText(h)).toBe('Thanks, noted. This is about: Get salmon for dinner');
+    await h.send({ messageId: 'wamid.in-conflict', body: '2', contextMessageId: 'wamid.out-1' });
+    expect(lastText(h)).toBe('I already noted a different answer for that message, so I kept the first one.');
+    // A number quoting the task message is ordinary handling (classified like any other message), never an answer.
+    h.processStaffMessageImpl.mockImplementationOnce(engine(db, () => ({ classification: 'unclear', response: 'What does 2 refer to?', userFacingState: 'Waiting' })));
+    await h.send({ messageId: 'wamid.in-quote-task', body: '2', contextMessageId: 'wamid.task-salmon-msg' });
+
+    expect(db.staff.find((m) => m.external_message_id === 'wamid.in-salmon').task_id).toBe('task-salmon');
+    expect(db.clarifications[0]).toMatchObject({ status: 'linked', resolved_task_id: 'task-salmon' });
+    expect(h.ownerAlertsSent.size).toBe(1);
+  });
+});
