@@ -74,7 +74,7 @@ const OTHER_TENANT_UID = '99999999-9999-9999-9999-999999999999';
 // query, this mock would then return the foreign row too, and the "another
 // tenant's personId" test below would correctly start failing.
 const PEOPLE_DB = [
-  { id: PERSON_ID, user_id: VALID_UID, phone: OWNED_PERSON_PHONE },
+  { id: PERSON_ID, user_id: VALID_UID, phone: OWNED_PERSON_PHONE, name: 'Worker' },
   { id: FOREIGN_PERSON_ID, user_id: OTHER_TENANT_UID, phone: '971500000099' },
 ];
 
@@ -94,6 +94,7 @@ function routineFetchMock() {
   return vi.fn().mockImplementation(async (url) => {
     const u = String(url);
     if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
+    if (u.includes('/rest/v1/routines')) return jsonResponse([{ id: 'routine-1', user_id: VALID_UID, payload: { person_id: PERSON_ID } }]);
     if (u.includes('/rest/v1/tasks')) return jsonResponse([]); // no taskId supplied in these tests
     if (u.includes('/rest/v1/messages')) return jsonResponse([]); // no messageRecordId supplied
     if (u.includes('/rest/v1/people')) {
@@ -101,7 +102,7 @@ function routineFetchMock() {
       const rows = PEOPLE_DB.filter((person) =>
         Object.entries(filters).every(([key, value]) => String(person[key]) === value),
       );
-      return jsonResponse(u.includes('select=phone') ? rows.map((p) => ({ phone: p.phone })) : rows.map((p) => ({ id: p.id })));
+      return jsonResponse(rows);
     }
     if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
     if (u.includes('/rest/v1/whatsapp_deliveries?id=eq')) return jsonResponse({});
@@ -123,7 +124,7 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
           to: OWNED_PERSON_PHONE,
           messageText: 'Reminder: bins out tonight.',
           sendMode: 'routine_message',
-          personId: PERSON_ID,
+          personId: PERSON_ID, routineId: 'routine-1',
         },
       }),
       res,
@@ -169,7 +170,7 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
           to: OWNED_PERSON_PHONE,
           messageText: 'hi',
           sendMode: 'routine_message',
-          personId: FOREIGN_PERSON_ID,
+          personId: FOREIGN_PERSON_ID, routineId: 'routine-1',
         },
       }),
       res,
@@ -191,7 +192,7 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
           to: '971599999999', // does NOT match the owned person's stored phone
           messageText: 'hi',
           sendMode: 'routine_message',
-          personId: PERSON_ID,
+          personId: PERSON_ID, routineId: 'routine-1',
         },
       }),
       res,
@@ -201,7 +202,7 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
-  it('5. the cron/internal authorized path remains unaffected — no ownership/phone lookup at all for routine_message', async () => {
+  it('5. internal secret without persisted operation fails closed', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url) => {
       const u = String(url);
       if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
@@ -224,17 +225,17 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
       res,
     );
 
-    expect(res.statusCode).toBe(200);
-    expect(res.payload?.success).toBe(true);
+    expect(res.statusCode).toBe(403);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/people'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/auth/v1/user'))).toBe(false);
   });
 
-  it('6. existing task-template and direct_message sends are unaffected by this check (no personId required, no phone-match enforced)', async () => {
+  it('6. task-template without persisted recipient authority fails closed', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url) => {
       const u = String(url);
       if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
-      if (u.includes('/rest/v1/tasks') && u.includes('user_id')) return jsonResponse([{ id: 'task-1' }]);
+      if (u.includes('/rest/v1/tasks')) return jsonResponse([{ id: 'task-1', user_id: VALID_UID }]);
       if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
       if (u.includes('/rest/v1/whatsapp_deliveries?id=eq')) return jsonResponse({});
       if (u.includes('graph.facebook.com')) return jsonResponse({ messages: [{ id: 'wamid.1' }] });
@@ -257,10 +258,9 @@ describe('api/send-whatsapp-task — routine_message recipient must be an owned 
       res,
     );
 
-    expect(res.statusCode).toBe(200);
-    expect(res.payload?.success).toBe(true);
-    // No people lookup should occur at all -- no personId was supplied and
-    // this isn't a routine_message.
+    expect(res.statusCode).toBe(403);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
+    // Incomplete task authority is rejected before a recipient or provider lookup.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/people'))).toBe(false);
   });
 });

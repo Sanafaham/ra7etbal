@@ -19,7 +19,7 @@ const whatsappDeliveryMocks = vi.hoisted(() => ({
   getMetaFailure: vi.fn((result) => ({ reason: result?.metaError?.message || 'send_failed' })),
 }));
 
-vi.mock('./_whatsapp-delivery.js', () => whatsappDeliveryMocks);
+vi.mock('./_whatsapp-delivery.js', async (importOriginal) => ({ ...(await importOriginal()), ...whatsappDeliveryMocks }));
 
 vi.mock('./send-whatsapp-task.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -45,14 +45,14 @@ const DECISION_ROW = {
   deep_link_token: 'aaaaaaaa-1111-4111-8111-111111111111',
   owner_notified_at: null,
 };
-const OWNER_PHONE = [{ name: 'Sana', role: 'boss', phone: '+15550000099' }];
+const OWNER_PHONE = [{ id:'owner-person', user_id: USER_ID, name: 'Sana', role: 'boss', phone: '+15550000099' }];
 const NOTIFICATION_CLAIM = {
   decision_id: 'decision-1', claimed: true,
   claim_token: 'notification-claim-1', notification_status: 'sending',
 };
 
 function makeFetchMock({ decisionRow = DECISION_ROW, alreadySent = false } = {}) {
-  return vi.fn()
+  const lifecycleFetch = vi.fn()
     .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
     .mockResolvedValueOnce(jsonResponse(decisionRow))              // claim_task_escalation_owner_decision
     .mockResolvedValueOnce(jsonResponse(alreadySent ? {
@@ -60,6 +60,12 @@ function makeFetchMock({ decisionRow = DECISION_ROW, alreadySent = false } = {})
     } : NOTIFICATION_CLAIM))                                      // claim notification lease
     .mockResolvedValueOnce(jsonResponse(OWNER_PHONE))              // findOwnerPhone
     .mockResolvedValueOnce(jsonResponse(decisionRow, true));       // complete notification lease
+  return vi.fn(async (url, options) => {
+    const target=String(url);
+    if (target.includes('/rest/v1/tasks?')) return jsonResponse([{ id:TASK_ID,user_id:USER_ID,proof_image_path:`${USER_ID}/${TASK_ID}/proof/0.jpg` }]);
+    if (target.includes('/rest/v1/people?') && target.includes('select=*')) return jsonResponse(OWNER_PHONE);
+    return lifecycleFetch(url,options);
+  });
 }
 
 const BASE_INPUT = {
@@ -92,7 +98,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
-      { ...BASE_INPUT, proofImagePath: 'task-images/user-1/task-1/proof/0.jpg' },
+      { ...BASE_INPUT, proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg' },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );
 
@@ -100,13 +106,19 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1); // text template
     expect(sendProofImageMessageMock).toHaveBeenCalledTimes(1);
     expect(sendProofImageMessageMock).toHaveBeenCalledWith(expect.objectContaining({
-      imagePath: 'task-images/user-1/task-1/proof/0.jpg',
+      imagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg',
       to: expect.stringContaining('15550000099'),
       accessToken: 'test-access-token',
       phoneNumberId: 'phone-number-id-1',
       supabaseUrl: SUPABASE_URL,
       serviceKey: SERVICE_KEY,
     }));
+  });
+
+  it('rejects unauthorized proof before either text or image provider call', async () => {
+    const fetchMock=makeFetchMock();vi.stubGlobal('fetch',fetchMock);
+    const result=await notifyOwnerOfTaskReview({...BASE_INPUT,proofImagePath:'task-images/foreign/task/proof.jpg'},{supabaseUrl:SUPABASE_URL,serviceKey:SERVICE_KEY});
+    expect(result.status).toBe('failed');expect(sendMetaMessageMock).not.toHaveBeenCalled();expect(sendProofImageMessageMock).not.toHaveBeenCalled();
   });
 
   it('[2] does NOT send proof photo when proofImagePath is absent', async () => {
@@ -142,7 +154,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
-      { ...BASE_INPUT, proofImagePath: 'task-images/user-1/task-1/proof/0.jpg' },
+      { ...BASE_INPUT, proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg' },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );
 
@@ -157,7 +169,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
-      { ...BASE_INPUT, proofImagePath: 'task-images/user-1/task-1/proof/0.jpg' },
+      { ...BASE_INPUT, proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg' },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );
 
@@ -170,7 +182,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
-      { ...BASE_INPUT, proofImagePath: 'task-images/user-1/task-1/proof/0.jpg' },
+      { ...BASE_INPUT, proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg' },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );
 
@@ -187,7 +199,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
-      { ...BASE_INPUT, proofImagePath: 'task-images/user-1/task-1/proof/0.jpg' },
+      { ...BASE_INPUT, proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg' },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );
 
@@ -208,7 +220,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
         taskDescription: 'Arrange flowers on the table',
         assignedTo: 'Grace',
         reviewNote: null,
-        proofImagePath: 'task-images/user-1/task-1/proof/0.jpg',
+        proofImagePath: 'task-images/user-owner-1/task-sub-review-1/proof/0.jpg',
       },
       { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
     );

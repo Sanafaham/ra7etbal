@@ -157,7 +157,9 @@ describe('routine message shared boundary', () => {
   it('rejects task/delegation sends without a confirmation link', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Worker', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
       .mockResolvedValueOnce(emptyResponse());
     vi.stubGlobal('fetch', fetchMock);
@@ -173,24 +175,16 @@ describe('routine message shared boundary', () => {
       res,
     );
 
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        success: false,
-        error: 'Confirmation link is missing.',
-      }),
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/rest/v1/tasks');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/rest/v1/whatsapp_deliveries');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('/rest/v1/whatsapp_deliveries?id=eq.delivery-1');
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('whatsapp_deliveries'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
   it('keeps the routine/plain approved template path working without a confirmation link', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'routine-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'routine-1', user_id: 'user-1', payload: { person_id: 'person-1' } }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-routine-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.routine' }] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -219,7 +213,7 @@ describe('routine message shared boundary', () => {
         templateName: 'ra7etbal_routine_message',
       }),
     );
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(metaPayload).toEqual(
       buildRoutineMessagePayload({
         to: '971500000000',
@@ -234,7 +228,9 @@ describe('routine message shared boundary', () => {
     vi.stubEnv('WHATSAPP_ROUTINE_MESSAGE_TEMPLATE', '');
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', automation_id: 'automation-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'automation-1', user_id: 'user-1', assignee_id: 'person-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Sana', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-automation-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.automation' }] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -266,7 +262,7 @@ describe('routine message shared boundary', () => {
     );
     expect(String(fetchMock.mock.calls[0][0])).toContain('/rest/v1/automation_runs');
 
-    const insertedDelivery = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const insertedDelivery = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(insertedDelivery).toMatchObject({
       user_id: 'user-1',
       automation_run_id: 'run-1',
@@ -275,7 +271,7 @@ describe('routine message shared boundary', () => {
       recipient_name: 'Sana',
     });
 
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[4][1].body);
     expect(metaPayload).toEqual(
       buildRoutineMessagePayload({
         to: '971500000000',
@@ -286,15 +282,13 @@ describe('routine message shared boundary', () => {
     );
   });
 
-  // Automation-runner Communication History identity/linkage gap fix: the
-  // automation runner already resolves the canonical assignee before
-  // calling this endpoint and passes it as personId — no messageRecordId
-  // exists for this send path, so this is the only source beginWhatsappDelivery
-  // has to carry a real person_id into the whatsapp_deliveries row.
-  it('threads an explicit personId from the request body into the whatsapp_deliveries insert', async () => {
+  // The ledger uses the canonical person resolved from the saved automation; caller IDs must agree.
+  it('records the persisted automation assignee when the advisory personId agrees', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', automation_id: 'automation-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'automation-1', user_id: 'user-1', assignee_id: 'person-christopher' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-christopher', user_id: 'user-1', name: 'Sana', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-automation-personid-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.automation-personid' }] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -318,14 +312,15 @@ describe('routine message shared boundary', () => {
     );
 
     expect(res.status).toHaveBeenCalledWith(200);
-    const insertedDelivery = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const insertedDelivery = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(insertedDelivery.person_id).toBe('person-christopher');
   });
 
   it('accepts a direct message without a confirmation link using the approved direct-message template', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
       .mockResolvedValueOnce(emptyResponse())
@@ -357,7 +352,7 @@ describe('routine message shared boundary', () => {
         templateLanguage: 'en',
       }),
     );
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(metaPayload).toEqual(
       buildDirectMessagePayload({
         to: '971500000000',
@@ -372,7 +367,8 @@ describe('routine message shared boundary', () => {
   it('sends the direct-message payload with exactly two body parameters: ownerName then messageText', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
       .mockResolvedValueOnce(emptyResponse())
@@ -391,7 +387,7 @@ describe('routine message shared boundary', () => {
       createRes(),
     );
 
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[3][1].body);
     const bodyComponent = metaPayload.template.components.find((c) => c.type === 'body');
     expect(bodyComponent.parameters).toHaveLength(2);
     expect(bodyComponent.parameters[0]).toEqual({ type: 'text', text: 'Sana' });
@@ -401,7 +397,8 @@ describe('routine message shared boundary', () => {
   it('never references ra7etbal_routine_message for a direct message, even though WHATSAPP_ROUTINE_MESSAGE_TEMPLATE is configured', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
       .mockResolvedValueOnce(emptyResponse())
@@ -425,7 +422,7 @@ describe('routine message shared boundary', () => {
     expect(responseBody.templateName).not.toBe('ra7etbal_routine_message');
     expect(responseBody.templateName).toBe('ra7etbal_direct_operational_message');
 
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(metaPayload.template.name).not.toBe('ra7etbal_routine_message');
   });
 
@@ -435,7 +432,8 @@ describe('routine message shared boundary', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
       .mockResolvedValueOnce(emptyResponse())
@@ -461,7 +459,7 @@ describe('routine message shared boundary', () => {
         templateLanguage: 'en',
       }),
     );
-    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const metaPayload = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_direct_operational_message');
     expect(metaPayload.template.language.code).toBe('en');
   });
@@ -469,7 +467,8 @@ describe('routine message shared boundary', () => {
   it('does not report success when Meta returns a 400 error for a direct message (wrong parameter count etc.)', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(
         jsonResponse(
@@ -494,14 +493,15 @@ describe('routine message shared boundary', () => {
     );
 
     expect(res.json).not.toHaveBeenCalledWith(expect.objectContaining({ success: true }));
-    const failedPatch = JSON.parse(fetchMock.mock.calls[3][1].body);
+    const failedPatch = JSON.parse(fetchMock.mock.calls[4][1].body);
     expect(failedPatch.delivery_status).toBe('failed');
   });
 
   it('does not report success when Meta returns 200 without a message id', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -526,7 +526,7 @@ describe('routine message shared boundary', () => {
         errorMessage: 'Meta accepted the request but returned no WhatsApp message id.',
       }),
     );
-    const failedPatch = JSON.parse(fetchMock.mock.calls[3][1].body);
+    const failedPatch = JSON.parse(fetchMock.mock.calls[4][1].body);
     expect(failedPatch).toMatchObject({
       delivery_status: 'failed',
       failure_reason: 'Meta accepted the request but returned no WhatsApp message id.',
@@ -536,7 +536,8 @@ describe('routine message shared boundary', () => {
   it('logs direct message delivery as a message with direct-message metadata', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Worker', person_id: 'person-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
       .mockResolvedValueOnce(emptyResponse())
@@ -555,7 +556,7 @@ describe('routine message shared boundary', () => {
       res,
     );
 
-    const insertedDelivery = JSON.parse(fetchMock.mock.calls[1][1].body);
+    const insertedDelivery = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(insertedDelivery).toMatchObject({
       user_id: 'user-1',
       message_id: 'message-1',
@@ -570,7 +571,7 @@ describe('routine message shared boundary', () => {
       }),
     });
 
-    const acceptedPatch = JSON.parse(fetchMock.mock.calls[4][1].body);
+    const acceptedPatch = JSON.parse(fetchMock.mock.calls[5][1].body);
     expect(acceptedPatch).toMatchObject({
       delivery_status: 'accepted',
       meta_message_id: 'wamid.direct',
@@ -586,7 +587,9 @@ describe('routine message shared boundary', () => {
   it('tries the accepted body-link task template before button variants', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Grace', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Grace', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-task-1' }]))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.task' }] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -634,8 +637,10 @@ describe('routine message shared boundary', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: 'task-1' }]))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', recipient: 'Grace', person_id: 'person-1', task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Grace', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Grace', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-task-1' }]))
       // all template attempts fail
       .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
@@ -680,12 +685,12 @@ describe('routine message shared boundary', () => {
       }),
     );
 
-    const messagePatch = JSON.parse(fetchMock.mock.calls[13][1].body);
+    const messagePatch = JSON.parse(fetchMock.mock.calls[15][1].body);
     expect(messagePatch).toMatchObject({
       whatsapp_message_id: 'SM123',
       whatsapp_delivery_status: 'sms_sent',
     });
-    const deliveryAcceptedPatch = JSON.parse(fetchMock.mock.calls[14][1].body);
+    const deliveryAcceptedPatch = JSON.parse(fetchMock.mock.calls[16][1].body);
     expect(deliveryAcceptedPatch).toMatchObject({
       delivery_status: 'accepted',
       meta_message_id: 'SM123',
@@ -701,16 +706,14 @@ describe('routine message shared boundary', () => {
 // ── Photo attachment pipeline tests ─────────────────────────────────────────
 
 describe('photo attachment pipeline', () => {
-  // For all tests in this suite, the Supabase task lookup and delivery-row
-  // inserts are always at positions 0–1 in the fetch mock; the signed-URL
-  // generation is position 2 (when imagePath is present).
-  const SIGNED_URL = 'https://example.supabase.co/storage/v1/object/sign/task-images/user/task/photo.jpg?token=abc';
+  // Persisted task, recipient and attachment authorization precedes the ledger and signing.
+  const SIGNED_URL = 'https://example.supabase.co/storage/v1/object/sign/task-images/user-1/task-1/photo.jpg?token=abc';
 
   function basePhotoCalls({ metaUploadResponse = null, metaTemplateResponse = null } = {}) {
     return [
       jsonResponse([{ id: 'task-1', user_id: 'user-1' }]),          // Supabase task lookup
       jsonResponse([{ id: 'delivery-1' }]),                           // whatsapp_deliveries insert
-      jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }), // signed URL
+      jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' }), // signed URL
       ...(metaUploadResponse ? [metaUploadResponse] : []),
       ...(metaTemplateResponse ? [metaTemplateResponse] : []),
       emptyResponse(),                                                 // delivery update
@@ -719,10 +722,12 @@ describe('photo attachment pipeline', () => {
 
   it('single-photo: appends photo-on-link note and sends text template when Meta upload fails', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
       // signed URL
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' }))
       // Meta image download (from Supabase signed URL) — fails
       .mockResolvedValueOnce({ ok: false, status: 403, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)), headers: { get: () => null } })
       // ra7etbal_task_v3 template send
@@ -738,7 +743,7 @@ describe('photo attachment pipeline', () => {
         messageText: 'Ask Christopher to make this for lunch.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/user/task/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: null,
         ownerName: 'Sana',
         recipientName: 'Christopher',
@@ -769,9 +774,11 @@ describe('photo attachment pipeline', () => {
     // 1KB fake image buffer
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' }))
       // Meta image download succeeds
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
       // Meta media upload succeeds
@@ -788,7 +795,7 @@ describe('photo attachment pipeline', () => {
         messageText: 'Make this for dinner.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/user/task/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: null,
         ownerName: 'Sana',
         recipientName: 'Christopher',
@@ -808,9 +815,11 @@ describe('photo attachment pipeline', () => {
     expect(templatePayload.template.name).toBe('ra7etbal_task_image');
   });
 
-  it('multi-photo: primary send appends "attached N photos" note and uses text template (no image header)', async () => {
+  it('multi-photo: rejects a claimed count when no authorized attachments exist', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
       // No signed URL call for imagePath — multi-photo skips the image-header template entirely
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
@@ -826,7 +835,7 @@ describe('photo attachment pipeline', () => {
         messageText: 'Make these for lunch.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/user/task/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: 2,
         ownerName: 'Sana',
         recipientName: 'Christopher',
@@ -834,24 +843,9 @@ describe('photo attachment pipeline', () => {
       res,
     );
 
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, mediaDeliveryResults: [] }),
-    );
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(fetchMock.mock.calls.some(([url]) => /graph.facebook.com|api.twilio.com|object\/sign/.test(String(url)))).toBe(false);
 
-    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
-      String(url).includes('graph.facebook.com/v20.0'),
-    );
-    // Only one graph call — no photos recorded in task_attachments to send
-    expect(graphCalls).toHaveLength(1);
-    const payload = JSON.parse(graphCalls[0][1].body);
-    expect(payload.template.name).toBe('ra7etbal_task_v3');
-
-    const bodyComp = payload.template.components.find((c) => c.type === 'body');
-    const messageParam = bodyComp.parameters.find((p) => p.type === 'text' && p.text.includes('photo'));
-    expect(messageParam).toBeTruthy();
-    expect(messageParam.text).toMatch(/2 photos/);
-    expect(messageParam.text).toMatch(/task link/i);
   });
 
   // Regression: production incident where a 2-photo delegation ("make these
@@ -865,15 +859,17 @@ describe('photo attachment pipeline', () => {
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
       // primary send
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
-      .mockResolvedValueOnce(emptyResponse())
-      // task_attachments lookup — 2 real photos
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([
         { storage_path: 'user-1/task-1/attachments/0.jpg' },
         { storage_path: 'user-1/task-1/attachments/1.jpg' },
       ]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
+      .mockResolvedValueOnce(emptyResponse())
+      // task_attachments lookup — 2 real photos
+
       // photo 0: signed url, Meta download, Meta upload, freeform send
       .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/0.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
@@ -945,14 +941,16 @@ describe('photo attachment pipeline', () => {
   it('multi-photo: one photo failing to send is reported truthfully and does not block the other photo or the overall response', async () => {
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
-      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
       .mockResolvedValueOnce(jsonResponse([
         { storage_path: 'user-1/task-1/attachments/0.jpg' },
         { storage_path: 'user-1/task-1/attachments/1.jpg' },
       ]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
+      .mockResolvedValueOnce(emptyResponse())
+
       // photo 0: signed url succeeds, but Meta download fails (e.g. 24h window closed downstream) — upload never gets a media_id
       .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/0.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: false, status: 403, headers: { get: () => null }, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)) })
@@ -991,9 +989,11 @@ describe('photo attachment pipeline', () => {
   it('single-photo: mediaDeliveryResults stays null — the multi-photo freeform-send path never runs for a single attachment', async () => {
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Christopher', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
       .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-123' }))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.image' }] }))
@@ -1007,7 +1007,7 @@ describe('photo attachment pipeline', () => {
         messageText: 'Make this for dinner.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/user/task/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: null,
         ownerName: 'Sana',
         recipientName: 'Christopher',
@@ -1018,17 +1018,19 @@ describe('photo attachment pipeline', () => {
     expect(res.status).toHaveBeenCalledWith(200);
     // Exactly the calls the single-photo path always made (lookup, delivery
     // insert, signed url, Meta download, Meta upload, template send, delivery
-    // patch) — no task_attachments lookup, no extra freeform-send calls.
-    expect(fetchMock).toHaveBeenCalledTimes(7);
+    // patch), plus recipient and attachment authorization — no extra freeform-send calls.
+    expect(fetchMock).toHaveBeenCalledTimes(9);
     const jsonCall = res.json.mock.calls.find((call) => 'mediaDeliveryResults' in (call[0] || {}));
     expect(jsonCall[0].mediaDeliveryResults).toBeNull();
   });
 
   it('single-photo failure does not append raw signed URL to message (avoids leaking expiring URL)', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Worker', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', user_id: 'user-1', name: 'Worker', phone: '971500000000' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: false, status: 500, headers: { get: () => null }, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)) })
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.fallback' }] }))
       .mockResolvedValueOnce(emptyResponse());
@@ -1041,7 +1043,7 @@ describe('photo attachment pipeline', () => {
         messageText: 'Please review this.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/user/task/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: null,
         ownerName: 'Sana',
       }),
@@ -1061,11 +1063,8 @@ describe('photo attachment pipeline', () => {
   });
 });
 
-// Defaults to a valid internal-caller header so these existing tests keep
-// exercising template/payload/delivery-evidence behavior exactly as before
-// Remediation 4 added the authentication boundary -- none of these tests
-// were designed to prove anything about auth itself (that boundary now has
-// its own dedicated coverage in send-whatsapp-task.auth-boundary.test.js).
+// Template tests use internal authentication and explicit persisted owner/recipient fixtures.
+// S01 security tests additionally exercise untrusted and inconsistent operation evidence.
 // Pass an explicit headers override (e.g. {}) to exercise the unauthenticated
 // path instead.
 function createReq(body, headers = { 'x-ra7etbal-internal-secret': 'cron-secret' }) {

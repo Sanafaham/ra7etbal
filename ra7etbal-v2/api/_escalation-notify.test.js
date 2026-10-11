@@ -197,7 +197,10 @@ describe('notifyOwnerOfEscalation — pre-action substitution proposal photo', (
         calls.push({ kind: 'claim_escalation_owner_decision', body: JSON.parse(o.body) });
         return jsonResponse({ id: 'esc-photo-1', deep_link_token: 'token-1' });
       }],
-      ['/rest/v1/people?', () => jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15551234567' }])],
+      ['/rest/v1/tasks?', () => jsonResponse([{ id:'task-1',user_id:'user-1' }])],
+      ['/rest/v1/staff_messages?', () => jsonResponse([{ id:'staff-msg-1',user_id:'user-1',task_id:'task-1' }])],
+      ['/rest/v1/staff_escalation_owner_decisions?', () => jsonResponse([{ user_id:'user-1',task_id:'task-1',staff_message_id:'staff-msg-1',proposed_photo_path:'task-images/user-1/task-1/proposal/whatsapp-msg1.jpg' }])],
+      ['/rest/v1/people?', () => jsonResponse([{ id: 'owner-1', user_id: 'user-1', name: 'Sana', role: 'boss', phone: '+15551234567' }])],
       ['/v20.0/', (u, o) => {
         const body = o.body ? JSON.parse(o.body) : {};
         calls.push({ kind: 'meta_message', type: body.type });

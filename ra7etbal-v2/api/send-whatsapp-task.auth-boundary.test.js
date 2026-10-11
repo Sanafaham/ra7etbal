@@ -78,8 +78,9 @@ function ownershipFetchMock({ ownsTask = true, ownsPerson = true, ownsMessage = 
   return vi.fn().mockImplementation(async (url) => {
     const u = String(url);
     if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
-    if (u.includes('/rest/v1/tasks')) return jsonResponse(ownsTask ? [{ id: 'task-1' }] : []);
-    if (u.includes('/rest/v1/people')) return jsonResponse(ownsPerson ? [{ id: 'person-1' }] : []);
+    if (u.includes('/rest/v1/tasks')) return jsonResponse(ownsTask ? [{ id: 'task-1',user_id:VALID_UID,assigned_to:'Worker',confirmation_url:'https://www.ra7etbal.com/confirm?task=task-1' }] : []);
+    if (u.includes('/rest/v1/people')) return jsonResponse(ownsPerson ? [{ id:'person-1',user_id:VALID_UID,name:'Worker',phone:'971500000000' }] : []);
+    if (u.includes('/rest/v1/task_attachments')) return jsonResponse([]);
     if (u.includes('/rest/v1/messages')) return jsonResponse(ownsMessage ? [{ id: 'message-1' }] : []);
     throw new Error(`Unexpected fetch: ${u}`);
   });
@@ -156,7 +157,9 @@ describe('api/send-whatsapp-task — ownership binding for browser (JWT) callers
     const fetchMock = vi.fn().mockImplementation(async (url) => {
       const u = String(url);
       if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
-      if (u.includes('/rest/v1/tasks') && u.includes('user_id')) return jsonResponse([{ id: 'task-1' }]);
+      if (u.includes('/rest/v1/tasks')) return jsonResponse([{ id: 'task-1', user_id: VALID_UID, assigned_to: 'Worker', confirmation_url: 'https://www.ra7etbal.com/confirm?task=task-1' }]);
+      if (u.includes('/rest/v1/people')) return jsonResponse([{ id: 'person-1', user_id: VALID_UID, name: 'Worker', phone: '971500000000' }]);
+      if (u.includes('/rest/v1/task_attachments')) return jsonResponse([]);
       if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
       if (u.includes('/rest/v1/whatsapp_deliveries?id=eq')) return jsonResponse({});
       if (u.includes('graph.facebook.com')) return jsonResponse({ messages: [{ id: 'wamid.1' }] });
@@ -209,7 +212,7 @@ describe('api/send-whatsapp-task — ownership binding for browser (JWT) callers
     await handler(
       mockReq({
         headers: { authorization: 'Bearer valid-jwt' },
-        body: { to: '971500000000', messageText: 'hi', personId: 'person-belongs-to-someone-else' },
+        body: { to:'971500000000',messageText:'hi',taskId:'task-1',confirmationLink:'https://www.ra7etbal.com/confirm?task=task-1',personId:'person-belongs-to-someone-else' },
       }),
       res,
     );
@@ -240,9 +243,8 @@ describe('api/send-whatsapp-task — ownership binding for browser (JWT) callers
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
-  it('a verified caller referencing no resource ids at all (e.g. a fresh direct message with no prior record) is not blocked by the ownership check', async () => {
-    // Ownership checks only fire for a supplied id -- absence is not itself
-    // suspicious, since not every send mode requires a pre-existing resource.
+  it('rejects a verified caller without a persisted operation before any provider call', async () => {
+    // Authentication alone cannot authorize an ungrounded recipient.
     const fetchMock = vi.fn().mockImplementation(async (url) => {
       const u = String(url);
       if (u.includes('/auth/v1/user')) return jsonResponse({ id: VALID_UID });
@@ -256,20 +258,24 @@ describe('api/send-whatsapp-task — ownership binding for browser (JWT) callers
     await handler(
       mockReq({
         headers: { authorization: 'Bearer valid-jwt' },
-        body: { to: '971500000000', messageText: '' }, // deliberately fails later validation, not auth
+        body: { to: '971500000000', messageText: 'Ungrounded send' },
       }),
       res,
     );
 
     expect(res.statusCode).not.toBe(401);
-    expect(res.statusCode).not.toBe(403);
+    expect(res.statusCode).toBe(403);
+    expect(fetchMock.mock.calls.some(([url]) => /graph.facebook.com|api.twilio.com|object\/sign/.test(String(url)))).toBe(false);
   });
 });
 
 describe('api/send-whatsapp-task — internal server callers', () => {
-  it('a valid internal secret succeeds without any ownership lookup (internal callers derive resources from trusted server state)', async () => {
+  it('a valid internal secret still requires persisted ownership and recipient evidence', async () => {
     const fetchMock = vi.fn().mockImplementation(async (url) => {
       const u = String(url);
+      if (u.includes('/rest/v1/tasks')) return jsonResponse([{ id: 'task-1', user_id: VALID_UID, assigned_to: 'Worker', confirmation_url: 'https://www.ra7etbal.com/confirm?task=task-1' }]);
+      if (u.includes('/rest/v1/people')) return jsonResponse([{ id: 'person-1', user_id: VALID_UID, name: 'Worker', phone: '971500000000' }]);
+      if (u.includes('/rest/v1/task_attachments')) return jsonResponse([]);
       if (u.includes('/rest/v1/whatsapp_deliveries') && !u.includes('id=eq')) return jsonResponse([{ id: 'delivery-1' }]);
       if (u.includes('/rest/v1/whatsapp_deliveries?id=eq')) return jsonResponse({});
       if (u.includes('graph.facebook.com')) return jsonResponse({ messages: [{ id: 'wamid.1' }] });
@@ -294,7 +300,7 @@ describe('api/send-whatsapp-task — internal server callers', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.payload?.success).toBe(true);
-    // No auth/v1/user or ownership lookup should ever be made for an internal caller.
+    // Internal authentication skips JWT verification, but never operation authorization.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/auth/v1/user'))).toBe(false);
   });
 });

@@ -1,5 +1,9 @@
 import {
   beginWhatsappDelivery,
+  authorizeWhatsappOperation,
+  canonicalWhatsappImagePath,
+  isAuthorizedWhatsappContext,
+  authorizeOwnerProofImage,
   getMetaFailure,
   markWhatsappDeliveryAccepted,
   markWhatsappDeliveryFailed,
@@ -67,44 +71,6 @@ function isValidInternalSecret(req) {
   return Boolean(expectedSecret) && providedSecret === expectedSecret;
 }
 
-/**
- * Confirms a resource id (task/person/message) is owned by the verified
- * uid before a browser-originated call is allowed to trigger a WhatsApp
- * send or evidence write referencing it. Internal callers never go through
- * this check — they already resolve these ids from trusted server-side
- * state (DB rows they themselves loaded), not from a browser request body.
- */
-async function verifyOwnedResource({ supabaseUrl, serviceKey, table, id, uid }) {
-  if (!id) return true; // nothing supplied for this field — nothing to check
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(uid)}&select=id&limit=1`,
-    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
-  );
-  if (!response.ok) return false;
-  const rows = await response.json().catch(() => []);
-  return Array.isArray(rows) && rows.length === 1;
-}
-
-/**
- * Supplemental security review (2026-08-29) — a routine_message send never
- * required taskId/personId/messageRecordId (verifyOwnedResource treats an
- * omitted id as "nothing to check"), so an authenticated caller could
- * direct an arbitrary phone number with no ownership relationship at all.
- * Resolves the phone number of a person the verified uid actually owns —
- * returns null if the person doesn't exist, isn't owned by this uid, or
- * has no stored phone. Callers must treat null as "not authorized."
- */
-async function resolveOwnedPersonPhone({ supabaseUrl, serviceKey, id, uid }) {
-  if (!id) return null;
-  const response = await fetch(
-    `${supabaseUrl}/rest/v1/people?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(uid)}&select=phone&limit=1`,
-    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
-  );
-  if (!response.ok) return null;
-  const rows = await response.json().catch(() => []);
-  return Array.isArray(rows) && rows.length === 1 ? (rows[0]?.phone ?? null) : null;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
@@ -127,13 +93,7 @@ export default async function handler(req, res) {
     sendMode,
     recipientName,
     ownerName,
-    imagePath,
-    attachmentCount,
-    // Optional caller-supplied canonical person identity (e.g. the
-    // automation runner, which already resolves the assignee before
-    // calling this endpoint). Never required, never guessed here — see
-    // beginWhatsappDelivery/resolveDeliveryContext for how it's combined
-    // with any messages/staff_messages-derived identity.
+    // Advisory identity must agree with the persisted operation; it grants no authority.
     personId,
   } = req.body || {};
 
@@ -151,48 +111,24 @@ export default async function handler(req, res) {
       return res.status(401).json({ success: false, error: 'Unauthorized.' });
     }
 
-    // Browser callers must own every resource they reference — never trust
-    // a client-supplied id alone. Internal callers skip this: they already
-    // derive taskId/personId/messageRecordId from trusted server-side state
-    // (DB rows they loaded themselves), never from an external request.
-    const [ownsTask, ownsPerson, ownsMessage] = await Promise.all([
-      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'tasks', id: taskId, uid: verifiedUid }),
-      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'people', id: personId, uid: verifiedUid }),
-      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'messages', id: messageRecordId, uid: verifiedUid }),
-    ]);
-    if (!ownsTask || !ownsPerson || !ownsMessage) {
-      return res.status(403).json({ success: false, error: 'Forbidden.' });
-    }
-
-    // Supplemental security review (2026-08-29) — routine_message never
-    // required an owned taskId/personId/messageRecordId, so a client could
-    // send an arbitrary body-supplied `to` with no relationship check at
-    // all. A routine message must resolve to a person this caller actually
-    // owns, AND the requested destination must match that person's own
-    // stored phone — never an arbitrary body-supplied `to`.
-    if (sendMode === 'routine_message') {
-      const ownedPersonPhone = await resolveOwnedPersonPhone({
-        supabaseUrl,
-        serviceKey,
-        id: personId,
-        uid: verifiedUid,
-      });
-      const requestedPhone = normalizeWhatsAppPhone(to);
-      if (
-        !ownedPersonPhone ||
-        !requestedPhone ||
-        normalizeWhatsAppPhone(ownedPersonPhone) !== requestedPhone
-      ) {
-        return res.status(403).json({ success: false, error: 'Forbidden.' });
-      }
-    }
   }
 
-  const consequentialOwnerId = verifiedUid || await resolveConsequentialOwnerFromReferences({
-    supabaseUrl,
-    serviceKey,
-    references: { taskId, messageRecordId, routineId, automationRunId, personId },
-  });
+  let authorizedContext;
+  try {
+    authorizedContext = await authorizeWhatsappOperation({
+      supabaseUrl, serviceKey, uid: verifiedUid, internal: internalCallerAuthorized, body: req.body || {},
+    });
+  } catch (error) {
+    const unavailable = error?.message !== 'whatsapp_authorization_denied';
+    return res.status(unavailable ? 503 : 403).json({
+      success: false, code: unavailable ? 'authorization_unavailable' : 'authorization_denied',
+      error: unavailable ? 'Delivery authorization is unavailable.' : 'Delivery is not authorized.',
+    });
+  }
+  const consequentialOwnerId = authorizedContext.userId;
+  const imagePath = authorizedContext.imagePath;
+  const attachmentCount = authorizedContext.attachmentCount;
+
   const accountAccess = await checkAccountConsequentialAccess({
     supabaseUrl,
     serviceKey,
@@ -213,7 +149,7 @@ export default async function handler(req, res) {
     : isRoutineMessage
       ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
       : DEFAULT_TEMPLATE_LANGUAGE;
-  const normalizedTo = normalizeWhatsAppPhone(to);
+  const normalizedTo = authorizedContext.destination;
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const attachmentCountN = typeof attachmentCount === 'number' ? attachmentCount : 0;
 
@@ -233,12 +169,7 @@ export default async function handler(req, res) {
 
   const cleanLink = String(confirmationLink || '').trim();
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
-  const deliverySourceType =
-    typeof sourceType === 'string' && sourceType.trim()
-      ? sourceType.trim()
-      : taskId
-        ? 'delegation'
-        : 'message';
+  const deliverySourceType = authorizedContext.sourceType;
 
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl,
@@ -249,8 +180,9 @@ export default async function handler(req, res) {
     automationRunId,
     personId,
     sourceType: deliverySourceType,
+    authorizedContext,
     recipientPhone: normalizedTo,
-    recipientName: String(recipientName || '').trim() || null,
+    recipientName: authorizedContext.recipientName,
     metadata: {
       has_confirmation_link: Boolean(cleanLink),
       has_image: Boolean(imagePath),
@@ -566,7 +498,7 @@ export default async function handler(req, res) {
   let imageSendStatus = 'skipped'; // skipped | uploaded | sent | failed | no_signed_url
 
   if (imagePath && !isMultiAttachment) {
-    imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+    imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath, authorizedContext });
     if (!imageSignedUrl) {
       imageSendStatus = 'no_signed_url';
       console.warn('[send-whatsapp-task] could not generate signed URL for image', {
@@ -911,6 +843,7 @@ export default async function handler(req, res) {
           to: normalizedTo,
           taskId,
           url,
+          authorizedContext,
         });
         console.log('[send-whatsapp-task] additional photo messages', {
           taskId,
@@ -1447,42 +1380,6 @@ async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
 }
 
 /**
- * Reads every task_attachments row for a task (all photos the owner
- * attached — including the one duplicated into tasks.image_path, since the
- * multi-attachment template never sends a header image and so never uses
- * that copy). Returns storage paths in sort_order so photos arrive in the
- * order they were attached. Never throws — an empty array degrades to
- * "no additional photos sent", the same as before this fix existed.
- *
- * file_name=is.null is required: task_attachments is shared with Proof
- * Photo V2 (api/task-confirm.js), which stores the assignee's own submitted
- * proof photos in the same table with file_name set to the literal string
- * 'proof' (reference-photo rows never set file_name — see task-confirm.js's
- * own file_name=is.null / file_name=eq.proof split). Without this filter, a
- * task with proof already submitted would send the assignee's own proof
- * photos back to them mixed in with the owner's original reference photos.
- */
-async function fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId }) {
-  if (!taskId || !supabaseUrl || !serviceKey) return [];
-  try {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/task_attachments?task_id=eq.${encodeURIComponent(taskId)}&file_name=is.null&select=storage_path&order=sort_order.asc`,
-      {
-        headers: {
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-        },
-      },
-    );
-    if (!response.ok) return [];
-    const rows = await response.json().catch(() => []);
-    return Array.isArray(rows) ? rows.map((r) => r.storage_path).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Sends every attached photo as its own freeform WhatsApp image message,
  * once the primary template message has already been accepted. Reuses
  * uploadImageToMeta (server-to-server binary upload → media_id) — never the
@@ -1494,12 +1391,12 @@ async function fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId }) {
  * template, messages) does not block the rest. Every outcome is reported —
  * never silently dropped and never reported as sent when it was not.
  */
-async function sendAdditionalPhotoMessages({ supabaseUrl, serviceKey, accessToken, phoneNumberId, to, taskId, url }) {
-  const paths = await fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId });
+async function sendAdditionalPhotoMessages({ supabaseUrl, serviceKey, accessToken, phoneNumberId, to, taskId, url, authorizedContext }) {
+  const paths = authorizedContext.attachmentPaths;
   const results = [];
 
   for (const storagePath of paths) {
-    const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath: storagePath });
+    const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath: storagePath, authorizedContext });
     if (!signedUrl) {
       results.push({ storagePath, sent: false, reason: 'no_signed_url' });
       continue;
@@ -1539,17 +1436,17 @@ async function sendAdditionalPhotoMessages({ supabaseUrl, serviceKey, accessToke
   return results;
 }
 
-async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath }) {
+async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath, authorizedContext }) {
   if (!imagePath || !supabaseUrl || !serviceKey) return null;
+  if (!isAuthorizedWhatsappContext(authorizedContext)) return null;
 
   const BUCKET = 'task-images';
-  const objectPath = imagePath.startsWith(`${BUCKET}/`)
-    ? imagePath.slice(`${BUCKET}/`.length)
-    : imagePath;
+  const objectPath = canonicalWhatsappImagePath(imagePath, authorizedContext?.userId);
+  if (!objectPath || !authorizedContext.permittedPaths.includes(objectPath)) return null;
 
   try {
     const response = await fetch(
-      `${supabaseUrl}/storage/v1/object/sign/${BUCKET}/${objectPath}`,
+      `${supabaseUrl}/storage/v1/object/sign/${BUCKET}/${objectPath.split('/').map(encodeURIComponent).join('/')}`,
       {
         method: 'POST',
         headers: {
@@ -1574,11 +1471,19 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
  * as a WhatsApp image message. Non-fatal: returns { sent: false } on any failure
  * so callers can proceed without blocking the primary notification.
  *
- * @param {{ to: string, accessToken: string, phoneNumberId: string, supabaseUrl: string, serviceKey: string, imagePath: string }} params
+ * Requires persisted task/evidence and owner-recipient authorization, or a minted context.
  * @returns {Promise<{ sent: boolean, messageId?: string|null, reason?: string }>}
  */
-export async function sendProofImageMessage({ to, accessToken, phoneNumberId, supabaseUrl, serviceKey, imagePath }) {
-  const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+export async function sendProofImageMessage({ to, accessToken, phoneNumberId, supabaseUrl, serviceKey, imagePath, userId, taskId, staffMessageId, authorizedContext }) {
+  let context = authorizedContext;
+  if (!isAuthorizedWhatsappContext(context)) {
+    try { context = await authorizeOwnerProofImage({ supabaseUrl, serviceKey, userId, taskId, staffMessageId, imagePath, to }); }
+    catch { return { sent: false, reason: 'image_authorization_denied' }; }
+  }
+  if (normalizeWhatsAppPhone(to) !== context.destination) return { sent: false, reason: 'image_authorization_denied' };
+  const accountAccess = await checkAccountConsequentialAccess({ supabaseUrl, serviceKey, userId: context.userId });
+  if (!accountAccess.allowed) return { sent: false, reason: 'account_deletion_in_progress' };
+  const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath, authorizedContext: context });
   if (!signedUrl) return { sent: false, reason: 'no_signed_url' };
 
   const mediaId = await uploadImageToMeta({ accessToken, phoneNumberId, imageUrl: signedUrl });
