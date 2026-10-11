@@ -206,6 +206,18 @@ export async function handleInboundStaffMessage(
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }
+  // A bare number ("2") may be the answer to an open "which task is this
+  // about?" clarification. Only that exact shape is ever treated as an
+  // answer; it never reaches classification, owner escalation or task
+  // completion. With no live clarification it falls through unchanged.
+  const clarificationChoice = msg.mediaId ? null : parseClarificationChoice(msg.body);
+  if (clarificationChoice !== null) {
+    const answered = await handleClarificationAnswer({
+      supabaseUrl, serviceKey, userId, person, msg, sender, phoneNumberId,
+      choice: clarificationChoice, sendMetaMessageImpl,
+    });
+    if (answered) return answered;
+  }
   // Deterministic classification of what a media-bearing message actually
   // is, decided from the caption alone (task resolution and classification
   // both happen later, so this cannot depend on either). A photo is not,
@@ -220,12 +232,12 @@ export async function handleInboundStaffMessage(
   // narrow (permission phrase AND substitution/scarcity signal both
   // required), not "any text" and not "any media".
   const captionLooksLikePreActionSubstitution = isLikelyPreActionSubstitutionRequest(msg.body);
-  // A plain-text pre-action substitution ask ("Can I use mushroom instead?")
-  // has no media and typically no WhatsApp quoted-reply, so without this it
-  // would never reach the recent-pending-task fallback below and
-  // staff_messages.task_id would land NULL — the task-linkage gap traced in
-  // the Christopher substitution defect follow-up.
-  const textLooksLikeSubstitutionRequest = !msg.mediaId && captionLooksLikePreActionSubstitution;
+  // Plain text is never linked to a task by recency alone (P3 staff-reply
+  // clarification, 2026-10-11). A text substitution ask used to take the
+  // recent-delivery fallback below, which could attach it to "the one task
+  // sent in the last 24 hours" even when it was about an older task. It is
+  // now linked only by exact quote-reply evidence, or by the staff member's
+  // own answer to a "which task?" clarification.
   // A media message routes into the completion-proof pipeline only when its
   // caption does NOT deterministically look like a pre-action ask — this is
   // the ONLY thing that changed about the media/text split; every existing
@@ -234,7 +246,7 @@ export async function handleInboundStaffMessage(
   const routeAsProofEvidence = Boolean(msg.mediaId) && !captionLooksLikePreActionSubstitution;
   let taskMatch = await resolveInboundStaffTask({
     supabaseUrl, serviceKey, userId, person, msg,
-    allowRecentDeliveryFallback: Boolean(msg.mediaId) || textLooksLikeSubstitutionRequest,
+    allowRecentDeliveryFallback: Boolean(msg.mediaId),
     allowRecentEvidenceContext: !msg.mediaId,
   });
   const taskId = taskMatch.task?.id || null;
@@ -296,6 +308,7 @@ export async function handleInboundStaffMessage(
         messageId: existing[0].id,
         response: existing[0].carson_response,
         relatedTaskId: existing[0].task_id,
+        classification: existing[0].classification,
         userFacingState: existing[0].user_facing_state,
         ownerAttentionRequired: existing[0].owner_attention_required,
         escalationReason: existing[0].escalation_reason,
@@ -389,22 +402,234 @@ export async function handleInboundStaffMessage(
       : "I've recorded this for the owner, but I couldn't reach them on WhatsApp yet.";
   }
 
+  // P3 staff-reply clarification: a task-related plain-text reply with no
+  // exact task evidence gets a "which task is this about?" question in the
+  // same reply. The owner escalation above has already run unchanged; the
+  // clarification only links the record later. The question is persisted
+  // (open_staff_reply_clarification) before it is sent, and a replay
+  // re-reads the persisted question instead of building a new one.
+  if (
+    !msg.mediaId &&
+    clarificationChoice === null &&
+    // Never open a question that can no longer be sent: if this message's
+    // reply was already accepted by WhatsApp, a replay must not create an
+    // unseen clarification a later number could resolve.
+    existing[0]?.response_delivery_status !== 'delivered' &&
+    !outcome.canonicalEvidence &&
+    !outcome.relatedTaskId &&
+    TASK_RELATED_CLASSIFICATIONS.has(outcome.classification)
+  ) {
+    const clarification = await openTaskClarification({
+      supabaseUrl, serviceKey, userId, person, staffMessageId: outcome.messageId,
+    });
+    if (clarification) staffResponseText = `${staffResponseText}\n\n${clarification.question_text}`;
+  }
+
+  return deliverStaffResponse({
+    supabaseUrl, serviceKey, userId, messageId: outcome.messageId,
+    phoneNumberId, sender, text: staffResponseText, sendMetaMessageImpl,
+  });
+}
+
+// Existing staff-reply delivery, unchanged: the per-message lease means a
+// replay never sends twice while an attempt is live or after provider
+// acceptance ('delivered'); a failed or expired attempt is retried once by
+// the next replay.
+async function deliverStaffResponse({
+  supabaseUrl, serviceKey, userId, messageId, phoneNumberId, sender, text, sendMetaMessageImpl,
+}) {
   const [claim] = await rpc(supabaseUrl, serviceKey, 'claim_staff_response_delivery',
-    { p_id:outcome.messageId,p_user_id:userId,p_lease_seconds:120 });
+    { p_id:messageId,p_user_id:userId,p_lease_seconds:120 });
   if (!claim?.claimed) return { handled:true, reason:'already_claimed' };
   const meta = await sendMetaMessageImpl({
     url:`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
     accessToken:process.env.WHATSAPP_ACCESS_TOKEN,
-    payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:staffResponseText} },
+    payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:text} },
   }).catch((e)=>({ok:false,metaError:{message:e.message}}));
   if (meta.ok) {
     await rpc(supabaseUrl,serviceKey,'complete_staff_response_delivery',
-      {p_id:outcome.messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_transport_message_id:meta.messageId,p_delivered_at:new Date().toISOString()});
+      {p_id:messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_transport_message_id:meta.messageId,p_delivered_at:new Date().toISOString()});
     return {handled:true,reason:'delivered'};
   }
   await rpc(supabaseUrl,serviceKey,'fail_staff_response_delivery',
-    {p_id:outcome.messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_error:'meta_delivery_failed',p_failed_at:new Date().toISOString()});
+    {p_id:messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_error:'meta_delivery_failed',p_failed_at:new Date().toISOString()});
   return {handled:false,reason:'delivery_failed'};
+}
+
+// ── P3 staff-reply clarification ─────────────────────────────────────────
+// Classifications that are about a task. Anything else (routine_question,
+// clarification_request, unclear) is never turned into a task question.
+const TASK_RELATED_CLASSIFICATIONS = new Set([
+  'blocker', 'substitution_request', 'task_update', 'completion_confirmation', 'owner_decision_required',
+]);
+const CLARIFICATION_MAX_CANDIDATES = 9;
+const CLARIFICATION_DEADLINE_SECONDS = 30 * 60;
+
+function parseClarificationChoice(body) {
+  const match = /^\s*([0-9])\s*[.)]?\s*$/.exec(String(body ?? ''));
+  return match ? Number(match[1]) : null;
+}
+
+function buildTextTaskClarification(tasks) {
+  return [
+    'Which task is this about?',
+    ...tasks.map((task, index) => `${index + 1}. ${String(task.description || '').replace(/\s+/g, ' ').trim().slice(0, 80)}`),
+    '',
+    "Reply with the number, or 0 if it's about something else.",
+  ].join('\n');
+}
+
+async function openTaskClarification({ supabaseUrl, serviceKey, userId, person, staffMessageId }) {
+  try {
+    const pending = await restSelect(supabaseUrl, serviceKey, 'tasks',
+      `user_id=eq.${encodeURIComponent(userId)}&status=eq.pending&select=id,description,assigned_to,created_at&order=created_at.desc&limit=100`);
+    const personName = String(person.name || '').trim().toLowerCase();
+    const candidates = pending
+      .filter((task) => personName && String(task.assigned_to || '').trim().toLowerCase() === personName)
+      .slice(0, CLARIFICATION_MAX_CANDIDATES);
+    if (candidates.length === 0) return null;
+    const [row] = await rpc(supabaseUrl, serviceKey, 'open_staff_reply_clarification', {
+      p_staff_message_id: staffMessageId,
+      p_user_id: userId,
+      p_candidate_task_ids: candidates.map((task) => task.id),
+      p_question_text: buildTextTaskClarification(candidates),
+      p_deadline_seconds: CLARIFICATION_DEADLINE_SECONDS,
+    });
+    return row?.question_text ? row : null;
+  } catch (error) {
+    // Never blocks the staff reply or the owner escalation; the message
+    // simply stays unlinked, exactly as before this feature.
+    console.error('[whatsapp-webhook] staff reply clarification not opened', {
+      staffMessageId, reason: error?.message || String(error),
+    });
+    return null;
+  }
+}
+
+const CLARIFICATION_ANSWER_REPLIES = {
+  unrelated: "Thanks, noted that it isn't about one of those tasks.",
+  expired: 'That question has expired. Please use WhatsApp Reply on the task message you mean and send it again.',
+  conflict: 'I already noted a different answer for that message, so I kept the first one.',
+  task_not_eligible: "That task is no longer open, so I haven't linked it.",
+};
+
+async function handleClarificationAnswer({
+  supabaseUrl, serviceKey, userId, person, msg, sender, phoneNumberId, choice, sendMetaMessageImpl,
+}) {
+  const now = new Date().toISOString();
+  let clarification = null;
+  if (msg.contextMessageId) {
+    // A quote-reply to the question itself names the clarification exactly.
+    const asked = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
+      `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&response_transport_message_id=eq.${encodeURIComponent(msg.contextMessageId)}&select=id&limit=2`);
+    if (asked.length === 1) {
+      const rows = await restSelect(supabaseUrl, serviceKey, 'staff_reply_clarifications',
+        `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&staff_message_id=eq.${encodeURIComponent(asked[0].id)}&select=id,candidate_task_ids,status&limit=1`);
+      clarification = rows[0] || null;
+    }
+  }
+  if (!clarification) {
+    // A bare number counts only when exactly one clarification is live.
+    const live = await restSelect(supabaseUrl, serviceKey, 'staff_reply_clarifications',
+      `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&status=eq.open&deadline_at=gt.${encodeURIComponent(now)}&select=id,candidate_task_ids,status&limit=2`);
+    if (live.length === 0) return null;
+    if (live.length > 1) clarification = { ambiguous: true };
+    else clarification = live[0];
+  }
+
+  const [claim] = await rpc(supabaseUrl, serviceKey, 'claim_staff_message', {
+    p_user_id: userId,
+    p_person_id: person.id,
+    p_task_id: null,
+    p_thread_id: msg.contextMessageId || null,
+    p_source: 'whatsapp',
+    p_external_message_id: msg.messageId,
+    p_inbound_text: msg.body,
+    p_received_at: timestampToIso(msg.timestamp),
+  });
+  if (!claim?.is_new) {
+    // Replay of an answer already being handled: never resolve twice. A
+    // completed answer only gets its stored reply (re)delivered.
+    if (claim?.processing_status !== 'completed') return { handled: true, reason: 'clarification_answer_in_progress' };
+    return deliverStaffResponse({
+      supabaseUrl, serviceKey, userId, messageId: claim.message_id,
+      phoneNumberId, sender, text: await storedResponse(supabaseUrl, serviceKey, claim.message_id), sendMetaMessageImpl,
+    });
+  }
+
+  try {
+    return await answerClarification({
+      supabaseUrl, serviceKey, userId, person, sender, phoneNumberId, choice,
+      clarification, answerMessageId: claim.message_id, sendMetaMessageImpl,
+    });
+  } catch (error) {
+    // Truthful failure: the answer is recorded as failed, nothing is linked
+    // by guesswork, and no reply claims success.
+    console.error('[whatsapp-webhook] clarification answer failed', {
+      messageId: claim.message_id, reason: error?.message || String(error),
+    });
+    await rpc(supabaseUrl, serviceKey, 'fail_staff_message', {
+      p_id: claim.message_id, p_user_id: userId,
+      p_processing_error: String(error?.message || 'clarification_answer_failed').slice(0, 500),
+    }).catch(() => {});
+    return { handled: false, reason: 'clarification_answer_failed' };
+  }
+}
+
+async function answerClarification({
+  supabaseUrl, serviceKey, userId, person, sender, phoneNumberId, choice,
+  clarification, answerMessageId, sendMetaMessageImpl,
+}) {
+  let reply;
+  if (clarification.ambiguous) {
+    reply = 'I have more than one open question for you. Please use WhatsApp Reply on the question you are answering and send the number again.';
+  } else {
+    const [resolved] = await rpc(supabaseUrl, serviceKey, 'resolve_staff_reply_clarification', {
+      p_clarification_id: clarification.id,
+      p_user_id: userId,
+      p_person_id: person.id,
+      p_choice: choice,
+      p_answer_staff_message_id: answerMessageId,
+    });
+    const outcome = resolved?.outcome;
+    if ((outcome === 'linked' || outcome === 'already_resolved') && resolved?.resolved_task_id) {
+      const [task] = await restSelect(supabaseUrl, serviceKey, 'tasks',
+        `id=eq.${encodeURIComponent(resolved.resolved_task_id)}&user_id=eq.${encodeURIComponent(userId)}&select=description`);
+      const description = String(task?.description || '').replace(/\s+/g, ' ').trim();
+      reply = description ? `Thanks, noted. This is about: ${description}` : 'Thanks, noted.';
+    } else if (outcome === 'unrelated' || outcome === 'already_resolved') {
+      reply = CLARIFICATION_ANSWER_REPLIES.unrelated;
+    } else if (outcome === 'invalid_choice') {
+      const count = Array.isArray(clarification.candidate_task_ids) ? clarification.candidate_task_ids.length : 0;
+      reply = `Please reply with a number from 1 to ${count}, or 0 if it's about something else.`;
+    } else {
+      reply = CLARIFICATION_ANSWER_REPLIES[outcome] || CLARIFICATION_ANSWER_REPLIES.conflict;
+    }
+  }
+
+  // The answer itself is stored as a handled message: never a blocker,
+  // never a completion, never an owner escalation.
+  await rpc(supabaseUrl, serviceKey, 'complete_staff_message', {
+    p_id: answerMessageId,
+    p_user_id: userId,
+    p_classification: 'task_update',
+    p_carson_response: reply,
+    p_next_action_owner: 'nobody',
+    p_user_facing_state: 'Completed',
+    p_owner_attention_required: false,
+    p_escalation_reason: null,
+    p_responded_at: new Date().toISOString(),
+  });
+  return deliverStaffResponse({
+    supabaseUrl, serviceKey, userId, messageId: answerMessageId,
+    phoneNumberId, sender, text: reply, sendMetaMessageImpl,
+  });
+}
+
+async function storedResponse(supabaseUrl, serviceKey, messageId) {
+  const [row] = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
+    `id=eq.${encodeURIComponent(messageId)}&select=carson_response`);
+  return row?.carson_response || 'Thanks, noted.';
 }
 
 async function resolveInboundStaffTask({

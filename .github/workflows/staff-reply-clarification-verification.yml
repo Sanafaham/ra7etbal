@@ -1,0 +1,87 @@
+name: staff-reply-clarification-verification
+
+"on":
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: staff-reply-clarification-verification
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20261011120000_staff_reply_clarifications(\.rollback)?\.sql|20260720_create_staff_messages\.sql|20260724_staff_message_response_delivery\.sql|20260726_staff_escalation_owner_decisions\.sql|20260727_staff_escalation_owner_notification_lease\.sql|verification/(00_bootstrap_minimal_auth\.sql|staff_reply_clarifications_.*))$|^\.github/workflows/staff-reply-clarification-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply prerequisites
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+          for f in verification/00_bootstrap_minimal_auth.sql 20260720_create_staff_messages.sql \
+                   20260724_staff_message_response_delivery.sql 20260726_staff_escalation_owner_decisions.sql \
+                   20260727_staff_escalation_owner_notification_lease.sql verification/staff_reply_clarifications_bootstrap.sql; do
+            psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/$f"
+          done
+
+      - name: Apply forward migration and verify
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/staff_reply_clarifications_verification.sql"
+          bash "$MIGRATIONS/verification/staff_reply_clarifications_concurrency.sh"
+
+      - name: Rollback, confirm removal, reapply and verify again
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          before=$(psql -qAt -c "SELECT count(*) FROM public.staff_messages")
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.rollback.sql"
+          psql -v ON_ERROR_STOP=1 -qAt -c "DO \$\$ BEGIN
+            IF to_regclass('public.staff_reply_clarifications') IS NOT NULL THEN RAISE EXCEPTION 'FAIL: table survived rollback'; END IF;
+            IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('open_staff_reply_clarification','resolve_staff_reply_clarification')) THEN RAISE EXCEPTION 'FAIL: function survived rollback'; END IF;
+            IF to_regprocedure('public.claim_owner_escalation_notification(uuid,uuid,integer)') IS NULL THEN RAISE EXCEPTION 'FAIL: existing function lost'; END IF;
+          END \$\$;"
+          after=$(psql -qAt -c "SELECT count(*) FROM public.staff_messages")
+          [ "$before" = "$after" ] || { echo "FAIL: staff_messages rows changed by rollback"; exit 1; }
+          psql -v ON_ERROR_STOP=1 -q -f "$MIGRATIONS/20261011120000_staff_reply_clarifications.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/staff_reply_clarifications_verification.sql"
