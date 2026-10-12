@@ -425,7 +425,9 @@
         "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)",
         "api/_owner-command-executor.js:invokeSendWhatsappTask (in-process caller of the default-exported handler; attaches the internal-secret header)",
         "api/_s01-deployment-verification.js:verifyDeploymentRequest / credentialProof",
-        "scripts/s01-verification-operator.mjs:createOperatorChallenge"
+        "scripts/s01-verification-operator.mjs:createOperatorChallenge",
+        "api/_s01-verifier-only.js:handleVerifierOnly",
+        "scripts/s01-verifier-artifact.mjs:buildVerifierArtifact"
       ],
       "shared_dependencies": [
         "api/send-whatsapp-task.js",
@@ -451,7 +453,8 @@
         "api/process-delegation-escalations.testmode-auth.test.js",
         "api/_owner-command-executor.send-whatsapp-task-auth.test.js",
         "api/send-whatsapp-task.test.js",
-        "api/s01-deployment-verification.test.js"
+        "api/s01-deployment-verification.test.js",
+        "scripts/s01-verifier-artifact.test.mjs"
       ],
       "protected_suite": true,
       "golden_journey_required": false,
