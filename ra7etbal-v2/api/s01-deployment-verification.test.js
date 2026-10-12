@@ -100,6 +100,16 @@ describe('S01 default-disabled, isolated deployment verification', () => {
   it.each(['http://synthetic-store.upstash.io','https://evil.test','https://synthetic-store.upstash.io/path','https://synthetic-store.upstash.io?token=bad'])('refuses nonce-store destination %s', async url => {
     env.S01_NONCE_STORE_URL=url;expect((await run(fresh().request)).status).toBe(403);expect(calls).toHaveLength(0);
   });
+  it('uses the provider-native prefixed nonce binding without exporting its secrets', async () => {
+    env.S01_NONCE_KV_REST_API_URL=env.S01_NONCE_STORE_URL;env.S01_NONCE_KV_REST_API_TOKEN=env.S01_NONCE_STORE_TOKEN;
+    delete env.S01_NONCE_STORE_URL;delete env.S01_NONCE_STORE_TOKEN;
+    transport.mockResolvedValue(json({result:'OK'}));expect((await run(fresh().request)).status).toBe(200);
+    expect(transport.mock.calls[0][0]).toBe(env.S01_NONCE_KV_REST_API_URL);
+  });
+  it('does not fall back around an explicitly invalid primary binding', async () => {
+    env.S01_NONCE_KV_REST_API_URL=env.S01_NONCE_STORE_URL;env.S01_NONCE_KV_REST_API_TOKEN=env.S01_NONCE_STORE_TOKEN;
+    env.S01_NONCE_STORE_TOKEN='';expect((await run(fresh().request)).status).toBe(403);expect(calls).toHaveLength(0);
+  });
   it('response cannot be reused as ordinary WhatsApp authentication', async () => {
     const proof=(await run(fresh().request)).body;calls.length=0;transport.mockClear();
     const res=await endpoint({to:'synthetic',messageText:'must not send'}, {'x-ra7etbal-internal-secret':proof.proof});expect(res.statusCode).toBe(401);expect(calls).toHaveLength(0);

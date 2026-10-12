@@ -77,8 +77,8 @@ export async function verifyDeploymentRequest(body, {
     const projectRef = projectFromEndpoint(env.SUPABASE_URL);
     if (projectRef !== c.projectRef || typeof env.SUPABASE_SERVICE_ROLE_KEY !== 'string'
       || !env.SUPABASE_SERVICE_ROLE_KEY.trim()) throw new Error();
-    const endpoint = storeEndpoint(env.S01_NONCE_STORE_URL);
-    const token = env.S01_NONCE_STORE_TOKEN;
+    const endpoint = storeEndpoint(env.S01_NONCE_STORE_URL ?? env.S01_NONCE_KV_REST_API_URL);
+    const token = env.S01_NONCE_STORE_TOKEN ?? env.S01_NONCE_KV_REST_API_TOKEN;
     if (typeof token !== 'string' || !token.trim()) throw new Error();
     // No caller-selected URL/key, pipeline, fallback, or read-then-write race.
     // Retain the marker beyond expiry: crashes/lost replies burn the challenge.
