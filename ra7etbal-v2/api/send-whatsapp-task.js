@@ -1,3 +1,4 @@
+import { verifyDeploymentRequest } from './_s01-deployment-verification.js';
 import {
   beginWhatsappDelivery,
   authorizeWhatsappOperation,
@@ -74,6 +75,14 @@ function isValidInternalSecret(req) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
+  }
+
+  // A verification request always terminates here, including malformed/disabled
+  // requests. It cannot enter JWT lookup, S01 authorization or provider delivery.
+  if (req.body && Object.hasOwn(req.body, 's01Verification')) {
+    res.setHeader?.('Cache-Control', 'no-store');
+    const result = await verifyDeploymentRequest(req.body);
+    return res.status(result.status).json(result.body);
   }
 
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
