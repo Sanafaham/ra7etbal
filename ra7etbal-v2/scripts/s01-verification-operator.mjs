@@ -5,13 +5,14 @@ import { PURPOSE, challengeTranscript, credentialProof } from '../api/_s01-deplo
 // The caller must acquire the canonical key from project-specific Supabase admin
 // evidence. Equality alone does not assert issuer provenance or key privilege.
 export function createOperatorChallenge({ privateKey, deploymentId, commitSha, projectRef, now = Math.floor(Date.now() / 1000) }) {
-  const challenge = { purpose: PURPOSE, nonce: randomBytes(32).toString('base64url'),
-    issuedAt: now, expiresAt: now + 60, deploymentId, commitSha, projectRef };
+  const challenge = Object.freeze({ purpose: PURPOSE, nonce: randomBytes(32).toString('base64url'),
+    issuedAt: now, expiresAt: now + 60, deploymentId, commitSha, projectRef });
   const signature = sign(null, challengeTranscript(challenge), privateKey).toString('base64url');
   let consumed = false;
   return {
-    request: { s01Verification: { challenge, signature } },
-    compare(proof, { canonicalKey, adminProjectRef, adminPrivilege, now: checkedAt = Math.floor(Date.now() / 1000) }) {
+    // Return a separate transport object: callers cannot change the verifier's transcript.
+    request: { s01Verification: { challenge: structuredClone(challenge), signature } },
+    compare(proof, { canonicalKey, adminProjectRef, adminPrivilege, now: checkedAt = Math.floor(Date.now() / 1000) } = {}) {
       if (consumed) return false;
       consumed = true; // Even a bad/missing response requires a fresh challenge.
       if (checkedAt < challenge.issuedAt || checkedAt >= challenge.expiresAt

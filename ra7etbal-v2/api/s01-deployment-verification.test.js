@@ -107,6 +107,20 @@ describe('S01 default-disabled, isolated deployment verification', () => {
   it('operator rejects wrong key even if URL/project matches', async () => {
     const operator=fresh();const proof=(await run(operator.request)).body;expect(operator.compare(proof,{canonicalKey:'synthetic-other-key',adminProjectRef:projectRef,adminPrivilege:'service_role',now})).toBe(false);
   });
+  it('transport mutation cannot replace the independently retained operator transcript', async () => {
+    const operator=fresh();const original=structuredClone(operator.request);
+    operator.request.s01Verification.challenge.nonce='B'.repeat(43);
+    const proof=(await run(original)).body;
+    const options={canonicalKey:'synthetic-canonical-key',adminProjectRef:projectRef,adminPrivilege:'service_role',now};
+    expect(operator.compare(proof,options)).toBe(true);
+    // The internal signed challenge is original, not the caller-mutated transport.
+    const replaced=fresh();const foreign=(await run(replaced.request)).body;
+    const freshVerifier=fresh();freshVerifier.request.s01Verification.challenge=structuredClone(replaced.request.s01Verification.challenge);
+    expect(freshVerifier.compare(foreign,options)).toBe(false);
+  });
+  it('missing independent admin comparison evidence fails closed', async () => {
+    const operator=fresh();const proof=(await run(operator.request)).body;expect(operator.compare(proof)).toBe(false);
+  });
   it('operator cannot accept a proof twice', async () => {
     const operator=fresh();const proof=(await run(operator.request)).body;const options={canonicalKey:'synthetic-canonical-key',adminProjectRef:projectRef,adminPrivilege:'service_role',now};expect(operator.compare(proof,options)).toBe(true);expect(operator.compare(proof,options)).toBe(false);
   });
