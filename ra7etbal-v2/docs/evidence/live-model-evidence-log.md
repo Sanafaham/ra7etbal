@@ -1,0 +1,1 @@
+- 2026-09-30: live-model evidence run requested for main e0f6a25 (PR #422 content boundary) via the `run-live-model-evidence` label.

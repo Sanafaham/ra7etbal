@@ -68,9 +68,20 @@ async function callModel(utterance: string, recipient: string): Promise<{ text: 
       messages: [{ role: "user", content: buildClassificationPrompt(utterance, recipient) }],
     }),
   });
-  const body = (await res.json()) as { content?: Array<{ text?: string }>; error?: { type?: string }; stop_reason?: string };
-  // Only the provider's error type is reported — never request headers or the key.
-  if (!res.ok || body.error) throw new Error(`model call failed: HTTP ${res.status} ${body.error?.type ?? ""}`.trim());
+  const body = (await res.json()) as {
+    content?: Array<{ text?: string }>;
+    error?: { type?: string; message?: string };
+    stop_reason?: string;
+  };
+  // Only the provider's error type and its own error message are reported —
+  // never request headers or the key. The message is server-written text; as
+  // a belt-and-braces guard any occurrence of the key is redacted and it is
+  // capped at 300 characters.
+  if (!res.ok || body.error) {
+    const key = process.env.ANTHROPIC_API_KEY ?? "";
+    const message = (body.error?.message ?? "").split(key || "\u0000").join("[redacted]").slice(0, 300);
+    throw new Error(`model call failed: HTTP ${res.status} ${body.error?.type ?? ""} ${JSON.stringify(message)}`.trim());
+  }
   return { text: body.content?.[0]?.text ?? "", stopReason: body.stop_reason };
 }
 
