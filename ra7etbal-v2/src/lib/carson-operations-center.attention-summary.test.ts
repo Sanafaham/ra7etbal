@@ -42,6 +42,7 @@ const {
   fetchAttentionEvidence,
   fetchAttentionSummary,
   fetchAttentionPresentation,
+  fetchVoiceAttentionPresentation,
   markAttentionCapturesSurfaced,
   renderAttentionSummary,
 } = await import("./carson-operations-center");
@@ -191,7 +192,7 @@ describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
     }
   });
 
-  it("classifies open staff escalations as Waiting (Needs You source)", async () => {
+  it("classifies an open staff escalation as Needs You — it is the owner's decision, not something she is waiting on", async () => {
     mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([
       {
         id: "esc-1",
@@ -205,7 +206,10 @@ describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
       },
     ]);
     const evidence = await fetchAttentionEvidence();
-    expect(evidence.waiting.some((i) => i.id === "esc-1" && i.label.includes("Christopher"))).toBe(true);
+    expect(evidence.needsYou).toEqual([
+      expect.objectContaining({ id: "esc-1", label: "Christopher: needs a decision on guest count", type: "staff_escalation", category: "needsYou", assignee: "Christopher" }),
+    ]);
+    expect(evidence.waiting.some((i) => i.id === "esc-1")).toBe(false);
   });
 
   it("never manufactures urgency when nothing is actually escalated or overdue", async () => {
@@ -472,5 +476,131 @@ describe("fetchAttentionSummary — outer failure safety net", () => {
     const result = await fetchAttentionSummary();
     expect(typeof result).toBe("string");
     expect(result).toMatch(/couldn't check/i);
+  });
+});
+
+// P3 blocked delegation (2026-10-14): Christopher reports salmon is
+// unavailable on the salmon delegation. Before: the escalation sat in Waiting
+// next to the same delegation, and Carson said "Nothing needs your direct
+// decision right now". After: one Needs You item that names the delegation
+// and reports Christopher's words as his own.
+describe("blocked delegation — a linked staff escalation is one Needs You item", () => {
+  const salmon = () =>
+    makeTask({ id: "t-salmon", description: "Get salmon for dinner.", type: "delegation", assigned_to: "Christopher" });
+  const pizza = () =>
+    makeTask({ id: "t-pizza", description: "Make a pizza for dinner", type: "delegation", assigned_to: "Christopher" });
+  const salmonEscalation = (overrides: Record<string, unknown> = {}) => ({
+    id: "esc-salmon",
+    staffName: "Christopher",
+    inboundText: "Salmon is unavailable",
+    escalationReason: "Christopher says salmon is unavailable.",
+    receivedAt: new Date().toISOString(),
+    taskId: "t-salmon",
+    decisionId: "dec-salmon",
+    deepLinkToken: "tok-salmon",
+    ...overrides,
+  });
+
+  it("no false all-clear: the summary asks for Sana's decision and names the delegation once", async () => {
+    mocks.listTasks.mockResolvedValue([salmon(), pizza()]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([salmonEscalation()]);
+
+    const evidence = await fetchAttentionEvidence();
+    const summary = renderAttentionSummary(evidence);
+
+    expect(summary).not.toContain("Nothing needs your direct decision");
+    expect(summary).toContain(
+      "Needs your decision: Christopher: Get salmon for dinner. Reported problem: Christopher says salmon is unavailable.",
+    );
+    expect(evidence.needsYou.map((i) => i.id)).toEqual(["esc-salmon"]);
+    // The delegation is not listed a second time; the unrelated delegation still waits.
+    expect(evidence.waiting.map((i) => i.id)).toEqual(["t-pizza"]);
+    expect(summary).toContain("1 thing you're waiting on");
+  });
+
+  it("reports the staff member's claim as a reported problem — never as completion, approval or a substitute", async () => {
+    const task = salmon();
+    mocks.listTasks.mockResolvedValue([task]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([salmonEscalation()]);
+
+    const evidence = await fetchAttentionEvidence();
+    const [item] = evidence.needsYou;
+
+    expect(item).toMatchObject({ type: "staff_escalation", status: "pending", category: "needsYou", assignee: "Christopher" });
+    expect(item.label).not.toMatch(/done|completed|approved|instead|sea bass/i);
+    expect(task.status).toBe("pending");
+    expect(task.confirmed_at).toBeNull();
+  });
+
+  it("voice and typed get the same item: the whole list, the Christopher view and the summary all name it once", async () => {
+    mocks.listTasks.mockResolvedValue([salmon(), pizza()]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([salmonEscalation()]);
+
+    const typed = renderAttentionSummary(await fetchAttentionEvidence());
+    const summary = await fetchVoiceAttentionPresentation({ kind: "summary" });
+    const all = await fetchVoiceAttentionPresentation({ kind: "all" });
+    const christopher = await fetchVoiceAttentionPresentation({ kind: "person", name: "Christopher" });
+
+    const merged = "Christopher: Get salmon for dinner. Reported problem: Christopher says salmon is unavailable.";
+    expect(typed).toContain(merged.slice(0, -1));
+    for (const presentation of [summary, all, christopher]) {
+      expect(presentation.text).toContain("Christopher says salmon is unavailable");
+      expect(presentation.text).not.toContain("Nothing needs your direct decision");
+      expect(presentation.text.match(/salmon for dinner/gi) ?? []).toHaveLength(1);
+    }
+    expect(christopher.text).toContain("Make a pizza for dinner");
+  });
+
+  it("an escalation with no task link stays a standalone Needs You item; delegations keep waiting", async () => {
+    mocks.listTasks.mockResolvedValue([salmon()]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([salmonEscalation({ taskId: null })]);
+
+    const evidence = await fetchAttentionEvidence();
+
+    expect(evidence.needsYou).toEqual([
+      expect.objectContaining({ id: "esc-salmon", label: "Christopher: Christopher says salmon is unavailable." }),
+    ]);
+    expect(evidence.waiting.map((i) => i.id)).toEqual(["t-salmon"]);
+  });
+
+  it("a link to a task that is not a pending Waiting delegation never merges or resurfaces that task", async () => {
+    const done = makeTask({ id: "t-done", description: "Old salmon run", type: "delegation", assigned_to: "Christopher", status: "done" });
+    mocks.listTasks.mockResolvedValue([done, pizza()]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([
+      salmonEscalation({ id: "esc-done", taskId: "t-done" }),
+      salmonEscalation({ id: "esc-missing", taskId: "t-not-visible" }),
+    ]);
+
+    const evidence = await fetchAttentionEvidence();
+
+    expect(evidence.needsYou.map((i) => i.label)).toEqual([
+      "Christopher: Christopher says salmon is unavailable.",
+      "Christopher: Christopher says salmon is unavailable.",
+    ]);
+    expect(evidence.waiting.map((i) => i.id)).toEqual(["t-pizza"]);
+    expect(JSON.stringify(evidence)).not.toContain("Old salmon run");
+  });
+
+  it("an escalation from a different staff member never absorbs someone else's delegation", async () => {
+    mocks.listTasks.mockResolvedValue([salmon()]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([
+      salmonEscalation({ id: "esc-grace", staffName: "Grace", escalationReason: "Grace asks about the guest room.", taskId: null }),
+    ]);
+
+    const evidence = await fetchAttentionEvidence();
+
+    expect(evidence.needsYou.map((i) => i.label)).toEqual(["Grace: Grace asks about the guest room."]);
+    expect(evidence.waiting.map((i) => i.id)).toEqual(["t-salmon"]);
+  });
+
+  it("when tasks could not be read, the escalation still reaches Needs You and the answer is marked partial", async () => {
+    mocks.listTasks.mockRejectedValue(new Error("db timeout"));
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([salmonEscalation()]);
+
+    const evidence = await fetchAttentionEvidence();
+
+    expect(evidence.completeness).toBe("partial");
+    expect(evidence.needsYou.map((i) => i.id)).toEqual(["esc-salmon"]);
+    expect(renderAttentionSummary(evidence)).toMatch(/may be incomplete/);
   });
 });
