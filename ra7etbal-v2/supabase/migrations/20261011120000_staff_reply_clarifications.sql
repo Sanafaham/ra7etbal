@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS public.staff_reply_clarifications (
   status                   text        NOT NULL DEFAULT 'open'
     CHECK (status IN ('open', 'linked', 'unrelated')),
   deadline_at              timestamptz NOT NULL,
-  resolved_task_id         uuid        NULL REFERENCES public.tasks(id) ON DELETE SET NULL,
+  resolved_task_id         uuid        NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
   answer_staff_message_id  uuid        NULL REFERENCES public.staff_messages(id) ON DELETE SET NULL,
   resolved_at              timestamptz NULL,
   created_at               timestamptz NOT NULL DEFAULT now(),

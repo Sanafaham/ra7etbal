@@ -217,4 +217,57 @@ BEGIN
   RAISE NOTICE 'PASS: 5. server-only privileges and RLS';
 END $$;
 
+-- 6. Owner decision: linked clarifications are disposable operational rows.
+-- Task deletion must not delete the independently retained conversation/decision.
+DO $$
+DECLARE
+  o uuid; x uuid; p uuid; op uuid; t uuid; u uuid; foreign_t uuid;
+  m uuid; answer_m uuid; keep_m uuid; foreign_m uuid; c uuid; keep_c uuid; foreign_c uuid; d uuid;
+  msg_before jsonb; answer_before jsonb; decision_before jsonb; unrelated_before jsonb;
+BEGIN
+  SELECT value INTO o FROM _src_ids WHERE key='owner';
+  SELECT value INTO x FROM _src_ids WHERE key='other';
+  SELECT value INTO p FROM _src_ids WHERE key='person';
+  SELECT value INTO op FROM _src_ids WHERE key='other_person';
+  INSERT INTO tasks(user_id,status,assigned_to,description) VALUES(o,'pending','Christopher','Delete this synthetic task') RETURNING id INTO t;
+  INSERT INTO tasks(user_id,status,assigned_to,description) VALUES(o,'pending','Christopher','Keep this synthetic task') RETURNING id INTO u;
+  INSERT INTO tasks(user_id,status,assigned_to,description) VALUES(x,'pending','Christopher','Other tenant task') RETURNING id INTO foreign_t;
+  m := pg_temp._src_msg(o,p,'Original incident retained');
+  answer_m := pg_temp._src_msg(o,p,'1');
+  keep_m := pg_temp._src_msg(o,p,'Unrelated incident retained');
+  foreign_m := pg_temp._src_msg(x,op,'Other tenant incident retained');
+  UPDATE staff_messages SET carson_response='Which task? 1. deleted task' WHERE id=m;
+  INSERT INTO staff_escalation_owner_decisions(staff_message_id,user_id,task_id) VALUES(m,o,NULL) RETURNING id INTO d;
+  SELECT clarification_id INTO c FROM open_staff_reply_clarification(m,o,ARRAY[t],'Which task? 1. deleted task',1800);
+  PERFORM resolve_staff_reply_clarification(c,o,p,1,answer_m);
+  SELECT clarification_id INTO keep_c FROM open_staff_reply_clarification(keep_m,o,ARRAY[u],'Keep question',1800);
+  PERFORM resolve_staff_reply_clarification(keep_c,o,p,1,NULL);
+  SELECT clarification_id INTO foreign_c FROM open_staff_reply_clarification(foreign_m,x,ARRAY[foreign_t],'Other tenant question',1800);
+  PERFORM resolve_staff_reply_clarification(foreign_c,x,op,1,NULL);
+  SELECT to_jsonb(sm)-'task_id'-'updated_at' INTO msg_before FROM staff_messages sm WHERE id=m;
+  SELECT to_jsonb(sm) INTO answer_before FROM staff_messages sm WHERE id=answer_m;
+  SELECT to_jsonb(sd)-'task_id'-'updated_at' INTO decision_before FROM staff_escalation_owner_decisions sd WHERE id=d;
+  SELECT jsonb_agg(to_jsonb(sc) ORDER BY sc.id) INTO unrelated_before FROM staff_reply_clarifications sc WHERE id IN(keep_c,foreign_c);
+
+  DELETE FROM tasks WHERE id=t;
+  IF EXISTS(SELECT 1 FROM tasks WHERE id=t) OR EXISTS(SELECT 1 FROM staff_reply_clarifications WHERE id=c) THEN
+    RAISE EXCEPTION 'FAIL 6: deleted task or linked clarification survived';
+  END IF;
+  IF (SELECT count(*) FROM tasks WHERE id IN(u,foreign_t))<>2
+     OR (SELECT jsonb_agg(to_jsonb(sc) ORDER BY sc.id) FROM staff_reply_clarifications sc WHERE id IN(keep_c,foreign_c)) IS DISTINCT FROM unrelated_before THEN
+    RAISE EXCEPTION 'FAIL 6: unrelated same-owner or foreign-owner records changed';
+  END IF;
+  IF (SELECT to_jsonb(sm)-'task_id'-'updated_at' FROM staff_messages sm WHERE id=m) IS DISTINCT FROM msg_before
+     OR (SELECT task_id FROM staff_messages WHERE id=m) IS NOT NULL
+     OR (SELECT to_jsonb(sm) FROM staff_messages sm WHERE id=answer_m) IS DISTINCT FROM answer_before
+     OR (SELECT to_jsonb(sd)-'task_id'-'updated_at' FROM staff_escalation_owner_decisions sd WHERE id=d) IS DISTINCT FROM decision_before
+     OR (SELECT task_id FROM staff_escalation_owner_decisions WHERE id=d) IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL 6: retained original/answer/owner-decision history changed beyond existing task-FK cleanup';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.staff_reply_clarifications'::regclass AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'FAIL 6: unexpected clarification trigger could create a side effect';
+  END IF;
+  RAISE NOTICE 'PASS: 6. task deletion cascades only linked clarifications; unrelated records and retained history preserved';
+END $$;
+
 SELECT 'staff reply clarification verification complete' AS status;
