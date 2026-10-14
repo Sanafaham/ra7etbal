@@ -1689,8 +1689,8 @@ describe.skip('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-o
 // that fallback's eligibility to plain text that deterministically looks
 // like a pre-action substitution/permission request (see
 // _staff-substitution-intent.js) — never to arbitrary text.
-describe('task-linked pre-action substitution_request — recent-delivery fallback widened to text', () => {
-  it('links a plain-text pre-action substitution ask to the one matching recent pending task', async () => {
+describe('plain-text pre-action substitution_request — never linked by recency (P3 staff-reply clarification, 2026-10-11)', () => {
+  it('does not link a plain-text substitution ask to the one recent pending task — recency alone is not task evidence', async () => {
     stubBaseEnv();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }])) // whatsapp_health_state
@@ -1699,10 +1699,6 @@ describe('task-linked pre-action substitution_request — recent-delivery fallba
         whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
       }])) // people
       .mockResolvedValueOnce(jsonResponse([])) // recent photo-evidence staff_messages (none)
-      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-pizza' }])) // recent messages delivered to Christopher
-      .mockResolvedValueOnce(jsonResponse([{
-        id: 'task-pizza', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Make pepperoni pizza',
-      }])) // loadValidatedStaffTask
       .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages (external_message_id) check
       .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-sub', claimed: true, claim_token: 'claim-1' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-sub' }]));
@@ -1718,11 +1714,12 @@ describe('task-linked pre-action substitution_request — recent-delivery fallba
 
     expect(result).toEqual({ handled: true, reason: 'delivered' });
     expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'task-pizza' }),
+      expect.objectContaining({ taskId: null }),
       expect.any(Object),
     );
+    // The recent-delivery lookup never runs for plain text.
     const deliveryLookupCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.Christopher'));
-    expect(deliveryLookupCall).toBeTruthy();
+    expect(deliveryLookupCall).toBeUndefined();
   });
 
   it('never guesses when multiple pending tasks are plausible — task_ambiguous, no linkage', async () => {
@@ -1849,8 +1846,10 @@ describe('task-linked pre-action substitution_request — recent-delivery fallba
       expect.objectContaining({ taskId: null }),
       expect.any(Object),
     );
+    // Plain text never reaches the recent-delivery fallback, so no task
+    // (this owner's or another's) is even looked up for linking.
     const tasksLookupCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/tasks?') && String(url).includes('id=eq.task-other-owner'));
-    expect(String(tasksLookupCall[0])).toContain('user_id=eq.user-1');
+    expect(tasksLookupCall).toBeUndefined();
   });
 
   it('THE MAIN REVIEW CONDITION — an ordinary unrelated staff message never gets linked merely because a recent pending task exists', async () => {
