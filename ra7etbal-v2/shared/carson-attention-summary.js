@@ -21,8 +21,9 @@
  *                            Updates' own "Upcoming reminders" uses
  *                            (via a local port, see below).
  *   - waiting               — daily-brief.ts's isWaitingTask (Home/Updates'
- *                            own "Waiting"), plus open staff escalations
- *                            (unchanged from the prior shape).
+ *                            own "Waiting"). Open staff escalations go to
+ *                            needsYou (2026-10-14), merged with their linked
+ *                            pending delegation when there is one.
  *   - later                 — daily-brief.ts's isLaterTask, minus anything
  *                            already claimed by the categories above.
  *   - unresolvedCaptures    — unchanged, independent Second Brain Phase 1
@@ -158,18 +159,54 @@ export function composeAttentionEvidence({
     }
   }
 
+  // Open staff escalations are already filtered by the caller to ones that
+  // need the owner (owner_attention_required / "Needs You" with an open or
+  // failed owner decision), so they are the owner's decision, not something
+  // the owner is waiting on (P3 blocked delegation, 2026-10-14: filing them
+  // under Waiting made Carson say "Nothing needs your direct decision" while
+  // Christopher was asking for one). When an escalation is linked to a
+  // pending delegation that is in Waiting, the two are one piece of work:
+  // the delegation leaves Waiting and is named inside the decision item.
+  // The staff member's words are reported as theirs; nothing here completes,
+  // closes, substitutes or sends anything.
   if (staffNeedsYou) {
+    const waitingIndexById = new Map(waiting.map((item, index) => [item.id, index]));
+    const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
+    const mergedTaskIds = new Set();
     for (const e of staffNeedsYou) {
-      waiting.push({
+      const reason = e.escalationReason ?? "needs your decision";
+      const linkedTask = e.taskId && waitingIndexById.has(e.taskId) ? taskById.get(e.taskId) : null;
+      if (linkedTask && linkedTask.status === "pending") {
+        mergedTaskIds.add(linkedTask.id);
+        const wording = String(linkedTask.description ?? "").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "").trim()
+          || waiting[waitingIndexById.get(linkedTask.id)].label;
+        needsYou.push({
+          id: e.id,
+          label: `${e.staffName}: ${wording}. Reported problem: ${reason}`,
+          type: "staff_escalation",
+          status: "pending",
+          dueAt: null,
+          dueDescription: null,
+          assignee: e.staffName ?? null,
+          category: "needsYou",
+        });
+        continue;
+      }
+      needsYou.push({
         id: e.id,
-        label: `${e.staffName}: ${e.escalationReason ?? "needs your decision"}`,
+        label: `${e.staffName}: ${reason}`,
         type: "staff_escalation",
         status: "pending",
         dueAt: null,
         dueDescription: null,
         assignee: e.staffName ?? null,
-        category: "waiting",
+        category: "needsYou",
       });
+    }
+    if (mergedTaskIds.size > 0) {
+      for (let i = waiting.length - 1; i >= 0; i -= 1) {
+        if (mergedTaskIds.has(waiting[i].id)) waiting.splice(i, 1);
+      }
     }
   }
 
