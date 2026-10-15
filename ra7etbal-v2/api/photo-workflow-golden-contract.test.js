@@ -64,9 +64,11 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
     const { default: handler } = await import('./send-whatsapp-task.js');
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{id:'person-1',user_id:'user-1',name:'Christopher',phone:'971500000000'}]))
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }])) // whatsapp_deliveries insert
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/photo.jpg?token=abc' })) // signed url
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/photo.jpg?token=abc' })) // signed url
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) }) // Meta download
       .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-golden' })) // Meta media upload
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.golden-single' }] })) // template send
@@ -80,7 +82,7 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
         messageText: 'Make this for dinner.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/u/t/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: null,
         ownerName: 'Sana',
         recipientName: 'Christopher',
@@ -102,22 +104,20 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
     const { default: handler } = await import('./send-whatsapp-task.js');
     const fakeBuffer = new ArrayBuffer(1024);
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', image_path: 'task-images/user-1/task-1/photo.jpg' }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{id:'person-1',user_id:'user-1',name:'Christopher',phone:'971500000000'}]))
+      // Authorize all references before the primary provider call; proof rows are excluded.
+      .mockResolvedValueOnce(jsonResponse([{ storage_path:'task-images/user-1/task-1/attachments/0.jpg' },{ storage_path:'task-images/user-1/task-1/attachments/1.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }])) // whatsapp_deliveries insert
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.golden-multi' }] })) // primary text template send
       .mockResolvedValueOnce(emptyResponse()) // delivery update
-      // task_attachments lookup — must be filtered to file_name=is.null (J)
-      .mockResolvedValueOnce(jsonResponse([
-        { storage_path: 'task-images/u/t/attachments/0.jpg' },
-        { storage_path: 'task-images/u/t/attachments/1.jpg' },
-      ]))
       // photo 0: signed url, Meta download, Meta upload, freeform send
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/attachments/0.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/0.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
       .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-0' }))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.photo0' }] }))
       // photo 1: signed url, Meta download, Meta upload, freeform send
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/attachments/1.jpg?token=abc' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/1.jpg?token=abc' }))
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
       .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-1' }))
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.photo1' }] }));
@@ -130,7 +130,7 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
         messageText: 'Make these for lunch.',
         confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
         taskId: 'task-1',
-        imagePath: 'task-images/u/t/photo.jpg',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
         attachmentCount: 2,
         ownerName: 'Sana',
         recipientName: 'Christopher',

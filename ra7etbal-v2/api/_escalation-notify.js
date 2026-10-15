@@ -46,7 +46,7 @@
 
 import { findOwnerPhone } from './task-confirm.js';
 import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone, sendProofImageMessage } from './send-whatsapp-task.js';
-import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
+import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure, authorizeOwnerProofImage } from './_whatsapp-delivery.js';
 import { NO_RESPONSE_REVIEW_TYPE, buildNoResponseOwnerMessage, buildNoResponseDeepLink } from './_no-response-handoff.js';
 
 // Review types whose same-task claim supersedes a no_response handoff
@@ -162,6 +162,18 @@ export async function notifyOwnerOfEscalation(input, deps) {
     templateLanguage,
   });
 
+  let authorizedImageContext = null;
+  if (proposedPhotoPath) {
+    try {
+      authorizedImageContext = await authorizeOwnerProofImage({
+        supabaseUrl, serviceKey, userId, taskId, staffMessageId, imagePath: proposedPhotoPath, to: normalizedPhone, fetchImpl,
+      });
+    } catch {
+      await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'image_authorization_denied');
+      return { attempted: false, status: 'failed', reason: 'image_authorization_denied' };
+    }
+  }
+
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl,
     serviceKey,
@@ -259,7 +271,7 @@ export async function notifyOwnerOfEscalation(input, deps) {
         phoneNumberId,
         supabaseUrl,
         serviceKey,
-        imagePath: proposedPhotoPath,
+        imagePath: proposedPhotoPath, userId, taskId, staffMessageId, authorizedContext: authorizedImageContext,
       });
       if (!photoResult.sent) {
         await markWhatsappDeliveryFailed({
@@ -573,6 +585,17 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     }
   }
 
+  let authorizedImageContext = null;
+  if (proofImagePath) {
+    try {
+      authorizedImageContext = await authorizeOwnerProofImage({
+        supabaseUrl, serviceKey, userId, taskId, imagePath: proofImagePath, to: normalizedPhone, fetchImpl,
+      });
+    } catch {
+      return { attempted: false, status: 'failed', reason: 'image_authorization_denied' };
+    }
+  }
+
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl,
     serviceKey,
@@ -684,7 +707,7 @@ export async function notifyOwnerOfTaskReview(input, deps) {
         phoneNumberId,
         supabaseUrl,
         serviceKey,
-        imagePath: proofImagePath,
+        imagePath: proofImagePath, userId, taskId, authorizedContext: authorizedImageContext,
       });
       if (!photoResult.sent) {
         await markWhatsappDeliveryFailed({

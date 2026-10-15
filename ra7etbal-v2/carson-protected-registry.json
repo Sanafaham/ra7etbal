@@ -420,7 +420,7 @@
     },
     {
       "id": "whatsapp_send_authentication_boundary",
-      "contract": "/api/send-whatsapp-task accepts exactly two trusted caller classes and rejects everything else before any WhatsApp send or delivery-evidence write: (1) a browser caller presenting a verified Supabase session JWT, whose derived identity must own every client-supplied resource id (taskId/personId/messageRecordId) that would influence the send; (2) an internal server caller presenting the correct x-ra7etbal-internal-secret header (CRON_SECRET). /api/process-delegation-escalations's testMode query parameter can never bypass its own isAuthorized() check — testMode changes timing thresholds and log labels only, never authentication.",
+      "contract": "/api/send-whatsapp-task accepts exactly two trusted caller classes and rejects everything else before any WhatsApp send or delivery-evidence write: (1) a browser caller presenting a verified Supabase session JWT, whose derived identity must own every client-supplied resource id (taskId/personId/messageRecordId) that would influence the send; (2) an internal server caller presenting the correct x-ra7etbal-internal-secret header (CRON_SECRET). /api/process-delegation-escalations's testMode query parameter can never bypass its own isAuthorized() check — testMode changes timing thresholds and log labels only, never authentication. Verification-only requests are separately Ed25519-authorized, default-disabled and terminate before application operations; they cannot authorize a WhatsApp send. Shared atomic nonce consumption rejects replay across instances.",
       "business_importance": "critical — Remediation 4, Carson Engineering Hardening Project (Strix triage). Prior to this capability, every /api/send-whatsapp-task send mode except sendMode:'routine_message' had zero authentication: any unauthenticated caller could POST an arbitrary phone number and message text and trigger a real WhatsApp send through the business's own Meta credentials. Investigation also found /api/process-delegation-escalations?testMode=true skipped isAuthorized() entirely, letting an unauthenticated caller trigger the real escalation/followup sweep, which itself invokes several of the previously-unauthenticated send-whatsapp-task modes.",
       "production_entry_points": [
         "api/send-whatsapp-task.js (POST handler)",
@@ -431,10 +431,16 @@
         "api/process-delegation-escalations.js:isAuthorized / isTestMode",
         "src/lib/whatsapp.ts:sendWhatsAppTask (attaches the browser session JWT)",
         "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)",
-        "api/_owner-command-executor.js:invokeSendWhatsappTask (in-process caller of the default-exported handler; attaches the internal-secret header)"
+        "api/_owner-command-executor.js:invokeSendWhatsappTask (in-process caller of the default-exported handler; attaches the internal-secret header)",
+        "api/_s01-deployment-verification.js:verifyDeploymentRequest / credentialProof",
+        "scripts/s01-verification-operator.mjs:createOperatorChallenge",
+        "api/_s01-verifier-only.js:handleVerifierOnly",
+        "scripts/s01-verifier-artifact.mjs:buildVerifierArtifact"
       ],
       "shared_dependencies": [
-        "api/send-whatsapp-task.js"
+        "api/send-whatsapp-task.js",
+        "api/_s01-deployment-verification.js",
+        "scripts/s01-verification-operator.mjs"
       ],
       "db": {
         "tables": [
@@ -447,13 +453,16 @@
       },
       "external_boundaries": [
         "WhatsApp/Meta send",
-        "Supabase Auth (JWT verification via /auth/v1/user)"
+        "Supabase Auth (JWT verification via /auth/v1/user)",
+        "Dedicated verification-only atomic nonce store (SET NX EX; no application records)"
       ],
       "focused_tests": [
         "api/send-whatsapp-task.auth-boundary.test.js",
         "api/process-delegation-escalations.testmode-auth.test.js",
         "api/_owner-command-executor.send-whatsapp-task-auth.test.js",
-        "api/send-whatsapp-task.test.js"
+        "api/send-whatsapp-task.test.js",
+        "api/s01-deployment-verification.test.js",
+        "scripts/s01-verifier-artifact.test.mjs"
       ],
       "protected_suite": true,
       "golden_journey_required": false,

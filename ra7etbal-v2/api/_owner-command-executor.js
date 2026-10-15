@@ -287,7 +287,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   }
 
   await insertOnce(supabaseUrl, serviceKey, 'messages', {
-    id: messageId, user_id: userId, task_id: taskId, recipient: person.name,
+    id: messageId, user_id: userId, task_id: taskId, recipient: person.name, person_id: person.id,
     content: messageText, confirmation_url: confirmationLink,
   });
   await updateCommand(supabaseUrl, serviceKey, receipt, userId, {

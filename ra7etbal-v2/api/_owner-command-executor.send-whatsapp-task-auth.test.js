@@ -72,12 +72,12 @@ describe('owner command executor -- real send-whatsapp-task auth boundary (not m
       if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
       if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
       if (target.includes('/people?')) {
-        return response([{ id: 'person-1', name: 'Grace', phone: '+971500000002', whatsapp_opted_in: true }]);
+        return response([{ id: 'person-1', user_id: identity.userId, name: 'Grace', phone: '+971500000002', whatsapp_opted_in: true }]);
       }
       if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
       if (target.includes('/rest/v1/messages?') && (!options.method || options.method === 'GET')) {
         // resolveDeliveryContext's messageRecordId -> user_id/person_id lookup.
-        return response([{ id: 'message-1', user_id: identity.userId, task_id: null, person_id: 'person-1' }]);
+        return response([{ id: receipt.receipt_id, user_id: identity.userId, task_id: null, person_id: 'person-1', recipient: 'Grace' }]);
       }
       if (target.includes('/rest/v1/messages?') && options.method === 'PATCH') {
         // markMessageAccepted's post-send whatsapp_message_id update.
@@ -141,12 +141,12 @@ describe('owner command executor -- real send-whatsapp-task auth boundary (not m
       if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
       if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
       if (target.includes('/people?')) {
-        return response([{ id: 'person-1', name: 'Grace', phone: '+971500000002', whatsapp_opted_in: true }]);
+        return response([{ id: 'person-1', user_id: identity.userId, name: 'Grace', phone: '+971500000002', whatsapp_opted_in: true }]);
       }
       if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
       if (target.includes('/rest/v1/messages?') && (!options.method || options.method === 'GET')) {
         // resolveDeliveryContext's messageRecordId -> user_id/person_id lookup.
-        return response([{ id: 'message-1', user_id: identity.userId, task_id: null, person_id: 'person-1' }]);
+        return response([{ id: receipt.receipt_id, user_id: identity.userId, task_id: null, person_id: 'person-1', recipient: 'Grace' }]);
       }
       if (target.includes('/rest/v1/messages?') && options.method === 'PATCH') {
         // markMessageAccepted's post-send whatsapp_message_id update.

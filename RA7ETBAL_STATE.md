@@ -39,6 +39,10 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 **Unresolved, NOT C-02, not decided by this ruling:** scheduled send vs scheduled work ("Tomorrow morning, ask Christopher to …"); ownership of a connected side action ("… and put it in my calendar"); one utterance naming several recipients ("Ask Christopher and Grace to …").
 
+## S01 / PR #459 verifier-only preparation — OPEN / NOT DEPLOYED
+
+Owner-authorized preparation only. The optional offline Build Output packager includes one signed-verifier function at the existing send-whatsapp-task URL and inert browser JavaScript assets; no ordinary application functions, index page, cron or provider module. Runtime defaults closed and requires deployment-only activation, reviewed commit identity and project binding. Normal Carson build/routing unchanged; C-01/C-02 and S01 delivery authority retained. Focused containment tests are wired into the protected gate. Shared Production settings are untouched. Deployment, runtime identity/provenance, historical compatibility, promotion and release remain blocked pending separately approved proof and evidence. Canonical operational report: S01_FINAL_STATUS.md; central item PR #459.
+
 ## Current next task
 
 ### P3 staff-reply clarification (PR #458) — supervised Christopher test PAUSED at Step 2 (2026-10-15)
