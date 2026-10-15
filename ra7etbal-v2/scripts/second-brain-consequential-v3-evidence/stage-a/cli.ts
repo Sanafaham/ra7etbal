@@ -1,0 +1,60 @@
+/**
+ * EVIDENCE ONLY — Stage-A command line entry. Never run by tests. Run only by
+ * the label-gated workflow .github/workflows/v3-stage-a-evidence.yml.
+ * To be used only after separate owner authorization of a Stage-A run.
+ *
+ *   npx --no-install vite-node scripts/second-brain-consequential-v3-evidence/stage-a/cli.ts -- \
+ *     --model <candidate> --out <dir> --owner-authorized [--max-calls <1-78>] [--mode authoritative|smoke] [--case <frozen Stage-A id>]
+ *
+ * --mode defaults to authoritative. --mode smoke needs --max-calls below 78
+ * and can end SMOKE_PASS, which is never a Stage-A result (see runner.ts).
+ *
+ * Reads only OPENAI_EVIDENCE_KEY. Never prints it. This file is an entry
+ * point only: nothing imports it, and it runs main() whenever it is executed.
+ *
+ * Exit codes: 0 for ZERO_AUTOMATIC_UNSAFE_HAND_REVIEW_REQUIRED (authoritative
+ * mode) or SMOKE_PASS (smoke mode only); 1 FAIL_UNSAFE; 3 INCOMPLETE;
+ * 2 refused or setup error.
+ */
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { join } from "node:path";
+import { createOpenAIEvidenceClient, type EvidenceEnv } from "./openai-evidence-adapter";
+import { exitCodeFor, parseMaxCalls, parseMode, resolveStageACase, runStageA, validateRunOptions } from "./runner";
+
+export async function main(argv: string[], env: EvidenceEnv): Promise<number> {
+  const arg = (name: string) => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  if (!argv.includes("--owner-authorized")) {
+    console.error("stage-a: refusing to run without --owner-authorized");
+    return 2;
+  }
+  const model = arg("--model");
+  const out = arg("--out");
+  if (!model || !out) {
+    console.error("stage-a: --model and --out are required");
+    return 2;
+  }
+  const { mode, maxCalls } = validateRunOptions({ mode: parseMode(arg("--mode")), maxCalls: parseMaxCalls(arg("--max-calls")) });
+  const caseId = arg("--case");
+  if (argv.includes("--case") && !caseId) throw new Error("stage-a: --case needs a frozen Stage-A id");
+  resolveStageACase(caseId); // refuses an unknown id before the client exists
+  const client = createOpenAIEvidenceClient({ model, env });
+  mkdirSync(out, { recursive: true });
+  const recordsPath = join(out, "stage-a-records.jsonl");
+  writeFileSync(recordsPath, "");
+  const summary = await runStageA(client, (r) => appendFileSync(recordsPath, `${JSON.stringify(r)}\n`), { maxCalls, mode, caseId });
+  writeFileSync(join(out, "stage-a-summary.json"), `${JSON.stringify({ requestedModel: model, caseId: caseId ?? null, ...summary }, null, 2)}\n`);
+  console.log(JSON.stringify({ requestedModel: model, mode, authoritative: summary.authoritative, maxCalls, caseId: caseId ?? null, stopReason: summary.stopReason, verdict: summary.verdict, completed: summary.completed, planned: summary.planned, unsafe: summary.unsafe.length }));
+  if (summary.notice) console.log(summary.notice);
+  return exitCodeFor(summary.verdict);
+}
+
+main(process.argv.slice(2), { OPENAI_EVIDENCE_KEY: process.env.OPENAI_EVIDENCE_KEY }).then(
+  (code) => process.exit(code),
+  (err) => {
+    console.error(`stage-a: ${err instanceof Error ? err.name : "error"}: ${err instanceof Error ? err.message : ""}`);
+    process.exit(2);
+  },
+);
