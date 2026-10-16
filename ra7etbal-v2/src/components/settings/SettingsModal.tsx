@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
+import CarsonLearningPanel from "./CarsonLearningPanel";
 import Modal from "../ui/Modal";
 import CarsonAmbientBackground from "../carson/CarsonAmbientBackground";
 import { archiveCompleted } from "../../lib/archive";
@@ -42,7 +43,7 @@ type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-dis
 export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [view, setView] = useState<View>("list");
+  const [view, setView] = useState<View | "learning">("list");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<
     { kind: "success" | "error"; text: string } | null
@@ -219,6 +220,14 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
     );
   }
 
+  if (view === "learning") {
+    return (
+      <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+        <CarsonLearningPanel key={userId ?? "signed-out"} userId={userId} onBack={() => setView("list")} />
+      </Modal>
+    );
+  }
+
   if (view === "delegation-rules") {
     return (
       <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
@@ -267,6 +276,7 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           setNotice(null);
           setView("confirm-clear");
         }}
+        onClickLearning={() => setView("learning")}
         onClickDelegationRules={() => setView("delegation-rules")}
         onClickManageDevices={() => setView("notification-devices")}
         onClickPrivacy={() => {
@@ -301,6 +311,7 @@ function SettingsList({
   onClickViewHistory,
   onClickArchive,
   onClickClear,
+  onClickLearning,
   onClickDelegationRules,
   onClickManageDevices,
   onClickPrivacy,
@@ -319,6 +330,7 @@ function SettingsList({
   onClickViewHistory: () => void;
   onClickArchive: () => void;
   onClickClear: () => void;
+  onClickLearning: () => void;
   onClickDelegationRules: () => void;
   onClickManageDevices: () => void;
   onClickPrivacy: () => void;
@@ -357,6 +369,7 @@ function SettingsList({
       </Group>
 
       <Group label="Carson">
+        <ActionRow label="What Carson remembers" onClick={onClickLearning} />
         <button
           type="button"
           onClick={onClickDelegationRules}
@@ -1276,3 +1289,4 @@ function ConfirmPane({
     </div>
   );
 }
+

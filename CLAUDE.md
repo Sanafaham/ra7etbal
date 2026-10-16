@@ -1,5 +1,7 @@
 # Ra7etBal startup instructions
 
+**Current C-01 guidance (owner reaffirmed 2026-10-16):** Voice and typed input are two interfaces to the same Carson, with equivalent capabilities and the same permissions, authentication, authorization, approvals, safety controls, and execution protections. The historical typed advisory-only restriction is superseded. Read `RA7ETBAL_STATE.md` → "C-01 — voice/text parity" before interpreting older implementation notes. Preserve protected tests and runtime security controls.
+
 These instructions are mandatory for Claude Code and any Claude agent working in this repository.
 
 Before investigating, editing, testing, or planning work, read these files in order:
@@ -48,3 +50,4 @@ At completion:
 6. Update `RA7ETBAL_STATE.md` whenever the project status, protected behavior, blocker, priority, or verified completion has changed.
 
 Never claim that work is complete without evidence.
+

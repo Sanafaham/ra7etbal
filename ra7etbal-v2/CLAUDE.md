@@ -1,5 +1,7 @@
 # Ra7etBal — Project Context for Claude Code
 
+**Current C-01 guidance (owner reaffirmed 2026-10-16):** Voice and typed input are two interfaces to the same Carson, with equivalent capabilities and the same permissions, authentication, authorization, approvals, safety controls, and execution protections. The historical typed advisory-only restriction is superseded. Read `../RA7ETBAL_STATE.md` → "C-01 — voice/text parity" before interpreting older implementation notes. Preserve protected tests and runtime security controls.
+
 **راحة بال** · Mental Load Operating System
 Last updated: 2026-06-12
 
@@ -302,3 +304,4 @@ A task is successful only when the requested behavior is fixed, verified, deploy
 A long investigation without completion is not success.
 A fully tested PR that is never merged is not success.
 A merged change that is not verified in production is not success.
+

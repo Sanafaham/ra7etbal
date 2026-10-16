@@ -155,6 +155,9 @@ describe("production-shaped Carson read turn", () => {
     }));
     const handler = createCarsonTurnHandler({
       authenticate: vi.fn().mockResolvedValue("account-a"),
+      // This calendar test must never fall through to a live classifier with
+      // its dummy API key. Routing-classifier contracts are mocked above.
+      classifyOperationalIntent: async () => "not_operational",
       interpretIntent: (transcript) => interpretReadIntentWithClaude(transcript, modelFetch),
       readCalendar: (input) => readCalendarThroughExistingHandler(input, existingCalendarHandler),
       dedupStore: new Map(),

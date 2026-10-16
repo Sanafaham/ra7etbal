@@ -1714,6 +1714,46 @@
       "unresolved": [
         "This capability's live-configuration half (the actual ElevenLabs mcp_server_ids, MCP url/secret_token/approvals) is NOT verifiable by repository CI — there is no ElevenLabs API credential stored as a CI/GitHub Actions secret in this project (same standing gap as the pre-existing tool-registration-drift `audit` command in this same script). `protected_suite: true` here certifies only that the repo-side pure evaluator and its mutation tests are wired into the required carson-protected-behaviors CI check — it does NOT certify that live ElevenLabs state is checked on every PR. Run `npm run carson:diagnose -- tavily-security-audit` by hand (ELEVENLABS_API_KEY, convai_read scope) whenever Carson's MCP configuration, Tavily, or Perplexity changes, and before considering any such change complete."
       ]
+    },
+    {
+      "id": "owner_directed_learning",
+      "contract": "Voice and typed Carson share the existing authenticated save_instruction writer. Explicit owner instructions persist across sessions, are reviewable/correctable/removable, and uncertain inferences are not promoted. Concurrent corrections remain visible conflicts and are not silently applied. No reference material authorizes actions and memory is not completion evidence.",
+      "business_importance": "high — owner teaching must be durable, owner-scoped and truthful",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx:save_instruction",
+        "src/components/settings/SettingsModal.tsx:learning"
+      ],
+      "files_functions": [
+        "src/lib/carson-persistent-memory.ts",
+        "src/components/settings/CarsonLearningPanel.tsx"
+      ],
+      "shared_dependencies": [
+        "src/lib/carson-epistemic-gate.ts"
+      ],
+      "db": {
+        "tables": [
+          "carson_persistent_memory"
+        ],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": [
+        "Existing owner-authenticated Supabase Data API; tests use disposable local PostgreSQL/PostgREST only"
+      ],
+      "focused_tests": [
+        "scripts/owner-learning.test.mjs",
+        "src/lib/carson-persistent-memory.test.ts",
+        "src/lib/carson-epistemic-gate.test.ts"
+      ],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium — memory selection affects future reasoning; no external execution tool or schema changed",
+      "verification_status": "Isolated verification in PR #464; not merged or production verified. Model-compliance proof requires separate live-provider authorization.",
+      "unresolved": [
+        "No live-provider/model or production acceptance proof is claimed."
+      ]
     }
   ]
 }
