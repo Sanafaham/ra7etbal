@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
+import CarsonLearningPanel from "./CarsonLearningPanel";
 import Modal from "../ui/Modal";
 import CarsonAmbientBackground from "../carson/CarsonAmbientBackground";
 import { archiveCompleted } from "../../lib/archive";
@@ -37,7 +38,7 @@ interface Props {
 
 const settingsAmbientLayer = <CarsonAmbientBackground className="z-[1]" />;
 
-type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
+type View = "learning" | "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
 
 export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
@@ -219,6 +220,14 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
     );
   }
 
+  if (view === "learning") {
+    return (
+      <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+        <CarsonLearningPanel key={userId ?? "signed-out"} userId={userId} onBack={() => setView("list")} />
+      </Modal>
+    );
+  }
+
   if (view === "delegation-rules") {
     return (
       <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
@@ -237,6 +246,9 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
 
   return (
     <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
+        <button type="button" className="w-full rounded-xl p-3 text-left" onClick={() => setView("learning")}>
+          What Carson remembers
+        </button>
         <SettingsList
         userId={userId}
         notice={notice?.kind === "success" ? notice.text : null}
@@ -1276,3 +1288,4 @@ function ConfirmPane({
     </div>
   );
 }
+

@@ -253,8 +253,8 @@ function getOrCreateTypedSessionId(): string {
 // instructions must reach the same authenticated owner identity, reasoning,
 // skills, tool-selection rules, approvals, and execution outcome. Every call
 // site below was already built additive and reversible; flip this single
-// constant back to true to fully restore the retired advisory-only
-// restriction if ever needed.
+// constant back to true only under a new explicit owner decision; the
+// retired restriction is not current engineering guidance.
 const TYPED_MODE_IS_ADVISORY_ONLY = false;
 const TYPED_ADVISORY_REMINDER = "I can help you prepare that. Use Talk to Carson to create the reminder.";
 const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to Carson to set up the recurring reminder.";
@@ -6389,9 +6389,9 @@ export default function ElevenLabsAgentWidget({
       if (requestedChannel === "voice") {
         return guardCurrentVoiceCapture(toolName);
       }
-      // Type to Carson is advisory-only — a typed request must never reach a
-      // state-changing tool, even if the model attempts the call. Checked
-      // before the owner-turn guard below so it applies unconditionally.
+      // Historical advisory-only branch, disabled under governing C-01 parity.
+      // Retained as implementation evidence, not current capability guidance.
+      // Authentication and the fresh-owner-turn guard below remain mandatory.
       if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
         console.warn("[carson-typed] blocked state-changing tool — typed mode is advisory-only", {
           toolName,
@@ -9116,3 +9116,4 @@ function PulsingDot({ color }: { color: string }) {
     </span>
   );
 }
+

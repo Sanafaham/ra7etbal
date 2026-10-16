@@ -1488,3 +1488,13 @@ Gate cleared for P1 #4 — Task Closing by Voice (COS Ch. 11, 13, 14).
 4. "Tell Christopher to..." → delegation created, bridge NOT invoked
 5. Quoted staff escalation → decision delivered, bridge NOT invoked
 6. "Hi Carson. Did Christopher reply? If not, remind me tomorrow." → mixed-intent handled correctly
+
+
+
+## 2026-10-16 — C-01 obsolete-guidance cleanup and isolated owner teaching
+
+- Corrected AGENTS, both CLAUDE entry points and RA7ETBAL_STATE: canonical voice/text parity governs; historical advisory-only records are marked superseded and retained. Annotated two obsolete code comments without changing the retired flag or any tool guard.
+- Corrected the existing Notion Carson Engineering tracker at the source-of-truth introduction, historical audit finding and precedence rule; read back verified.
+- Prepared a schema-free standing-instruction review/correction/removal slice using the existing table and shared writer. No new memory store.
+- Nine isolated application tests passed using Node's test runner and the actual TypeScript service. State-doc integrity comparison and diff whitespace check passed. Existing Vitest/typecheck/protected suite, UI, real database and model acceptance are not verified in this environment.
+- Unmerged, not deployed. Existing release sequence, protected tests, authentication and execution controls preserved.

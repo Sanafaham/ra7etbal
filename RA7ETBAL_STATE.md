@@ -8,7 +8,25 @@ This file is the operational source of truth for agents working in this reposito
 
 Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI Chief of Staff.
 
-Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
+Voice and typed input are two interfaces to the same Carson, with equivalent capabilities and the same permissions, authentication, authorization, approvals, safety controls, and execution protections. Both share memory, identity, reasoning, and execution outcomes. The historical typed advisory-only restriction is superseded by canonical C-01; see the governing entry below.
+
+## C-01 — voice/text parity
+
+**Current governing rule — owner reaffirmed 2026-10-16.** Voice and typed input are two interfaces to the same Carson, with equivalent capabilities and the same permissions, authentication, authorization, approvals, safety controls, and execution protections. The canonical master plan already establishes C-01. The historical 2026-07-25 typed advisory-only restriction is superseded; it is not an unresolved architecture or product-policy decision. Do not restart the C-01 investigation.
+
+**Bounded documentation correction (2026-10-16).** Older advisory-only entries below preserve implementation evidence, historical decisions, and protected test records. They do not govern current capability design. References to the old typed flag describe the inspected historical code, not authority to retain unequal capabilities. Preserve authentication, authorization, approval, security, truthful outcome reporting, fresh-owner-turn requirements, and duplicate-execution controls in both interfaces. No runtime guard, protected test, schema, provider configuration, production behavior, or deployment is changed by this correction.
+
+**Release sequence.** Existing P3 checkpoints and unrelated work retain their recorded status and order. Owner-directed learning is authorized only as an isolated implementation; no merge or production deployment is authorized by this cleanup.
+
+## Owner-directed learning — isolated implementation, NOT MERGED / NOT DEPLOYED
+
+**Update (2026-10-16):** Owner authorized bounded cleanup of obsolete advisory-only guidance and continuation of the isolated teaching slice. C-01 is settled; this is not a new architecture workstream. Existing P3 and other release checkpoints retain their status and sequence.
+
+Implementation reuses `carson_persistent_memory` and the existing shared `save_instruction` tool. New standing instructions receive a stable namespaced category; corrections append versions, retrieval selects the latest version, and owner removal deletes all versions. Settings exposes review, correction and removal of standing instructions. Legacy unversioned rules remain separate and require explicit removal before re-teaching; no unsafe delete-then-insert replacement is attempted. Session inferences cannot be saved through this explicit-owner writer or loaded as owner instructions. This does not add document/video ingestion or change automatic fact/People learning.
+
+Verification: `node --experimental-vm-modules --test --test-isolation=none ra7etbal-v2/scripts/owner-learning.test.mjs` passed 9/9 application tests using the actual service with an isolated in-memory transport. Covers fresh service/session loading, correction, removal without sequential fallback, failure reporting, uncertain-source rejection, mocked owner isolation, legacy rules and stale edits. Existing state-document integrity comparison against the inspected baseline passed. These are not real-Postgres, model-behavior, UI or production proofs.
+
+Remaining before merge: installed-dependency typecheck, focused existing Vitest tests, Settings UI tests, required protected suite, isolated real-database persistence/RLS proof and fresh-session behavioral acceptance. Full checkout/dependencies are unavailable through the shell proxy in this environment. No existing protected test or runtime authorization guard was removed or weakened. No schema, authentication, provider configuration or deployment changed. Concurrent correction/removal and default database result-window limits remain review considerations; no atomic database concurrency guarantee is claimed by this schema-free slice.
 
 ## C-02 — Accountability determines routing — OWNER RULING 2026-09-30 — CURRENT AUTHORITATIVE
 
@@ -359,7 +377,7 @@ This was independent of the recurring stored-lifecycle residue (carried forward 
 - **C. Two active Production test routines — OPEN.** "This is a recurring automation test…" and "Test routine reminder" keep generating recurring manifestations that mean nothing to the product. Cleanup requires an explicit owner decision.
 - **D. Reminder acknowledgment / lifecycle truth — OPEN.** The Morning Brief overdue-count truthfulness defect is CLOSED and Production verified (PR #418, see "Spoken opening hardcodes" below). That closure does not cover reminder lifecycle, carry-forward or acknowledgment, all of which remain OPEN.
 - **E. Production owner-reference normalization defect — OPEN.** Tracked in the external unfinished-work ledger. This is separate from the merged 2026-08 typed direct-message normalization entry below.
-- **F. C-01 final voice/text parity reconciliation — OPEN.** The live ElevenLabs prompt still says "Type to Carson is advisory-only", and older repo docs carry that framing too.
+- **F. C-01 final voice/text parity reconciliation — historical evidence only; policy settled.** **Correction (2026-10-16):** canonical C-01 establishes equivalent voice/text capabilities. The quoted advisory-only framing is superseded. This entry is not authorization to restart reconciliation or alter live configuration; see "C-01 — voice/text parity".
 - **G. Historical ElevenLabs error-1002 escalation — OPEN.** The typed whitespace-first-message issue is pending provider clarification.
 - **H. Latency — UNFINISHED.** The retired historical treatment stays retired (see "Carson latency workstream" below).
 - **I. Calendar Appointment Awareness + Reminders — required missing capability, OPEN.**
@@ -1295,6 +1313,8 @@ Investigated from scratch per Sana's explicit instruction not to classify from t
 - **Send a message to the wrong person / bypass RLS / expose private information** — no elevated risk beyond what already-Tier-1 `staff_delegation` carries through the same shared `savePending`/`deliverTaskMessage` infrastructure; no new authorization surface.
 - **Merely degrade a recoverable, non-critical experience** — does not apply; this is not a passive Q&A feature.
 
+**Historical scope note (2026-10-16):** any advisory-only authority described in the following historical record is superseded by C-01; its safety and test evidence is preserved.
+
 **Product-decision framing not needed:** Sana's own prior product decision already puts hosting in the Tier-1 bucket implicitly — "Type to Carson is advisory-only" (2026-07-25) explicitly lists "hosting plans" alongside reminders/delegations/staff messages/calendar events as voice-only, state-changing execution; a separate "protected systems" list in this same file names hosting alongside delegations and owner decisions. There were not two materially different reasonable classifications on the table — the evidence pointed one way, matching the same criteria (real external send + real incident + real duplicate-execution risk) already used for every sibling Tier-1 capability.
 
 **Classification: Tier 1.** `carson-protected-registry.json` updated: `business_importance` rewritten with the full evidence trail above (not the capability name), `contract` rewritten to cover planning/execution/delivery-truthfulness/idempotency/recall (not just recall), `protected_suite` flipped to `true`, `src/lib/ops-intelligence.test.ts` and `src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts` (231 tests total, confirmed passing standalone before this change) added to the required `test:carson-protected` suite. Two honestly scoped remaining gaps recorded, not fixed here: no cross-module golden-journey test yet (the 231 tests are thorough but per-file, not one end-to-end journey), and no real-Postgres contract test for `carson_pending_operations` (never part of Phase 4's Tier 1 chain).
@@ -1822,6 +1842,8 @@ Confirmed production regression: Talk to Carson created a 9:00 AM reminder; the 
 
 Fix, in `createReminder` (`src/components/home/ElevenLabsAgentWidget.tsx`): a new session-scoped ref (`lastCreatedReminderRef`) tracks the last created one-time reminder's id, normalized description, and creation timestamp. A new `create_reminder` call is treated as a correction only when BOTH the normalized description exactly matches AND the prior creation happened within `REMINDER_CORRECTION_WINDOW_MS` (2 minutes) — description match alone was flagged in independent review as able to silently delete an active reminder the owner intentionally repeated later for something unrelated; the time window is what distinguishes a live correction from that case. On a match: the corrected reminder is created FIRST (via the existing, unmodified `createReminderTask` — same QStash scheduling), and only after that succeeds is the original cancelled via the existing, unmodified `useTasksStore.getState().remove()` (the same function `control_task`'s delete action already uses, which deletes the task and cancels its QStash push). Carson only says "I've changed that reminder..." after both steps verifiably succeed; if creating the new one fails, the original is left untouched (never zero active reminders); if creating succeeds but cancelling the old one fails, the reply reports both are active and does not claim success.
 
+**Historical scope note (2026-10-16):** any advisory-only authority described in the following historical record is superseded by C-01; its safety and test evidence is preserved.
+
 This is a voice-only behavior change (the only confirmed regression, and typed's `create_reminder` is already fully blocked by the advisory-only boundary below) — Talk to Carson's tool registration and every other reminder/calendar/delegation behavior is unmodified.
 
 Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` (13 tests) — mutation-spot-checked. Independent review (`review:bug-hunter`): confirmed no stale-QStash-job path, confirmed the ref is correctly reassigned on every creation (so a second correction targets the second reminder, not the first), confirmed voice-only, confirmed the description-only false-positive risk (now closed by the time window above).
@@ -1829,6 +1851,8 @@ Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` 
 Protect: the create-then-cancel ordering, the time-window gate, and the truthful mixed-state failure reporting. Do not weaken the time window or the description match without a new reproduced regression.
 
 ### Type to Carson redirects execution requests immediately, never fabricates a completion promise
+
+**Correction (2026-10-16): HISTORICAL / SUPERSEDED BY C-01.** Advisory-only capability restrictions in this section are obsolete guidance. Historical implementation, test results, and safety evidence remain intact. Current engineering follows "C-01 — voice/text parity"; no runtime change or test weakening is authorized by this annotation.
 
 Status: implemented. Merged to `main`. Tightens "Type to Carson is advisory-only" below — see that entry for the underlying tool-blocking boundary, which is unchanged by this fix.
 
@@ -1845,6 +1869,8 @@ Tests: `src/lib/typed-advisory-redirect.test.ts` (23), `src/lib/carson-direct-to
 Protect: the immediate-redirect ordering (before any clarification/proposal/dispatch), the truthfulness guard's typed-only gating, and the People-list validation for staff-address detection. Do not reintroduce a capitalization-only name heuristic.
 
 ### Type to Carson is advisory-only — Talk to Carson remains the execution channel
+
+**Correction (2026-10-16): HISTORICAL / SUPERSEDED BY C-01.** Advisory-only capability restrictions in this section are obsolete guidance. Historical implementation, test results, and safety evidence remain intact. Current engineering follows "C-01 — voice/text parity"; no runtime change or test weakening is authorized by this annotation.
 
 Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).
 
@@ -2136,6 +2162,10 @@ Do not reopen without a reproduced regression.
 Personal recurring reminders must not be converted into staff WhatsApp delegations when the owner's name also exists in the people table.
 
 ### Type to Carson V1
+
+**Correction (2026-10-16): HISTORICAL / SUPERSEDED BY C-01.** Advisory-only capability restrictions in this section are obsolete guidance. Historical implementation, test results, and safety evidence remain intact. Current engineering follows "C-01 — voice/text parity"; no runtime change or test weakening is authorized by this annotation.
+
+**Historical scope note (2026-10-16):** any advisory-only authority described in the following historical record is superseded by C-01; its safety and test evidence is preserved.
 
 Status: implemented and tested. **Superseded in part by "Type to Carson is advisory-only" above (2026-07-25)** — see that entry for the current, authoritative rule. "To-do creation" and "Tool authority and deterministic operational actions" below are historical: typed chat can no longer create a to-do or reach any state-changing tool/deterministic send path. Everything else in this list (same production agent, persistence/history restore, Clear Chat, image attachment/understanding, preview allowlisting) is unaffected and still protected.
 
@@ -2926,6 +2956,8 @@ Sentence grammar ("Tell/Ask/Have/Get + person + to + verb") does NOT determine w
 1. The contradictory `ACTION ROUTING — REQUIRED` section and the original `MESSAGE VERSUS TASK ROUTING` section were both removed and replaced by one unified `MESSAGE VERSUS TASK ROUTING — REQUIRED` section stating the outcome-tracking axis directly, with explicit vocative-form examples on both sides that neither prior section covered.
 2. `DETERMINISTIC TOOL PRECEDENCE` items 4 and 5 — found in a follow-up audit to independently restate the same contradiction (item 4 via "owner-directed communication" framing, item 5 via the literal "tell/ask/have/get [person] to [verb]" pattern) — were reworded to the smallest change that removes the restatement: both now point to `MESSAGE VERSUS TASK ROUTING` as the authority instead of asserting their own grammar-based rule.
 
+**Historical scope note (2026-10-16):** any advisory-only authority described in the following historical record is superseded by C-01; its safety and test evidence is preserved.
+
 No other prompt section, tool definition, or precedence rule was touched. Type-to-Carson advisory-only status, Talk-to-Carson execution authority, reminder/hosting/calendar/memory precedence are all unchanged.
 
 **Correction (2026-08-17): the live re-test described below as "not yet done" has since been performed by Sana and passed.** Original text preserved for its own point in time: *"Not yet done: a live re-test of the exact incident phrase ("Christopher, come to the kitchen now.") against the now-live prompt, confirming it produces a plain message with no task/Waiting item/confirmation link — and a paired re-test of a genuine delegation phrase ("Ask Christopher to clean the kitchen.") confirming the tracked-task/confirmation-link/follow-up behavior is unaffected. Not performed as part of this documentation update."*
@@ -3127,3 +3159,4 @@ After each completed task:
 4. Remove stale plans and superseded bugs.
 5. Include the relevant commit or PR reference when useful.
 6. Keep this file short enough that every agent can read it at session start.
+
