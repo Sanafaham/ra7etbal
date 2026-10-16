@@ -38,7 +38,7 @@ export default function CarsonLearningPanel({ userId, onBack }: {
       if (remove) await removeOwnerInstruction(row.id);
       else await replaceOwnerInstruction(row.id, text);
       setEditing(null);
-      const success = remove ? "Instruction removed." : "Correction saved. Carson will use it in your next conversation.";
+      const success = remove ? "Instruction removed." : "Correction saved for your next conversation.";
       try { setRows(await listOwnerInstructions()); setMessage(success); }
       catch { setMessage(`${success} Couldn't refresh the list; reopen this panel to review it.`); }
     } catch (error) {
@@ -46,8 +46,8 @@ export default function CarsonLearningPanel({ userId, onBack }: {
     } finally { setBusy(false); }
   }
 
-  return <section className="space-y-4" aria-label="Carson instructions">
-    <button type="button" disabled={busy} onClick={onBack}>Back to Settings</button>
+  return <section className="min-w-0 space-y-4 break-words text-ink" aria-label="Carson instructions">
+    <button className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm" type="button" disabled={busy} onClick={onBack}>Back to Settings</button>
     <h2 className="text-lg font-semibold">What Carson remembers</h2>
     <p>Standing instructions you have taught Carson. To add one, tell Carson “Remember: …” by voice or text.</p>
     <p>This list covers standing instructions. People notes and other conversation memories are managed separately.</p>
@@ -55,18 +55,20 @@ export default function CarsonLearningPanel({ userId, onBack }: {
     {busy && <p role="status">Loading or saving…</p>}
     {message && <p role="status">{message}</p>}
     {userId && !busy && !message && rows.length === 0 && <p>No standing instructions saved yet.</p>}
-    <ul className="space-y-4">{rows.map(row => <li key={row.id} className="space-y-2">
+    <ul className="space-y-4">{rows.map(row => <li key={row.id} className="min-w-0 space-y-2 rounded-xl border border-border p-3 [overflow-wrap:anywhere]">
       <p>{row.instruction}</p>
+      {row.conflicted && <p role="alert">Conflicting versions — Carson will not apply this rule until you resolve it.</p>}
+      {row.removalPending && <p role="alert">Carson has stopped using this rule. Retry removal to clear the stored text.</p>}
       <p className="text-sm">Owner instruction · Last confirmed {new Date(row.confirmed_at).toLocaleDateString()}</p>
       {editing === row.id ? <form onSubmit={event => { event.preventDefault(); void change(row, false); }}>
         <label className="block">Correct this instruction
-          <textarea value={text} disabled={busy} onChange={event => setText(event.target.value)} className="block w-full rounded border p-2" />
+          <textarea value={text} disabled={busy} onChange={event => setText(event.target.value)} className="block min-h-28 w-full min-w-0 rounded border border-border bg-cream p-2 text-base text-ink" />
         </label>
-        <button type="submit" disabled={busy || !text.trim()}>Save correction</button>{" "}
-        <button type="button" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+        <button className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm" type="submit" disabled={busy || !text.trim()}>Save correction</button>{" "}
+        <button className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm" type="button" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
       </form> : <>
-        {row.category.startsWith("owner_rule:") && <button type="button" disabled={busy} onClick={() => { setEditing(row.id); setText(row.instruction); }}>Correct</button>}{" "}
-        <button type="button" disabled={busy} onClick={() => void change(row, true)}>Remove instruction</button>
+        {row.category.startsWith("owner_rule:") && <button className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm" type="button" disabled={busy} onClick={() => { setEditing(row.id); setText(row.instruction); }}>{row.conflicted ? "Resolve conflict" : "Correct"}</button>}{" "}
+        <button className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm" type="button" disabled={busy} onClick={() => void change(row, true)}>Remove instruction</button>
         {!row.category.startsWith("owner_rule:") && <p className="text-sm">To correct this older instruction, remove it, then teach Carson the replacement.</p>}
       </>}
     </li>)}</ul>

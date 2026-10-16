@@ -35,19 +35,23 @@ function daysAgoIso(days: number): string {
 }
 
 function mockChain(result: { data?: unknown; error?: { message: string } | null }) {
-  const chain = { select: vi.fn(), order: vi.fn(), insert: vi.fn(), limit: vi.fn() };
+  const chain = { select: vi.fn(), order: vi.fn(), insert: vi.fn(), limit: vi.fn(), range: vi.fn(), single: vi.fn(), eq: vi.fn() };
   chain.select.mockReturnValue(chain);
+  chain.eq.mockReturnValue(chain);
   // order() is the terminal call for loadPersistentMemory
-  chain.order.mockReturnValue(Promise.resolve(result));
+  chain.order.mockReturnValue(chain);
+  chain.range.mockReturnValue(Promise.resolve(result));
   // limit() is terminal for loadRecentMemory (not tested here but mocked for safety)
   chain.limit.mockReturnValue(Promise.resolve(result));
-  chain.insert.mockReturnValue(Promise.resolve(result));
+  chain.insert.mockReturnValue(chain);
+  chain.single.mockReturnValue(Promise.resolve(result.error ? result : { data: { id: "saved-rule" }, error: null }));
   (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue(chain);
   return chain;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(supabase.auth.getUser).mockResolvedValue({ data: { user: { id: "owner-a" } }, error: null } as Awaited<ReturnType<typeof supabase.auth.getUser>>);
 });
 
 // ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ describe("savePersistentInstruction — gate enforcement", () => {
     await savePersistentInstruction("always", "always ask before delegating");
     expect(chain.insert).toHaveBeenCalledWith(
       expect.objectContaining({
-        category: "always",
+        category: expect.stringMatching(/^owner_rule:/),
         instruction: "always ask before delegating",
         source: "owner_directive",
         confirmed_at: expect.any(String),

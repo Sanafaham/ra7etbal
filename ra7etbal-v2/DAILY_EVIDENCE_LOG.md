@@ -1498,3 +1498,14 @@ Gate cleared for P1 #4 — Task Closing by Voice (COS Ch. 11, 13, 14).
 - Prepared a schema-free standing-instruction review/correction/removal slice using the existing table and shared writer. No new memory store.
 - Nine isolated application tests passed using Node's test runner and the actual TypeScript service. State-doc integrity comparison and diff whitespace check passed. Existing Vitest/typecheck/protected suite, UI, real database and model acceptance are not verified in this environment.
 - Unmerged, not deployed. Existing release sequence, protected tests, authentication and execution controls preserved.
+
+
+## 2026-10-16 — PR #464 full-checkout verification follow-up
+
+- Continued the same draft from `4cefcd9`; no new PR, merge, deployment, shipped schema/authentication change or production data/configuration change.
+- Fixed the required impact registry mapping, Vitest compatibility, Settings integration and concurrent-version selection. Added visible conflict resolution, recoverable removal markers, owner-bound paginated reads and local-only verification fixtures. Preserved C-01's false advisory-only flag, runtime guards and all protected assertions. Supplied a missing calendar classifier test double to remove an unintended dummy-key provider path.
+- PASS: `npm run typecheck`; `TZ=UTC npm run test:carson-protected -- --config scripts/owner-learning.vitest.config.ts` (149 files, 3049 passed / 4 skipped / 3 todo); focused latest memory checks (22/22).
+- FAIL: `TZ=UTC npm exec -- vitest run --config scripts/owner-learning.vitest.config.ts` (4839 passed / 5 failed / 9 skipped / 3 todo). The same five source-assertion failures reproduce on base `86a38f1`; no unrelated runtime or assertions were changed to conceal them.
+- PASS: `CARSON464_REAL_DB=1 npm exec -- vitest run --config scripts/owner-learning.vitest.config.ts scripts/owner-learning.real-db.test.mjs` (5/5) using disposable PostgreSQL/PostgREST and the existing migrations. Local signed JWTs exercise real RLS; this is not hosted Auth login or production evidence.
+- PASS: `PLAYWRIGHT_BROWSERS_PATH=/workspace/.pw464 PLAYWRIGHT_MODULE=/tmp/464-browser/node_modules/@playwright/test/index.mjs node scripts/owner-learning.browser.mjs` at 320/390/1280px. Actual Settings UI exercised against the local database; external browser requests blocked. Screenshots and JSON emitted to `/tmp/464-evidence/`.
+- BLOCKED: fresh Carson model behavior and true end-to-end voice/text model acceptance (live providers explicitly unauthorized). Independently taught semantic contradictions are not automatically reconciled. Keep draft open; not ready for release consideration.

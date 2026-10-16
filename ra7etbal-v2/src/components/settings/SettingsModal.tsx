@@ -38,12 +38,12 @@ interface Props {
 
 const settingsAmbientLayer = <CarsonAmbientBackground className="z-[1]" />;
 
-type View = "learning" | "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
+type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
 
 export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [view, setView] = useState<View>("list");
+  const [view, setView] = useState<View | "learning">("list");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<
     { kind: "success" | "error"; text: string } | null
@@ -246,9 +246,6 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
 
   return (
     <Modal open={open} onClose={close} title="Settings" backgroundLayer={settingsAmbientLayer}>
-        <button type="button" className="w-full rounded-xl p-3 text-left" onClick={() => setView("learning")}>
-          What Carson remembers
-        </button>
         <SettingsList
         userId={userId}
         notice={notice?.kind === "success" ? notice.text : null}
@@ -279,6 +276,7 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           setNotice(null);
           setView("confirm-clear");
         }}
+        onClickLearning={() => setView("learning")}
         onClickDelegationRules={() => setView("delegation-rules")}
         onClickManageDevices={() => setView("notification-devices")}
         onClickPrivacy={() => {
@@ -313,6 +311,7 @@ function SettingsList({
   onClickViewHistory,
   onClickArchive,
   onClickClear,
+  onClickLearning,
   onClickDelegationRules,
   onClickManageDevices,
   onClickPrivacy,
@@ -331,6 +330,7 @@ function SettingsList({
   onClickViewHistory: () => void;
   onClickArchive: () => void;
   onClickClear: () => void;
+  onClickLearning: () => void;
   onClickDelegationRules: () => void;
   onClickManageDevices: () => void;
   onClickPrivacy: () => void;
@@ -369,6 +369,7 @@ function SettingsList({
       </Group>
 
       <Group label="Carson">
+        <ActionRow label="What Carson remembers" onClick={onClickLearning} />
         <button
           type="button"
           onClick={onClickDelegationRules}
