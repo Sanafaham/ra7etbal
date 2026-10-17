@@ -479,3 +479,71 @@ describe("formatSessionRecaps", () => {
     expect(formatSessionRecaps([recap], { timeZone: "Not/AZone", locale: "en-US" })).toContain("Most recent session");
   });
 });
+
+// ── Production-verified behavior (owner voice test, 2026-10-17) ─────────────
+// On the pre-#467 build Carson recalled 4 PM, accepted the 3 PM correction via
+// save_instruction, and answered 3 PM in a new conversation. That build hands
+// Carson every instruction oldest→newest. This PR must never do worse: the
+// newest instruction is always present, and an older one is either hidden or
+// listed before it.
+describe("preserves the production-verified Christopher correction", () => {
+  const teach = [
+    "Christopher prefers dinner instructions before 4 PM.",
+    "Send Christopher dinner instructions before 4 PM.",
+    "Christopher prefers to receive dinner instructions before 4 PM",
+  ];
+  const corrections = [
+    "Christopher prefers dinner instructions before 3 PM.",
+    "Christopher now prefers dinner instructions before 3 PM instead of 4 PM.",
+    "Send Christopher dinner instructions before 3 PM.",
+    "Christopher prefers dinner instructions before 3 PM, not 4 PM.",
+    "Dinner instructions for Christopher should be sent before 3 PM.",
+  ];
+  for (const t of teach) {
+    for (const c of corrections) {
+      it(`"${t}" then "${c}"`, () => {
+        const text = buildCarsonMemoryContext({
+          instructions: [
+            instruction("other", "Keep answers short.", 48),
+            instruction("t", t, 5),
+            instruction("c", c, 1),
+          ],
+          people: PEOPLE,
+          now: NOW,
+        }).persistentInstructions;
+        expect(text).toContain(c);
+        expect(text).toContain("Keep answers short.");
+        if (text.includes(t)) expect(text.indexOf(t)).toBeLessThan(text.indexOf(c));
+      });
+    }
+  }
+
+  it("a fact extracted from the same session never hides the owner's 3 PM instruction", () => {
+    const result = buildCarsonMemoryContext({
+      instructions: [
+        instruction("t", "Christopher prefers dinner instructions before 4 PM.", 5),
+        instruction("c", "Christopher prefers dinner instructions before 3 PM.", 1),
+      ],
+      facts: [{ ...christopherFact, updated_at: daysAgo(0) }],
+      people: PEOPLE,
+      now: NOW,
+    });
+    expect(result.persistentInstructions).toContain("before 3 PM");
+    expect(result.persistentInstructions).not.toContain("before 4 PM");
+    expect(result.supersededFactIds).toEqual([christopherFact.id]);
+  });
+});
+
+describe("owner-written note formatting", () => {
+  const owner = "Long-time driver.\n\nKnows   the  school routes.\nprefers dinner instructions before 4 PM.";
+
+  it("unchanged notes are returned byte-for-byte", () => {
+    expect(mergePersonMemoryNotes(owner, "Knows the school routes.").notes).toBe(owner);
+  });
+
+  it("a correction rewrites only the corrected line; blank lines and spacing elsewhere are kept", () => {
+    expect(mergePersonMemoryNotes(owner, "now prefers dinner instructions before 3 PM.").notes).toBe(
+      "Long-time driver.\n\nKnows   the  school routes.\nnow prefers dinner instructions before 3 PM.",
+    );
+  });
+});

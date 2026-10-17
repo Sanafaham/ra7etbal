@@ -404,9 +404,15 @@ export function resolveCurrentMemories(items, peopleIndex) {
     // Owner-stated first, then newest first; id breaks ties deterministically.
     group.sort((a, b) =>
       Number(isOwner(b)) - Number(isOwner(a)) || at(b) - at(a) || String(b.item.id).localeCompare(String(a.item.id)));
+    const sameValues = (a, b) => a.subject.values.join(",") === b.subject.values.join(",");
+    // A fact that merely restates a standing instruction never hides it: the
+    // owner's explicit instruction stays where Carson already reads it.
+    const restatesInstruction = (fact, instruction) =>
+      fact.item.kind === "fact" && instruction.item.kind === "instruction" && sameValues(fact, instruction);
     const seen = [];
     for (const entry of group) {
       const replacedBy = seen.find((prev) => {
+        if (restatesInstruction(prev, entry)) return false;
         if (isOwner(prev) && !isOwner(entry)) {
           return supersedes(prev.subject, entry.subject) || supersedes(entry.subject, prev.subject);
         }
@@ -415,6 +421,14 @@ export function resolveCurrentMemories(items, peopleIndex) {
       if (replacedBy) supersededBy.set(entry.item.id, replacedBy.item.id);
       else currentIds.add(entry.item.id);
       seen.push(entry);
+    }
+    for (const fact of group) {
+      if (fact.item.kind !== "fact" || !currentIds.has(fact.item.id)) continue;
+      const instruction = group.find((x) => currentIds.has(x.item.id) && restatesInstruction(fact, x));
+      if (instruction) {
+        currentIds.delete(fact.item.id);
+        supersededBy.set(fact.item.id, instruction.item.id);
+      }
     }
   }
   return { currentIds, supersededBy };
@@ -729,31 +743,39 @@ function noteLines(text) {
  * @returns {{ notes: string, changed: boolean, replaced: string[] }}
  */
 export function mergePersonMemoryNotes(existing, addition) {
-  const lines = noteLines(existing);
+  const original = String(existing ?? "");
   const add = cleanText(addition);
-  if (!add) return { notes: lines.join("\n"), changed: false, replaced: [] };
+  if (!add) return { notes: original, changed: false, replaced: [] };
   // Duplicate only on a whole-word match ("Likes tea." is not inside
-  // "Dislikes tea.").
+  // "Dislikes tea."). Unchanged notes are returned byte-for-byte.
   const core = add.replace(/[.!?]+$/, "");
   const dup = new RegExp(`(^|[^a-z0-9])${escapeRegExp(core)}([^a-z0-9]|$)`, "i");
-  if (lines.some((line) => dup.test(line))) {
-    return { notes: lines.join("\n"), changed: false, replaced: [] };
+  if (noteLines(original).some((line) => dup.test(line))) {
+    return { notes: original, changed: false, replaced: [] };
   }
   const addSubject = memorySubject(add);
   const replaced = [];
-  const kept = [];
-  for (const line of lines) {
-    if (!addSubject.key || line.startsWith("[Behavior:")) {
-      kept.push(line);
+  // Owner formatting (blank lines, spacing) is kept: only a line that
+  // contains the corrected sentence is rewritten.
+  const out = [];
+  for (const rawLine of original.split(/\r?\n/)) {
+    const line = rawLine.replace(/[ \t]+/g, " ").trim();
+    if (!line || !addSubject.key || line.startsWith("[Behavior:")) {
+      out.push(rawLine);
       continue;
     }
     // A line may hold several sentences; drop only the corrected sentence(s).
     const sentences = line.split(/(?<=[.!?])\s+/).filter(Boolean);
     const remaining = sentences.filter((s) => !supersedes(addSubject, memorySubject(s)));
-    if (remaining.length !== sentences.length) replaced.push(line);
-    if (remaining.length > 0) kept.push(remaining.join(" "));
+    if (remaining.length === sentences.length) {
+      out.push(rawLine);
+      continue;
+    }
+    replaced.push(line);
+    if (remaining.length > 0) out.push(remaining.join(" "));
   }
-  return { notes: [...kept, add].join("\n"), changed: true, replaced };
+  const base = out.join("\n").replace(/\s+$/, "");
+  return { notes: base ? `${base}\n${add}` : add, changed: true, replaced };
 }
 
 /**
