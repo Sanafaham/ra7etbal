@@ -1,5 +1,11 @@
 name: carson-live-model-evidence
 
+# EVIDENCE BRANCH ONLY (claude/second-brain-consequential-evidence-gate):
+# this copy runs the isolated Second Brain consequential-skill dry run in
+# scripts/second-brain-consequential-evidence/ once per candidate model.
+# Each matrix job calls exactly ONE named model; there is no cascade.
+# Not for merge.
+
 # Bounded live-model evidence gate for the tracked-delegation content
 # boundary (PR #422, Production canary 965f5963). Runs the EXISTING
 # ra7etbal-v2/scripts/staff-instruction-live-evidence.ts, which imports the
@@ -40,6 +46,10 @@ concurrency:
 
 jobs:
   live-model-evidence:
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [claude-sonnet-4-6, claude-haiku-4-5-20251001]
     if: >-
       github.event.label.name == 'run-live-model-evidence' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -74,9 +84,10 @@ jobs:
             exit 1
           fi
 
-      - name: Run live-model evidence (3 independent runs per phrase)
+      - name: Guard unit tests (no model calls)
+        run: npx --no-install vitest run scripts/second-brain-consequential-evidence/guards.test.ts
+
+      - name: Second Brain consequential skill dry run (3 independent runs per case, one model)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_EVIDENCE_KEY }}
-          VITE_SUPABASE_URL: http://127.0.0.1:9
-          VITE_SUPABASE_ANON_KEY: evidence-placeholder
-        run: npx --no-install vite-node scripts/staff-instruction-live-evidence.ts -- --runs 3
+        run: npx --no-install vite-node scripts/second-brain-consequential-evidence/run.ts -- --model ${{ matrix.model }} --runs 3 --concurrency 4
