@@ -137,3 +137,48 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe("notifications freshness without a push (PR #458 escalation incident)", () => {
+  it("an unforced load keeps the stale list; a forced reload surfaces the new escalation", async () => {
+    listMock.mockResolvedValueOnce([notification("old-reminder")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    listMock.mockResolvedValueOnce([
+      notification("salmon-escalation"),
+      notification("old-reminder"),
+    ]);
+    await useNotificationsStore.getState().loadFor("user-1");
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["old-reminder"]);
+
+    await useNotificationsStore.getState().loadFor("user-1", { force: true });
+    expect(useNotificationsStore.getState().items[0].id).toBe("salmon-escalation");
+    expect(selectUnreadNotificationCount(useNotificationsStore.getState())).toBe(2);
+  });
+
+  it("the app's live refresh reloads alerts when the tab becomes visible again, with no push message", async () => {
+    const { registerTasksLiveRefresh } = await import("../lib/tasks-live-refresh");
+    listMock.mockResolvedValueOnce([notification("old-reminder")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    const listeners = new Map<string, () => void>();
+    const documentApi = {
+      visibilityState: "hidden" as DocumentVisibilityState,
+      addEventListener: (type: string, fn: () => void) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+    };
+    const cleanup = registerTasksLiveRefresh({
+      documentApi: documentApi as never,
+      serviceWorkerApi: null,
+      refetch: () => useNotificationsStore.getState().loadFor("user-1", { force: true }),
+    });
+
+    listMock.mockResolvedValueOnce([
+      notification("salmon-escalation"),
+      notification("old-reminder"),
+    ]);
+    documentApi.visibilityState = "visible";
+    listeners.get("visibilitychange")?.();
+    await vi.waitFor(() => expect(useNotificationsStore.getState().items[0]?.id).toBe("salmon-escalation"));
+    cleanup();
+  });
+});

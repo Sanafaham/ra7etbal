@@ -108,6 +108,7 @@ import { runNoResponseHandoffs } from './_no-response-handoff.js';
 import { processAccountDeletionCancellations } from './_account-deletion-cancellation.js';
 import { processAccountDeletionRelational } from './_account-deletion-relational.js';
 import { buildPrivacySafePushPayload } from './_push-content-privacy.js';
+import { recordDeliveryEvent } from './_reminder-delivery.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -675,7 +676,14 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
 
 // ── Escalation: owner web-push ─────────────────────────────────────────────────
 
-async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode }) {
+// An unanswered delegation stays in Waiting (Needs You is the owner-decision
+// queue — see isNeedsYouTask in src/lib/daily-brief.ts), so the escalation
+// links to where the task actually is.
+export function escalationTargetUrl(taskId) {
+  return `/updates?tab=waiting&task=${encodeURIComponent(taskId)}`;
+}
+
+export async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode }) {
   const { id: taskId, user_id, assigned_to, description } = task;
 
   // Fetch owner's enabled push subscriptions.
@@ -712,10 +720,21 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
       userId: user_id, eventKey: `task_escalation:${taskId}`, kind: 'task_escalation',
       title: 'Ra7etBal · Action needed', body, occurredAt: new Date().toISOString(),
       targetType: 'task', targetId: taskId,
-      targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
+      targetUrl: escalationTargetUrl(taskId),
     }),
   });
   const payload = JSON.stringify(buildPrivacySafePushPayload(pushContent));
+  const sentAt = new Date().toISOString();
+  // Provider-side evidence only (same pattern as the completion push in
+  // task-confirm.js). Acceptance by Apple/FCM is not proof the banner showed.
+  const recordEvidence = (sub, stage, providerStatusCode = null, metadata = {}) =>
+    recordDeliveryEvent({
+      supabaseUrl, serviceRoleKey: serviceKey, taskId, userId: user_id, subscriptionId: sub.id,
+      eventKey: `${stage}:${sub.id}:${sentAt}`, stage, providerStatusCode,
+      metadata: { kind: 'escalation_push', ...metadata },
+    }).catch((err) =>
+      console.error(`[escalation] escalation push evidence (${stage}) failed (non-fatal):`, err?.message || err),
+    );
 
   const label = testMode ? '[testMode] ' : '';
   console.log(`[escalation] ${label}sending owner escalation push for task ${taskId}`, {
@@ -724,17 +743,20 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
 
   let sent = false;
   for (const sub of subscriptions) {
+    await recordEvidence(sub, 'provider_send_attempted');
     try {
-      await webpush.sendNotification(
+      const providerResponse = await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
         { urgency: 'high', TTL: 300 },
       );
       console.log(`[escalation] escalation push sent`, { subId: sub.id, taskId });
+      await recordEvidence(sub, 'provider_accepted', providerResponse?.statusCode ?? 201);
       sent = true;
     } catch (err) {
       const status = err?.statusCode ?? null;
       console.error(`[escalation] push failed sub=${sub.id} status=${status}:`, err?.message);
+      await recordEvidence(sub, 'provider_rejected', status, { permanent: status === 410 || status === 404 });
       // Clean up permanently invalid subscriptions.
       if (status === 410 || status === 404) {
         await fetch(

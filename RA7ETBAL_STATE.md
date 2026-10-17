@@ -41,6 +41,17 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 ## Current next task
 
+### Owner escalation visibility (2026-10-17) — FIX ON BRANCH `claude/escalation-visibility-fix`, DRAFT PR, NOT MERGED, NOT DEPLOYED
+
+Found during the PR #458 Christopher test (salmon task `335ef5db`, escalated 20:26:52 UTC). Owner saw: Home "Everything is under control", Needs You empty, Waiting showing the task as Escalated, Alerts without the escalation, no push banner.
+
+- Server: correct. `escalated_at` stamped; one unread `task_escalation` owner notification created 20:26:55 UTC. Read-only check: it is the NEWEST non-dismissed row, so the Alerts query includes it.
+- Classification: correct, unchanged. An unanswered escalated delegation is Waiting with the Escalated badge (Needs You is the owner-decision queue). Home's "Nothing needs you" therefore matches the approved rule.
+- Defect 1 (UI freshness): the Alerts list and bell badge loaded once per app session and refreshed only when the service worker relayed a push. With no push on the device, they stayed frozen. Fix: same refresh signals as tasks (visibility, push, 60s poll while visible) and a forced reload when Alerts opens.
+- Defect 2 (routing): escalation links pointed to Needs You, where the task never is. Fix: new escalations link to Waiting, and What's Happening moves any task deep link to the tab that actually holds the task (covers rows already stored).
+- Defect 3 (push evidence): escalation pushes recorded nothing, so delivery could not be diagnosed. Fix: provider attempted/accepted/rejected rows in `reminder_delivery_events` (`metadata.kind = escalation_push`), non-fatal. This proves provider acceptance only, not that a banner showed.
+- NOT fixed / OPEN: why no banner appeared on the iPhone is UNVERIFIED (no Vercel log access; `reminder_delivery_events` has no rows since 2026-09-25). Owner product question: should Home's headline stay "Everything is under control" while a Waiting item is escalated?
+
 ### P3 staff-reply clarification (PR #458) — supervised Christopher test PAUSED at Step 2 (2026-10-15)
 
 First priority when ElevenLabs credits renew on 2026-10-19: resume the supervised Christopher test at Step 2 and finish verifying PR #458. Step 1 already passed; do not repeat it. PR #458 is not fully verified until Steps 2–5 pass. No other engineering workstream starts without owner approval. Details and steps: "Staff-reply clarification (2026-10-15)" under P3 below.

@@ -227,14 +227,15 @@ function useGlobalNotificationsRefresh() {
     }
     const userId = user.id;
     void useNotificationsStore.getState().loadFor(userId);
-    if (!("serviceWorker" in navigator)) return;
-    const handleMessage = (event: MessageEvent) => {
-      if ((event.data as { type?: string } | undefined)?.type === "ra7etbal:push-received") {
-        void useNotificationsStore.getState().loadFor(userId, { force: true });
-      }
-    };
-    navigator.serviceWorker.addEventListener("message", handleMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
+    // Same freshness signals as tasks (push message, tab regaining
+    // visibility, slow poll while visible). A push alone is not enough: when
+    // it never reaches the device, the alert list and bell badge stayed
+    // frozen at whatever was loaded when the app was first opened.
+    return registerTasksLiveRefresh({
+      documentApi: document,
+      serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
+      refetch: () => useNotificationsStore.getState().loadFor(userId, { force: true }),
+    });
   }, [status, user?.id]);
 }
 
