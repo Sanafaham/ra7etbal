@@ -32,17 +32,35 @@ const ALLOWED_CATEGORIES = new Set([
 const MIN_CONFIDENCE = 0.75;
 const MAX_FACTS = 5;
 
-export async function extractDurableFacts(
-  transcript: TranscriptMessage[],
-): Promise<ExtractedCarsonFact[]> {
-  const userTurns = transcript
-    .filter((entry) => entry.role === "user")
-    .map((entry) => entry.message.trim())
-    .filter(Boolean);
+export interface ExistingFactForExtraction {
+  category: string;
+  key: string;
+  value: string;
+}
 
-  if (userTurns.length === 0) return [];
+/**
+ * Existing facts shown to the extractor so an update or correction reuses
+ * the exact (category, key) pair. The upsert on (user_id, category, key) then
+ * replaces the old value atomically instead of creating a contradictory row.
+ */
+export function formatExistingFactsForExtraction(existing: ExistingFactForExtraction[]): string {
+  const lines = existing
+    .filter((fact) => fact.category && fact.key && fact.value)
+    .map((fact) => `- ${fact.category} / ${fact.key}: ${fact.value.replace(/\s+/g, " ").trim()}`);
+  if (lines.length === 0) return "";
+  return `
+Existing saved facts (category / key: value):
+${lines.join("\n")}
 
-  const prompt = `You are extracting durable structured memory for Carson, a voice AI.
+If the user updates, changes or corrects one of these, return it with the SAME category and key and the new value. Never create a second key for the same thing. Do not repeat an existing fact unless its value changed.
+`;
+}
+
+export function buildFactExtractionPrompt(
+  userTurns: string[],
+  existing: ExistingFactForExtraction[] = [],
+): string {
+  return `You are extracting durable structured memory for Carson, a voice AI.
 
 Use ONLY the user's words below. Do not save facts invented, inferred, or merely suggested by Carson.
 
@@ -84,8 +102,24 @@ Shape:
 If there are no durable facts, return:
 { "facts": [] }
 
+When a fact is about a household member, name them in the value.
+${formatExistingFactsForExtraction(existing)}
 User transcript:
 ${userTurns.map((message) => `User: ${message}`).join("\n")}`;
+}
+
+export async function extractDurableFacts(
+  transcript: TranscriptMessage[],
+  existingFacts: ExistingFactForExtraction[] = [],
+): Promise<ExtractedCarsonFact[]> {
+  const userTurns = transcript
+    .filter((entry) => entry.role === "user")
+    .map((entry) => entry.message.trim())
+    .filter(Boolean);
+
+  if (userTurns.length === 0) return [];
+
+  const prompt = buildFactExtractionPrompt(userTurns, existingFacts);
 
   let res: Response;
   try {

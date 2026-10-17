@@ -21,6 +21,14 @@
  */
 
 import { sendMetaMessage } from './send-whatsapp-task.js';
+import {
+  RECAP_PREFIX,
+  buildCarsonMemoryContext,
+  formatSessionRecaps,
+  isRecapRow,
+  ownedRows,
+  renderPersonNotesForContext,
+} from '../shared/carson-memory-selection.js';
 
 const SIGNED_URL_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
 const CONVERSATION_DETAILS_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversations';
@@ -400,7 +408,7 @@ export async function runOwnerConversationalTurn({
 
   let dynamicVars = null;
   try {
-    dynamicVars = await buildOwnerContextText(supabaseUrl, serviceKey, userId);
+    dynamicVars = await buildOwnerContextText(supabaseUrl, serviceKey, userId, { ownerText: body });
   } catch (err) {
     // Non-fatal — Carson can still respond without context; log and proceed.
     console.warn('Owner conversational bridge: context build failed, proceeding without context', {
@@ -705,61 +713,116 @@ const SUPABASE_HEADERS = (key) => ({
   Prefer: 'return=representation',
 });
 
+/** Fact rows read per owner for relevance ranking (one PostgREST page). */
+const OWNER_FACT_READ_LIMIT = 1000;
+/** Persistent-instruction rows read per owner (all of them in practice). */
+const OWNER_INSTRUCTION_READ_LIMIT = 500;
+/** carson_memory rows scanned for recaps; only recap rows are used. */
+const OWNER_RECAP_READ_LIMIT = 20;
+const OWNER_RECAP_SHOWN = 5;
+
 /**
  * Builds structured Carson context for the ElevenLabs dynamic_variables block.
  *
  * Returns five variables matching what the live ElevenLabs prompt expects:
- *   ra7etbal_state          — pending tasks + household people
+ *   ra7etbal_state          — relevant saved facts + household people (with
+ *                             notes) + pending tasks
  *   user_name               — owner's display_name from profiles
- *   recent_memory           — last 5 session summaries from carson_memory
+ *   recent_memory           — last session recaps from carson_memory
+ *                             (actual columns: created_at, summary)
  *   current_time            — ISO 8601 timestamp (source of truth per prompt)
- *   persistent_instructions — saved instructions from carson_persistent_memory
+ *   persistent_instructions — CURRENT standing instructions (corrections
+ *                             resolved) from carson_persistent_memory
+ *
+ * Memory decisions go through shared/carson-memory-selection.js, the same
+ * builder Talk/Type Carson use, so a memory taught by voice is applied the
+ * same way here. Facts are ranked against the owner's actual message.
+ *
+ * Every query is owner-scoped (user_id=eq.<owner>) and every row is checked
+ * again against the owner id before use. This path only reads.
  *
  * Intentional Phase 1 gaps (not sent, documented for consolidation PR):
  *   daily_brief     — requires server-side spoken brief generation (deferred)
  *   current_weather — requires live weather fetch (deferred)
  *   opening_line    — N/A for WhatsApp channel (intentionally omitted)
  *
- * Consolidation note: will be replaced by a shared carson-context-builder call
- * once the context-extraction refactoring PR ships.
- *
  * @param {string} supabaseUrl
  * @param {string} serviceKey
  * @param {string} userId
+ * @param {{ ownerText?: string, now?: number }} [options]
  * @returns {Promise<{ ra7etbal_state: string, user_name: string, recent_memory: string, current_time: string, persistent_instructions: string }>}
  */
-async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
+export async function buildOwnerContextText(supabaseUrl, serviceKey, userId, options = {}) {
   const headers = SUPABASE_HEADERS(serviceKey);
+  const owner = encodeURIComponent(userId);
+  // A PostgREST error (e.g. an unknown column) is a JSON object, not an
+  // array. Log it by table instead of silently treating it as "no memory".
+  // A network failure on one query must not drop every other block of
+  // context: each query degrades to "empty" on its own.
   const qs = (table, query) =>
     fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers })
-      .then((r) => r.json().catch(() => []))
-      .then((rows) => (Array.isArray(rows) ? rows : []));
+      .then((r) => r.json().catch(() => []), (err) => {
+        console.warn('Owner conversational bridge: context query failed', {
+          table,
+          code: null,
+          error: err?.message || 'fetch_failed',
+        });
+        return [];
+      })
+      .then((rows) => {
+        if (Array.isArray(rows)) return rows;
+        console.warn('Owner conversational bridge: context query failed', {
+          table,
+          code: rows?.code ?? null,
+          error: rows?.message ?? 'non_array_response',
+        });
+        return [];
+      });
   const qsOne = (table, query) =>
     fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers })
-      .then((r) => r.json().catch(() => null))
+      .then((r) => r.json().catch(() => null), () => null)
       .then((data) => (Array.isArray(data) ? data[0] ?? null : data ?? null));
 
-  const [tasks, people, persistentMemory, profile, sessionMemory] = await Promise.all([
+  const [tasks, people, persistentMemory, profile, sessionMemory, facts] = await Promise.all([
     qs('tasks',
-      `user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&select=id,description,type,status,due_at,created_at&order=created_at.desc&limit=30`),
+      `user_id=eq.${owner}&status=in.(pending,in_progress)&select=id,description,type,status,due_at,created_at&order=created_at.desc&limit=30`),
     qs('people',
-      `user_id=eq.${encodeURIComponent(userId)}&select=id,name,role,phone,whatsapp_opted_in&order=name.asc&limit=50`),
+      `user_id=eq.${owner}&select=id,user_id,name,role,phone,whatsapp_opted_in,notes&order=name.asc&limit=50`),
     qs('carson_persistent_memory',
-      `user_id=eq.${encodeURIComponent(userId)}&select=instruction,source,confirmed_at&order=created_at.desc&limit=10`),
+      `user_id=eq.${owner}&select=id,user_id,category,instruction,source,confirmed_at,created_at&order=created_at.asc&limit=${OWNER_INSTRUCTION_READ_LIMIT}`),
     qsOne('profiles',
-      `id=eq.${encodeURIComponent(userId)}&select=display_name`),
+      `id=eq.${owner}&select=display_name,morning_brief_timezone`),
     qs('carson_memory',
-      `user_id=eq.${encodeURIComponent(userId)}&select=session_recap,session_date&order=session_date.desc&limit=5`),
+      `user_id=eq.${owner}&select=user_id,created_at,summary&summary=like.${encodeURIComponent(`${RECAP_PREFIX}%`)}&order=created_at.desc&limit=${OWNER_RECAP_READ_LIMIT}`),
+    qs('carson_facts',
+      `user_id=eq.${owner}&archived_at=is.null&select=id,user_id,category,key,value,confidence,source,created_at,updated_at,last_seen_at&order=updated_at.desc&limit=${OWNER_FACT_READ_LIMIT}`),
   ]);
+
+  const ownedPeople = ownedRows(people, userId);
+  const memory = buildCarsonMemoryContext({
+    ownerId: userId,
+    instructions: persistentMemory,
+    facts,
+    people: ownedPeople,
+    contextText: [options.ownerText ?? '', ...tasks.map((t) => t.description ?? '')].join('\n'),
+    now: options.now,
+  });
 
   // ── ra7etbal_state: pending tasks + household people ──
   const stateLines = [];
 
-  if (people.length > 0) {
+  if (memory.userMemory) {
+    stateLines.push(memory.userMemory, '');
+  }
+
+  if (ownedPeople.length > 0) {
     stateLines.push('Household people:');
-    for (const p of people) {
+    for (const p of ownedPeople) {
       const details = [p.role, p.whatsapp_opted_in ? 'WhatsApp enabled' : null].filter(Boolean).join(', ');
       stateLines.push(`  - ${p.name}${details ? ` (${details})` : ''}`);
+      if (typeof p.notes === 'string' && p.notes.trim()) {
+        stateLines.push(`    Notes: ${renderPersonNotesForContext(p.notes, 200)}`);
+      }
     }
   }
 
@@ -790,22 +853,22 @@ async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
     }
   }
 
-  // ── recent_memory: last 5 session summaries ──
-  const recentMemoryLines = sessionMemory
-    .filter((m) => m.session_recap)
-    .map((m) => `[${m.session_date ?? 'unknown date'}] ${m.session_recap}`);
-
-  // ── persistent_instructions ──
-  const persistentLines = persistentMemory
-    .filter((m) => m.instruction)
-    .map((m) => m.instruction);
+  // ── recent_memory: session recaps only (non-recap rows never count) ──
+  const recaps = ownedRows(sessionMemory, userId)
+    .filter((m) => isRecapRow(m?.summary))
+    .slice(0, OWNER_RECAP_SHOWN);
+  const recentMemory = formatSessionRecaps(recaps, {
+    now: options.now,
+    locale: 'en-US',
+    timeZone: profile?.morning_brief_timezone || 'UTC',
+  });
 
   return {
     ra7etbal_state:          stateLines.join('\n'),
     user_name:               profile?.display_name ?? '',
-    recent_memory:           recentMemoryLines.join('\n'),
+    recent_memory:           recentMemory,
     current_time:            new Date().toISOString(),
-    persistent_instructions: persistentLines.join('\n'),
+    persistent_instructions: memory.persistentInstructions,
   };
 }
 

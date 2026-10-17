@@ -23,20 +23,40 @@
 import { supabase } from "./supabase";
 import {
   validateMemoryWrite,
-  isPersistentMemoryStale,
-  daysSince,
+  MEMORY_STALE_THRESHOLD_DAYS,
   type MemorySource,
 } from "./carson-epistemic-gate";
+import { loadActiveFactRows } from "./carson-facts";
+import {
+  buildCarsonMemoryContext,
+  type InstructionRow,
+} from "../../shared/carson-memory-selection.js";
 
-interface PersistentMemoryRow {
-  category: string;
-  instruction: string;
-  confirmed_at: string;
+/** Columns every persistent-memory reader needs for correction resolution. */
+export const PERSISTENT_MEMORY_COLUMNS = "id, category, instruction, source, confirmed_at, created_at";
+
+/**
+ * Raw persistent-instruction rows for the signed-in user (RLS-scoped),
+ * oldest first. Throws on a database error so callers can tell "no
+ * instructions" apart from "could not load".
+ */
+export async function loadPersistentInstructionRows(): Promise<InstructionRow[]> {
+  const { data, error } = await supabase
+    .from("carson_persistent_memory")
+    .select(PERSISTENT_MEMORY_COLUMNS)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as InstructionRow[];
 }
 
 /**
- * Load all persistent instructions for the signed-in user, formatted as a
- * ready-to-inject string for the `persistent_instructions` dynamic variable.
+ * Load the CURRENT persistent instructions for the signed-in user, formatted
+ * as a ready-to-inject string for the `persistent_instructions` variable.
+ *
+ * Corrections: when the owner restates an instruction about the same
+ * subject with a new value ("before 4 PM" → "before 3 PM"), only the newer
+ * one is returned. Older versions stay stored (no destructive delete) but are
+ * never handed to Carson as guidance. See shared/carson-memory-selection.js.
  *
  * Freshness evaluation (COS Ch. 19.5): instructions older than 90 days are
  * labeled as potentially stale so Epistemic Governance can flag them for
@@ -46,31 +66,26 @@ interface PersistentMemoryRow {
  * the dynamic variable always has a safe value.
  */
 export async function loadPersistentMemory(): Promise<string> {
-  const { data, error } = await supabase
-    .from("carson_persistent_memory")
-    .select("category, instruction, confirmed_at")
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("[persistent-memory] loadPersistentMemory failed:", error.message);
+  // Facts are read too so an instruction the owner later corrected in
+  // conversation is not handed back here (same rule as session start).
+  const [rowsResult, factsResult] = await Promise.allSettled([
+    loadPersistentInstructionRows(),
+    loadActiveFactRows(),
+  ]);
+  if (rowsResult.status === "rejected") {
+    const error = rowsResult.reason;
+    console.error(
+      "[persistent-memory] loadPersistentMemory failed:",
+      error instanceof Error ? error.message : (error as { message?: string })?.message ?? error,
+    );
     return "";
   }
-
-  if (!data || data.length === 0) return "";
-
-  const rows = data as PersistentMemoryRow[];
-  const lines = rows.map((row) => {
-    const stale = row.confirmed_at && isPersistentMemoryStale(row.confirmed_at);
-    const staleSuffix = stale
-      ? ` [last confirmed ${daysSince(row.confirmed_at)} days ago — may need re-confirmation]`
-      : "";
-    return `- ${row.category}: ${row.instruction}${staleSuffix}`;
-  });
-
-  return [
-    "Persistent instructions (follow these always, silently, without announcing them):",
-    ...lines,
-  ].join("\n");
+  if (rowsResult.value.length === 0) return "";
+  return buildCarsonMemoryContext({
+    instructions: rowsResult.value,
+    facts: factsResult.status === "fulfilled" ? factsResult.value : [],
+    staleDays: MEMORY_STALE_THRESHOLD_DAYS,
+  }).persistentInstructions;
 }
 
 /**

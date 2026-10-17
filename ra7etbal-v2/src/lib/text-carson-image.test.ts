@@ -94,6 +94,7 @@ vi.mock("../stores/tasks", () => ({
 vi.mock("./carson-facts", () => ({
   loadUserMemory: vi.fn().mockResolvedValue(""),
   upsertUserFacts: vi.fn(),
+  learnFactsFromTranscript: vi.fn().mockResolvedValue({ saved: false, archivedIds: [], extracted: 0 }),
 }));
 
 vi.mock("./carson-memory", () => ({

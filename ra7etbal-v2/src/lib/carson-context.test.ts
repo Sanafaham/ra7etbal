@@ -123,6 +123,22 @@ describe("buildCarsonContext — People memory retrieval", () => {
     expect(out).toContain("FAMILY");
     expect(out).toContain("Notes: Loves painting.");
   });
+
+  it("long notes: Carson sees the newest line (a correction), not only the oldest 200 characters", () => {
+    const christopher = makePerson({
+      name: "Christopher",
+      role: "Driver",
+      is_family: false,
+      notes: [
+        ...Array.from({ length: 8 }, (_, i) => `Owner background note ${i} about routes and car care.`),
+        "prefers receiving dinner instructions before 3 PM.",
+      ].join("\n"),
+    });
+    const out = buildCarsonContext({ tasks: [], people: [christopher] });
+    const notesLine = out.split("\n").find((l) => l.trim().startsWith("Notes:")) ?? "";
+    expect(notesLine).toContain("before 3 PM");
+    expect(notesLine.length).toBeLessThanOrEqual("  Notes: ".length + 200);
+  });
 });
 
 describe("buildCarsonContext — Phase 9A operational diagnostics", () => {
