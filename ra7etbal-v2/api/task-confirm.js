@@ -194,6 +194,17 @@ async function responseSnippet(response) {
 }
 
 export default async function handler(req, res) {
+  // Stage 1 outbound transport only; existing owner approval/execution paths
+  // below are unchanged. Never treat a provider tool as an owner JWT.
+  if (req.query?.ownerTelephone) {
+    const { handleOwnerTelephone } = await import('./_owner-telephone.js');
+    return handleOwnerTelephone(req, res, {
+      authenticateOwner: requireOwnerUser,
+      supabaseUrl: process.env.SUPABASE_URL,
+      serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      anonKey: process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY,
+    });
+  }
   if (req.method === 'GET') return handleGet(req, res);
   if (req.method === 'POST') return handleTaskConfirmationPost(req, res);
   if (req.method === 'PATCH') {

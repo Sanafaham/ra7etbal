@@ -9,6 +9,54 @@
   ],
   "capabilities": [
     {
+      "id": "owner_telephone_stage1",
+      "verification_status": "Implemented behind default-off gates; local mocked verification only. No live provider configuration, schema change, call or deployment.",
+      "contract": "Default-off outbound owner-only calls for genuine task-linked staff blockers. Provider plus per-call authentication and a code from the existing signed-in app are required before private context. Atomic unique receipts and owner-wide budget CAS limit duplicate/concurrent calls. Confirmed phone interpretations remain non-executing; only the existing owner decision approval flow can act. Retention maintenance redacts local response content.",
+      "business_importance": "high \u2014 private owner decisions and paid outbound side effects",
+      "production_entry_points": [
+        "api/process-delegation-escalations.js",
+        "api/task-confirm.js"
+      ],
+      "files_functions": [
+        "api/_owner-telephone.js",
+        "src/components/OwnerTelephoneNotice.tsx",
+        "src/routes/Notifications.tsx"
+      ],
+      "shared_dependencies": [
+        "api/_owner-notifications.js",
+        "api/_account-deletion-guard.js"
+      ],
+      "db": {
+        "tables": [
+          "owner_notifications",
+          "staff_escalation_owner_decisions",
+          "staff_messages",
+          "tasks",
+          "people",
+          "account_deletion_requests"
+        ],
+        "rpcs": [],
+        "migrations": [],
+        "data_repairs": []
+      },
+      "external_boundaries": [
+        "ElevenLabs outbound-call API and dedicated webhook tool",
+        "Twilio PSTN through ElevenLabs"
+      ],
+      "focused_tests": [
+        "api/_owner-telephone.test.js",
+        "src/components/OwnerTelephoneNotice.test.tsx"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "Disable dialing; keep retention maintenance enabled. No new schema, provider configuration or production activation was performed.",
+      "unresolved": [
+        "Provider configuration, owner privacy/cost review, deployment and real telephone end-to-end verification are not performed or authorized. Mocked tests do not prove provider configuration compatibility."
+      ]
+    },
+    {
       "id": "owner_whatsapp_canonical_routing",
       "contract": "Exactly one Supabase account may be bound to a given WhatsApp phone_number_id at any time. An inbound WhatsApp message is only trusted as an authoritative owner message when routing resolves to exactly one bound account; ambiguous (>1) or zero bindings fail closed, and an ambiguous binding logs a loud diagnostic instead of silently guessing.",
       "business_importance": "critical — this is the gate that decides whether an inbound reply is trusted as an owner decision at all",

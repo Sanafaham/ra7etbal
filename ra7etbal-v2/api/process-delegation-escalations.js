@@ -98,6 +98,7 @@
  */
 
 import webpush from 'web-push';
+import { runOwnerTelephoneSweep } from './_owner-telephone.js';
 import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
@@ -265,6 +266,14 @@ export default async function handler(req, res) {
   }
 
   const now = new Date();
+  // Default-off, one bounded outbound attempt on the existing periodic worker.
+  // Per-task/test-mode wake-ups cannot initiate paid calls. Telephone failure
+  // must never interrupt staff follow-up or PR #458's clarification journey.
+  if (!testMode && typeof req.url === 'string' && !req.body?.trigger && !req.body?.taskId) {
+    await runOwnerTelephoneSweep({ supabaseUrl, serviceKey, now }).catch(() => {
+      console.error('[owner-telephone] sweep unavailable; existing escalation continues');
+    });
+  }
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
 
   // Slice 1 — stalled tracked delegation → owner handoff ('no_response').

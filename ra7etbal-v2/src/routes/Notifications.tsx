@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
+import OwnerTelephoneNotice from "../components/OwnerTelephoneNotice";
 import { useAuth } from "../hooks/useAuth";
 import { selectUnreadNotificationCount, useNotificationsStore } from "../stores/notifications";
 import type { OwnerNotification } from "../types/notification";
@@ -51,6 +52,7 @@ export default function Notifications() {
         <div>
           <h1 className="text-2xl font-semibold text-ink">Notifications</h1>
           <p className="text-sm text-text-soft">Important updates from Carson, kept here for you.</p>
+          <button type="button" className="text-sm underline" onClick={() => user?.id && void loadFor(user.id, { force: true })}>Refresh updates</button>
         </div>
         {unreadCount > 0 && (
           <button
@@ -100,6 +102,9 @@ export default function Notifications() {
                 </div>
               </div>
             </button>
+            {item.kind === "owner_telephone" && user?.id === item.user_id && (
+              <OwnerTelephoneNotice key={`${user.id}:${item.id}`} receiptId={item.id} userId={user.id} />
+            )}
             <button type="button" aria-label={`Dismiss ${item.title}`} onClick={() => void dismissNotification(item.id)} className="absolute right-3 top-3 rounded-full px-2 py-1 text-lg leading-none text-ink hover:bg-gold/10 hover:text-gold">×</button>
             </div>
           </li>
