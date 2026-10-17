@@ -117,8 +117,8 @@ export function isReportedThirdPartyDesire(text: string): boolean {
 export type StaffInstructionClassification = "communication" | "delegation";
 
 export const STAFF_INSTRUCTION_MODEL = "claude-haiku-4-5";
-// Room for the one-word classification plus a verbatim recipient span.
-export const STAFF_INSTRUCTION_MAX_TOKENS = 120;
+// Room for the one-word classification plus the verbatim CARSON and RECIPIENT spans.
+export const STAFF_INSTRUCTION_MAX_TOKENS = 200;
 /** The interpretation call fails closed if the proxy has not answered by then. */
 export const STAFF_INSTRUCTION_TIMEOUT_MS = 8000;
 
@@ -136,7 +136,14 @@ DELEGATION: the person is being directly instructed to complete, produce, or ver
 
 Answer on the first line with exactly one word: COMMUNICATION or DELEGATION.
 
-If DELEGATION, add a second line: RECIPIENT: followed by the words that describe the work ${who} must do, copied exactly from the owner's message, in the owner's own order. Leave out the words that address ${who} (such as "ask ${who} to"). Also leave out anything the owner is asking Carson itself to do about managing the task — for example tracking it, following up on it, or reporting back to the owner — because Carson does that anyway. Keep such words only when they are part of ${who}'s own work (for example "follow up with the butcher", "track the grocery delivery", "make sure the oven is off", "tell Grace it is ready"). Never add, change, or reorder words.`;
+If DELEGATION, decide silently who the owner gave each action to (do not write this reasoning out).
+- Every action the owner asks ${who} to do belongs to ${who}. That includes several actions joined together ("ask ${who} to do A and B" gives ${who} both A and B), actions that involve telling, calling or informing someone else, and passing back to the owner something ${who} will find out. Work that merely sounds like oversight is still ${who}'s when ${who} does it (for example "follow up with the butcher", "track the grocery delivery", "make sure the oven is off").
+- An action belongs to Carson only when it is about overseeing this assignment rather than doing part of it: tracking or monitoring it, following up on ${who}, waiting for ${who} to confirm, or reminding or updating the owner. Such an action usually speaks about ${who} or the task from the outside (for example "track this", "until he confirms"). This stays Carson's even when it is joined to ${who}'s actions with "and".
+
+Then add two lines:
+CARSON: the owner's exact words for any actions that belong to Carson, or NONE.
+RECIPIENT: the owner's exact words for ALL of ${who}'s actions, in the owner's order, as one continuous piece of the message, without the words that address ${who} (such as "ask ${who} to"). Never add, change, or reorder words, and never leave out any of ${who}'s actions.
+If you cannot tell whether an action belongs to ${who} or to Carson, or ${who}'s actions cannot be copied as one continuous piece without Carson's words, write RECIPIENT: UNCLEAR.`;
 }
 
 export interface StaffInstructionInterpretation {
@@ -162,8 +169,14 @@ export function parseStaffInstructionAnswer(text: string): StaffInstructionInter
     return { classification: "communication", recipientSpan: null, failed: false };
   }
   if (verdict !== "DELEGATION") return FAILED_INTERPRETATION;
-  const recipient = text.match(/RECIPIENT\s*:[ \t]*([^\r\n]*)/i)?.[1]?.trim();
-  return { classification: "delegation", recipientSpan: recipient || null, failed: false };
+  const recipient = text.match(/^[^A-Za-z\r\n]*(?:DELEGATION[^A-Za-z\r\n]*)?RECIPIENT\s*:[ \t]*([^\r\n]*)/im)?.[1]?.trim();
+  // UNCLEAR is the model's own "cannot tell who owns an action" and NONE is
+  // the CARSON line's sentinel → no span, so the caller fails closed instead
+  // of sending a possibly incomplete instruction.
+  if (!recipient || /^(unclear|none)\W*$/i.test(recipient)) {
+    return { classification: "delegation", recipientSpan: null, failed: false };
+  }
+  return { classification: "delegation", recipientSpan: recipient, failed: false };
 }
 
 /**

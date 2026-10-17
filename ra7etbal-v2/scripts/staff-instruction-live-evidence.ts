@@ -23,7 +23,10 @@ import {
 
 type Expected =
   | { kind: "communication" }
-  | { kind: "delegation"; recipient: string };
+  | { kind: "delegation"; recipient: string }
+  // Genuinely ambiguous ownership: the whole instruction or a fail-closed
+  // "nothing sent" are both safe; dropping the second action is not.
+  | { kind: "delegation_or_unsafe"; recipient: string };
 
 // Owner utterance, recipient, expected outcome.
 const CASES: Array<[string, string, Expected]> = [
@@ -39,6 +42,14 @@ const CASES: Array<[string, string, Expected]> = [
   ["Ask Christopher to confirm the florist booking.", "Christopher", { kind: "delegation", recipient: "confirm the florist booking" }],
   ["Ask Christopher to prepare lunch and tell Grace it is ready.", "Christopher", { kind: "delegation", recipient: "prepare lunch and tell Grace it is ready" }],
   ["Ask Christopher to check the pool pump.", "Christopher", { kind: "delegation", recipient: "check the pool pump" }],
+  // Coordinated actions all assigned to the recipient must stay whole
+  // (live gate run 36768330026 dropped "tell Grace it is ready").
+  ["Ask Christopher to call the butcher and tell me what he says.", "Christopher", { kind: "delegation", recipient: "call the butcher and tell me what he says" }],
+  ["Ask Christopher to collect the package and put it in my room.", "Christopher", { kind: "delegation", recipient: "collect the package and put it in my room" }],
+  ["Ask Christopher to check the delivery and call the driver if it is late.", "Christopher", { kind: "delegation", recipient: "check the delivery and call the driver if it is late" }],
+  // Ambiguous ownership: never silently reduced to the first action.
+  ["Ask Christopher to follow up with the butcher and let me know what he says.", "Christopher", { kind: "delegation_or_unsafe", recipient: "follow up with the butcher and let me know what he says" }],
+  ["Ask Christopher to book the restaurant and let me know the time.", "Christopher", { kind: "delegation_or_unsafe", recipient: "book the restaurant and let me know the time" }],
   // C-02 authoritative routing (must be unchanged).
   ["Ask Christopher to bring the car around at 6.", "Christopher", { kind: "delegation", recipient: "bring the car around at 6" }],
   ["Ask Grace to call me.", "Grace", { kind: "delegation", recipient: "call me" }],
@@ -68,9 +79,20 @@ async function callModel(utterance: string, recipient: string): Promise<{ text: 
       messages: [{ role: "user", content: buildClassificationPrompt(utterance, recipient) }],
     }),
   });
-  const body = (await res.json()) as { content?: Array<{ text?: string }>; error?: { type?: string }; stop_reason?: string };
-  // Only the provider's error type is reported — never request headers or the key.
-  if (!res.ok || body.error) throw new Error(`model call failed: HTTP ${res.status} ${body.error?.type ?? ""}`.trim());
+  const body = (await res.json()) as {
+    content?: Array<{ text?: string }>;
+    error?: { type?: string; message?: string };
+    stop_reason?: string;
+  };
+  // Only the provider's error type and its own error message are reported —
+  // never request headers or the key. The message is server-written text; as
+  // a belt-and-braces guard any occurrence of the key is redacted and it is
+  // capped at 300 characters.
+  if (!res.ok || body.error) {
+    const key = process.env.ANTHROPIC_API_KEY ?? "";
+    const message = (body.error?.message ?? "").split(key || "\u0000").join("[redacted]").slice(0, 300);
+    throw new Error(`model call failed: HTTP ${res.status} ${body.error?.type ?? ""} ${JSON.stringify(message)}`.trim());
+  }
   return { text: body.content?.[0]?.text ?? "", stopReason: body.stop_reason };
 }
 
@@ -120,14 +142,20 @@ async function main() {
             const grounded = groundRecipientInstruction(parsed.recipientSpan, utterance, recipient);
             outcome = grounded
               ? `delegation: ${grounded}`
-              : `UNGROUNDED model span ${JSON.stringify(parsed.recipientSpan)}`;
+              : `unsafe (nothing sent): model span ${JSON.stringify(parsed.recipientSpan)}`;
           }
         }
       }
+      const exactRecipient =
+        expected.kind !== "communication" &&
+        outcome!.startsWith("delegation: ") &&
+        normalize(outcome!.slice(12)) === normalize(expected.recipient);
       const ok =
         expected.kind === "communication"
           ? outcome!.startsWith("communication")
-          : outcome!.startsWith("delegation: ") && normalize(outcome!.slice(12)) === normalize(expected.recipient);
+          : expected.kind === "delegation"
+            ? exactRecipient
+            : exactRecipient || outcome!.startsWith("unsafe (nothing sent)");
       if (ok) correct += 1;
       console.log(`${ok ? "PASS" : "FAIL"} [${run}/${runs}] ${JSON.stringify(utterance)} → ${outcome!}`);
     }

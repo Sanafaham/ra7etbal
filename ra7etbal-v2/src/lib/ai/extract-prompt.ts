@@ -341,6 +341,17 @@ Keep such words only when they are part of the recipient's own work
 ("ask Christopher to follow up with the butcher", "ask Grace to track
 the grocery delivery", "ask Ghulam to make sure the gate is locked").
 
+Decide by who the user gave each action to, never by the words used.
+Every action the user asks the recipient to do stays in the recipient's
+task, including several joined actions ("ask Christopher to prepare
+lunch and tell Grace it is ready" → both), actions that inform someone
+else, and passing back to the user something the recipient will find
+out. Leave out only actions about overseeing the assignment itself
+(tracking it, following up on the recipient, waiting for their
+confirmation, reminding or updating the user). If you cannot tell who
+an action belongs to, keep it in the recipient's task and never drop
+it silently.
+
   "Ask Christopher to prepare lunch for me and track this until he confirms it."
     → ONE delegation, description: "Prepare lunch for ${ownerRef}"
 
