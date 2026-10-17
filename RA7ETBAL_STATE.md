@@ -1718,6 +1718,16 @@ project `ggarvhgqzpooloacjgcj`. The immutable final baseline tag is
 and the remote tag resolve the final merge commit without requiring a
 self-referential documentation commit.
 
+## Future capability — Owner Telephone Channel Stage 1 — INACTIVE BRANCH (2026-10-17)
+
+Owner authorized a bounded Stage 1 implementation on 2026-10-17, superseding the earlier documentation-only boundary for this slice only. Implemented locally on `feat/owner-telephone-stage1`; NOT MERGED, NOT DEPLOYED, NOT LIVE VERIFIED. Stage 2 remains deferred. This does not replace the current first priority: resume PR #458's supervised Christopher test at Step 2 after 2026-10-19 when ElevenLabs credits renew; Step 1 remains passed.
+
+The existing authenticated periodic escalation worker can, behind default-off activation gates, call the single enrolled owner through ElevenLabs + Twilio for new open decisions linked to a pending task and a processed staff blocker/clarification/permission request. It reuses owner notifications for unique call receipts, conservative allowance reservations and task/decision-linked response history; no duplicate task, approval or memory system and no new schema or serverless route. A code obtained through the existing signed-in owner session plus provider and per-call credentials gates private context. Read-back confirmation records an interpretation only; consequential action still requires the unchanged existing owner decision page. One active owner call, one paid attempt per decision, quiet hours, bounded duration/daily/monthly allowance and no automatic retry of uncertain paid dispatches. Independent retention maintenance redacts local phone response content even when dialing is off.
+
+Protected by `api/_owner-telephone.test.js` and `src/components/OwnerTelephoneNotice.test.tsx`, wired into the existing protected suite and registry. Local verification evidence is recorded in the branch completion report; mocks do not establish live provider compatibility. Manual security/compatibility follow-up on 2026-10-17 rejects attached knowledge bases and shared telephone secrets; provider requirements, illustrative costs and existing credential-name inventory are documented. Telephone remains disabled; publishing this branch is configured to skip Vercel deployments. Configuration contract and deployment/test prerequisites: `ra7etbal-v2/docs/owner-telephone-stage1.md`.
+
+Remaining activation gates: actual provider credentials and isolated phone-agent/server-tool configuration; owner-approved consent/retention, international route, all-in rate and provider spending-cap review; separately approved merge/deployment and real end-to-end owner call. None was performed. No money spent, live calls, database changes, provider changes or production deployment. PR #458's clarification implementation and existing browser voice configuration remain untouched. No parked architecture activated; no Replit data, code or credentials used.
+
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.

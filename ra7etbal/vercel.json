@@ -1,4 +1,5 @@
 {
+  "git": { "deploymentEnabled": { "feat/owner-telephone-stage1": false } },
   "version": 2,
   "routes": [
     {
