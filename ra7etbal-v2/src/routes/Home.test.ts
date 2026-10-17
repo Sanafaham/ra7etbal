@@ -226,3 +226,18 @@ describe("Home.tsx — Phase C staff escalations counted in Needs You", () => {
     expect(SOURCE).toMatch(/brief\.needsAttention\[0\]\?\.description \?\? buildStaffEscalationPreview/);
   });
 });
+
+describe("Home — escalated, unanswered delegations (PR #458 escalation incident)", () => {
+  const src = readFileSync(join(__dirname, "Home.tsx"), "utf-8");
+
+  it("replaces the all-clear only when nothing needs the owner and a waiting task is escalated", () => {
+    expect(src).toContain("countEscalatedWaiting(brief.waitingOnOthers)");
+    expect(src).toContain('statusTone === "clear" && escalatedWaitingCount > 0 ? ESCALATED_WAITING_HEADLINE : buildPremiumStatus(statusTone)');
+  });
+
+  it("does not move the task into Needs You or change the status tone", () => {
+    expect(src).toContain("const totalNeedsAttention = brief.needsAttention.length + staffEscalationCount;");
+    expect(src).not.toMatch(/escalatedWaitingCount[^;\n]*totalNeedsAttention/);
+    expect(src).toContain('if (totalNeedsAttention > 0) return "attention";');
+  });
+});

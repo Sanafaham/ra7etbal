@@ -3,7 +3,7 @@
  * Tabs: Needs You / Waiting / To-do / Notes / Automations / History
  * Deep-link: /updates?tab=needs-you (default)
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
@@ -17,6 +17,7 @@ import { useRecurringSourceIndexes } from "../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
+import { resolveTaskDeepLinkTab } from "../lib/updates-deep-link";
 import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
@@ -270,18 +271,36 @@ export default function Updates() {
     targetTaskId && laterFiltered.some((task) => task.id === targetTaskId),
   );
 
+  // A deep link that names the wrong tab (e.g. an escalation alert pointing
+  // at Needs You for a task that is still Waiting) switches to the tab the
+  // task is actually in, keeping the task highlighted.
+  const deepLinkRedirectTab = useMemo(() => {
+    if (!listReady) return null;
+    return resolveTaskDeepLinkTab(activeTab, targetTaskId, {
+      needsYouIds: new Set([...brief.needsAttention, ...upcomingReminders, ...laterFiltered].map((t) => t.id)),
+      waitingIds: new Set(brief.waitingOnOthers.map((t) => t.id)),
+    });
+  }, [activeTab, brief.needsAttention, brief.waitingOnOthers, laterFiltered, listReady, targetTaskId, upcomingReminders]);
+
+  // Layout effect so the wrong (empty) tab is never painted first.
+  useLayoutEffect(() => {
+    if (!deepLinkRedirectTab || !targetTaskId) return;
+    setSearchParams({ tab: deepLinkRedirectTab, task: targetTaskId }, { replace: true });
+  }, [deepLinkRedirectTab, setSearchParams, targetTaskId]);
+
   useEffect(() => {
-    if (activeTab !== "needs-you" || !listReady || !targetTaskId) return;
+    if ((activeTab !== "needs-you" && activeTab !== "waiting") || !listReady || !targetTaskId) return;
+    if (deepLinkRedirectTab) return;
     if (lastScrolledTaskIdRef.current === targetTaskId) return;
     if (!tasks.some((task) => task.id === targetTaskId)) return;
-    if (targetIsPending && pendingDetailsRef.current) pendingDetailsRef.current.open = true;
+    if (activeTab === "needs-you" && targetIsPending && pendingDetailsRef.current) pendingDetailsRef.current.open = true;
     lastScrolledTaskIdRef.current = targetTaskId;
 
     const frame = window.requestAnimationFrame(() => {
       targetTaskElementRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeTab, listReady, targetIsPending, targetTaskId, tasks]);
+  }, [activeTab, deepLinkRedirectTab, listReady, targetIsPending, targetTaskId, tasks]);
 
   function taskTargetProps(task: Task) {
     if (task.id !== targetTaskId) return {};
@@ -492,7 +511,7 @@ export default function Updates() {
           ) : (
             <ul className="space-y-3">
               {brief.waitingOnOthers.map((task) => (
-                <li key={task.id}>
+                <li key={task.id} {...taskTargetProps(task)}>
                   <TaskCard
                     task={task}
                     message={messageByTaskId.get(task.id) ?? null}

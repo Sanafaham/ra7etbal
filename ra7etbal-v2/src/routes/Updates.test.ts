@@ -229,3 +229,21 @@ describe("Updates.tsx — Phase C staff escalations inside the existing Needs Yo
     expect(SOURCE).toMatch(/<TaskCard\s/);
   });
 });
+
+describe("Updates.tsx — task deep link lands where the task is (PR #458 escalation incident)", () => {
+  it("redirects a deep link to the tab that actually holds the task, keeping the task param", () => {
+    expect(SOURCE).toContain("resolveTaskDeepLinkTab(activeTab, targetTaskId, {");
+    expect(SOURCE).toContain("waitingIds: new Set(brief.waitingOnOthers.map((t) => t.id))");
+    expect(SOURCE).toContain("setSearchParams({ tab: deepLinkRedirectTab, task: targetTaskId }, { replace: true })");
+  });
+
+  it("highlights and scrolls to the target task in Waiting, not only in Needs You", () => {
+    expect(SOURCE).toMatch(/activeTab !== "needs-you" && activeTab !== "waiting"/);
+    expect(SOURCE).toMatch(/brief\.waitingOnOthers\.map\(\(task\) => \(\s*<li key=\{task\.id\} \{\.\.\.taskTargetProps\(task\)\}>/);
+  });
+
+  it("does not change classification: Waiting still renders brief.waitingOnOthers and Needs You brief.needsAttention", () => {
+    expect(SOURCE).toContain("{brief.waitingOnOthers.map((task) => (");
+    expect(SOURCE).toContain("{brief.needsAttention.map((task) => (");
+  });
+});

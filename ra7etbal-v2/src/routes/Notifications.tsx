@@ -14,8 +14,10 @@ export default function Notifications() {
   const unreadCount = useNotificationsStore(selectUnreadNotificationCount);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Always refetch on open: the cached list can be older than the newest
+  // alert when no push reached this device.
   useEffect(() => {
-    if (user?.id) void loadFor(user.id);
+    if (user?.id) void loadFor(user.id, { force: true });
   }, [loadFor, user?.id]);
 
   async function openNotification(item: OwnerNotification) {

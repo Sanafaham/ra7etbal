@@ -606,6 +606,8 @@
         "src/lib/daily-brief.ts:buildDailyBrief / isNeedsYouTask / isWaitingInterventionTask",
         "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel",
         "src/lib/needs-you-staff-escalations.ts",
+        "src/lib/home-escalation-copy.ts:countEscalatedWaiting / buildEscalatedWaitingSentence — Home copy for escalated Waiting tasks; never changes classification",
+        "src/lib/updates-deep-link.ts:resolveTaskDeepLinkTab — sends a task deep link to the tab that actually holds the task; never changes classification",
         "src/hooks/useRecurringSourceIndexes.ts:useRecurringSourceIndexes — Home/Updates access path to the existing AutomationDigest.recurringSourceIndexes; yields undefined unless recurringSourceLinksLoaded === true"
       ],
       "shared_dependencies": [

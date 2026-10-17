@@ -137,3 +137,121 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe("notifications freshness without a push (PR #458 escalation incident)", () => {
+  it("an unforced load keeps the stale list; a forced reload surfaces the new escalation", async () => {
+    listMock.mockResolvedValueOnce([notification("old-reminder")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    listMock.mockResolvedValueOnce([
+      notification("salmon-escalation"),
+      notification("old-reminder"),
+    ]);
+    await useNotificationsStore.getState().loadFor("user-1");
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["old-reminder"]);
+
+    await useNotificationsStore.getState().loadFor("user-1", { force: true });
+    expect(useNotificationsStore.getState().items[0].id).toBe("salmon-escalation");
+    expect(selectUnreadNotificationCount(useNotificationsStore.getState())).toBe(2);
+  });
+
+  it("the app's live refresh reloads alerts when the tab becomes visible again, with no push message", async () => {
+    const { registerTasksLiveRefresh } = await import("../lib/tasks-live-refresh");
+    listMock.mockResolvedValueOnce([notification("old-reminder")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    const listeners = new Map<string, () => void>();
+    const documentApi = {
+      visibilityState: "hidden" as DocumentVisibilityState,
+      addEventListener: (type: string, fn: () => void) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+    };
+    const cleanup = registerTasksLiveRefresh({
+      documentApi: documentApi as never,
+      serviceWorkerApi: null,
+      refetch: () => useNotificationsStore.getState().loadFor("user-1", { force: true }),
+    });
+
+    listMock.mockResolvedValueOnce([
+      notification("salmon-escalation"),
+      notification("old-reminder"),
+    ]);
+    documentApi.visibilityState = "visible";
+    listeners.get("visibilitychange")?.();
+    await vi.waitFor(() => expect(useNotificationsStore.getState().items[0]?.id).toBe("salmon-escalation"));
+    cleanup();
+  });
+});
+
+describe("a reload in flight cannot undo a read or a dismissal", () => {
+  it("keeps a dismissed alert hidden when an older reload lands after the dismissal", async () => {
+    listMock.mockResolvedValueOnce([notification("salmon"), notification("reminder")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    const inFlight = deferred<OwnerNotification[]>();
+    listMock.mockReturnValueOnce(inFlight.promise);
+    const reload = useNotificationsStore.getState().loadFor("user-1", { force: true });
+    await useNotificationsStore.getState().dismiss("salmon");
+    // The server answered the reload before the dismissal committed.
+    inFlight.resolve([notification("salmon"), notification("reminder")]);
+    await reload;
+
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["reminder"]);
+  });
+
+  it("keeps a read alert read (and the badge down) when an older reload lands after the read", async () => {
+    listMock.mockResolvedValueOnce([notification("salmon")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    const inFlight = deferred<OwnerNotification[]>();
+    listMock.mockReturnValueOnce(inFlight.promise);
+    const reload = useNotificationsStore.getState().loadFor("user-1", { force: true });
+    await useNotificationsStore.getState().markRead("salmon");
+    inFlight.resolve([notification("salmon")]);
+    await reload;
+
+    expect(useNotificationsStore.getState().items[0].read_at).not.toBeNull();
+    expect(selectUnreadNotificationCount(useNotificationsStore.getState())).toBe(0);
+  });
+
+  // Only alerts the owner saw as unread are re-applied as read. An alert that
+  // was absent from the local list keeps whatever the next load reports.
+  it("mark-all-read survives an older reload for the alerts the owner saw", async () => {
+    listMock.mockResolvedValueOnce([notification("a"), notification("b")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+
+    const inFlight = deferred<OwnerNotification[]>();
+    listMock.mockReturnValueOnce(inFlight.promise);
+    const reload = useNotificationsStore.getState().loadFor("user-1", { force: true });
+    await useNotificationsStore.getState().markAllRead();
+    inFlight.resolve([notification("new-escalation"), notification("a"), notification("b")]);
+    await reload;
+
+    const items = useNotificationsStore.getState().items;
+    expect(items.find((item) => item.id === "a")?.read_at).not.toBeNull();
+    expect(items.find((item) => item.id === "b")?.read_at).not.toBeNull();
+    expect(items.find((item) => item.id === "new-escalation")?.read_at).toBeNull();
+  });
+
+  it("does not hide anything when the dismissal failed on the server", async () => {
+    listMock.mockResolvedValueOnce([notification("salmon")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+    dismissMock.mockRejectedValueOnce(new Error("offline"));
+    await expect(useNotificationsStore.getState().dismiss("salmon")).rejects.toThrow("offline");
+
+    listMock.mockResolvedValueOnce([notification("salmon")]);
+    await useNotificationsStore.getState().loadFor("user-1", { force: true });
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["salmon"]);
+  });
+
+  it("forgets confirmed mutations on sign-out so another account is unaffected", async () => {
+    listMock.mockResolvedValueOnce([notification("shared-id")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+    await useNotificationsStore.getState().dismiss("shared-id");
+
+    useNotificationsStore.getState().reset();
+    listMock.mockResolvedValueOnce([notification("shared-id", null, "user-2")]);
+    await useNotificationsStore.getState().loadFor("user-2");
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["shared-id"]);
+  });
+});

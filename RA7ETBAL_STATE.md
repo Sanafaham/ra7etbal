@@ -41,6 +41,21 @@ Provenance: Sana, owner product decision in the Claude Code session of 2026-09-3
 
 ## Current next task
 
+### Owner escalation visibility (2026-10-17) — FIX ON BRANCH `claude/escalation-visibility-fix`, DRAFT PR, NOT MERGED, NOT DEPLOYED
+
+Found during the PR #458 Christopher test (salmon task `335ef5db`, escalated 20:26:52 UTC). Owner saw: Home "Everything is under control", Needs You empty, Waiting showing the task as Escalated, Alerts without the escalation, no push banner.
+
+- Server: correct. `escalated_at` stamped; one unread `task_escalation` owner notification created 20:26:55 UTC. Read-only check: it is the NEWEST non-dismissed row, so the Alerts query includes it.
+- Classification: correct, unchanged. An unanswered escalated delegation is Waiting with the Escalated badge (Needs You is the owner-decision queue). Home's "Nothing needs you" therefore matches the approved rule.
+- Defect 1 (UI freshness): the Alerts list and bell badge loaded once per app session and refreshed only when the service worker relayed a push. With no push on the device, they stayed frozen. Fix: same refresh signals as tasks (visibility, push, 60s poll while visible) and a forced reload when Alerts opens.
+- Defect 2 (routing): escalation links pointed to Needs You, where the task never is. Fix: new escalations link to Waiting, and What's Happening moves any task deep link to the tab that actually holds the task (covers rows already stored).
+- Defect 3 (push evidence): escalation pushes recorded nothing, so delivery could not be diagnosed. Fix: provider attempted/accepted/rejected rows in `reminder_delivery_events` (`metadata.kind = escalation_push`), non-fatal. This proves provider acceptance only, not that a banner showed.
+- Owner decision (2026-10-17): keep Waiting vs Needs You; Home must acknowledge escalated, unanswered tasks without implying the owner must intervene. Implemented: when nothing needs the owner and a Waiting task is escalated, Home's headline reads "Carson is following up." and the line under it says how many items haven't been confirmed yet. Status dot, Needs You count, Waiting summary and layout are unchanged.
+- Dismissed-alert race fixed: a reload already in flight can no longer bring back an alert just dismissed or marked read (confirmed mutations are re-applied until the server agrees; cleared on sign-out).
+- Owner iPhone check (2026-10-18 00:59 local): the salmon alert is visible in Alerts (fresh app open reloads the list; PR #468 not yet deployed). NO push banner arrived.
+- Push read-only investigation (2026-10-18): server dispatch and VAPID are working: every owner automation reminder run from 2026-09-17 to 2026-10-17 is `sent`, meaning a provider accepted at least one push. Device delivery to the iPhone was last PROVEN on 2026-09-25 (subscription `05d4ba80`, service worker received + notification shown). No receipt-bearing push was sent after that, so the gap is "unproven", not "failed". At escalation time two iPhone subscriptions were enabled: `05d4ba80` (last proven 2026-09-25) and `4177e3db` (a second installation, created 2026-09-29, never any delivery evidence). At 21:59 UTC on 2026-10-17 (the owner's app open) `05d4ba80` was replaced by `120fce73`, a pattern consistent with a notification refresh in Settings. Precise failure still UNVERIFIED (no Vercel log access). Next: one owner-approved controlled test, a one-time reminder due in 2 minutes, then read `reminder_delivery_events` for `120fce73`. Plus an owner check of iOS Notification Centre / Focus for a 23:26 banner.
+- Next after that: approval and deployment of PR #468, owner verifies alert behavior on iPhone, then PR #458 Step 3 resumes.
+
 ### P3 staff-reply clarification (PR #458) — supervised Christopher test PAUSED at Step 2 (2026-10-15)
 
 First priority when ElevenLabs credits renew on 2026-10-19: resume the supervised Christopher test at Step 2 and finish verifying PR #458. Step 1 already passed; do not repeat it. PR #458 is not fully verified until Steps 2–5 pass. No other engineering workstream starts without owner approval. Details and steps: "Staff-reply clarification (2026-10-15)" under P3 below.

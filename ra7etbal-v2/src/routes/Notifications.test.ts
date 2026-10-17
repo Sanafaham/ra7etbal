@@ -46,3 +46,15 @@ describe("Notifications Inbox V1 UI wiring", () => {
     expect(bottomNav).not.toContain("useNotificationsStore");
   });
 });
+
+describe("Alerts freshness (PR #458 escalation incident)", () => {
+  it("refetches every time the Alerts page opens", () => {
+    expect(route).toMatch(/useEffect\(\(\) => \{\s*if \(user\?\.id\) void loadFor\(user\.id, \{ force: true \}\);\s*\}, \[loadFor, user\?\.id\]\);/);
+  });
+
+  it("keeps alerts and the bell badge fresh on visibility and poll, not only on a push message", () => {
+    const hook = app.slice(app.indexOf("function useGlobalNotificationsRefresh"), app.indexOf("function PersistentCarsonWidget"));
+    expect(hook).toContain("registerTasksLiveRefresh({");
+    expect(hook).toContain("useNotificationsStore.getState().loadFor(userId, { force: true })");
+  });
+});
