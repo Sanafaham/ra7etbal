@@ -21,6 +21,7 @@ import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { CalendarEvent } from "./calendar";
 import { formatReminderDue } from "./reminder-time";
+import { renderPersonNotesForContext } from "../../shared/carson-memory-selection.js";
 import { classifyCalendarEvent, formatEventTime, formatEventEndTime } from "./calendar";
 import { derivePendingItems, formatPendingItemsForCarson } from "./pending-items";
 import {
@@ -169,7 +170,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
           lines.push(`  Communication style: ${p.communication_style.trim().slice(0, 150)}`);
         }
         if (p.notes?.trim()) {
-          lines.push(`  Notes: ${p.notes.trim().slice(0, 300)}`);
+          lines.push(`  Notes: ${renderPersonNotesForContext(p.notes, 300)}`);
         }
         continue;
       }
@@ -217,7 +218,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
         lines.push(`  Communication style: ${p.communication_style.trim().slice(0, 150)}`);
       }
       if (p.notes?.trim()) {
-        lines.push(`  Notes: ${p.notes.trim().slice(0, 200)}`);
+        lines.push(`  Notes: ${renderPersonNotesForContext(p.notes, 200)}`);
       }
       if (p.phone?.trim()) {
         lines.push(`  Phone: ${p.phone.trim()}`);

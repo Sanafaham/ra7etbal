@@ -1029,14 +1029,23 @@
     },
     {
       "id": "voice_session_memory",
-      "contract": "After a Talk to Carson voice session ends, the session is summarized into memory bullets (carson-summarize.ts) and durable facts are extracted (carson-fact-extract.ts) without fabricating content Carson did not actually say or hear, and without persisting low-value sessions (isSummaryWorthSaving gate, MIN_USER_TURNS threshold). This capability is read/summarize-only — it does not send messages, create tasks, or perform any WhatsApp/calendar/reminder state change; its blast radius is a memory-quality/privacy concern (wrong or fabricated memory shown back to the owner), not a delivery-integrity concern.",
+      "contract": "After a Talk to Carson voice session ends, the session is summarized into memory bullets (carson-summarize.ts) and durable facts are extracted (carson-fact-extract.ts) without fabricating content Carson did not actually say or hear, and without persisting low-value sessions (isSummaryWorthSaving gate, MIN_USER_TURNS threshold). This capability is read/summarize-only — it does not send messages, create tasks, or perform any WhatsApp/calendar/reminder state change; its blast radius is a memory-quality/privacy concern (wrong or fabricated memory shown back to the owner), not a delivery-integrity concern. Memory repair (2026-10-17): every channel that hands memory to Carson (Talk/Type session start, weekly planning, WhatsApp owner turns) goes through shared/carson-memory-selection.js — facts are ranked by relevance to the people/topics in the conversation with a per-category floor (never the first N rows alphabetically); an owner correction on the same subject supersedes the older instruction or fact, so the outdated value is never handed to Carson as guidance; corrected facts are archived (flag, not delete) only after the replacement is saved; another owner's rows never reach the context; WhatsApp reads carson_memory's real columns (created_at, summary) and only recap rows.",
       "business_importance": "medium — incorrect or fabricated session memory degrades Carson's usefulness and trustworthiness, but causes no direct external side effect (no message sent, no task created) the way staff_delegation or talk_compound_instruction_execution would on a defect.",
       "production_entry_points": [
-        "src/components/home/ElevenLabsAgentWidget.tsx (onDisconnect -> summarizeConversation -> isSummaryWorthSaving gate -> saveSessionMemory)"
+        "src/components/home/ElevenLabsAgentWidget.tsx (onDisconnect -> summarizeConversation -> isSummaryWorthSaving gate -> saveSessionMemory)",
+        "src/components/home/ElevenLabsAgentWidget.tsx (session start -> loadCarsonMemoryContext; onDisconnect -> learnFactsFromTranscript)",
+        "src/lib/text-carson.ts (learnFactsFromTranscript)",
+        "api/_carson-agent-turn.js (runOwnerConversationalTurn -> buildOwnerContextText)"
       ],
       "files_functions": [
         "src/lib/carson-summarize.ts",
-        "src/lib/carson-fact-extract.ts"
+        "src/lib/carson-fact-extract.ts",
+        "shared/carson-memory-selection.js",
+        "src/lib/carson-memory-context.ts",
+        "src/lib/carson-facts.ts",
+        "src/lib/carson-persistent-memory.ts:loadPersistentMemory",
+        "src/lib/carson-memory-format.ts",
+        "api/_carson-agent-turn.js:buildOwnerContextText"
       ],
       "shared_dependencies": [
         "api/anthropic.js",
@@ -1044,8 +1053,11 @@
       ],
       "db": {
         "tables": [
+          "carson_facts",
           "carson_memory",
-          "carson_facts"
+          "carson_persistent_memory",
+          "people",
+          "profiles"
         ],
         "rpcs": [],
         "migrations": []
@@ -1054,18 +1066,28 @@
         "Anthropic API (via api/anthropic.js)"
       ],
       "focused_tests": [
-        "src/lib/carson-summarize.test.ts"
+        "src/lib/carson-summarize.test.ts",
+        "src/lib/carson-memory-selection.test.ts",
+        "src/lib/carson-memory-context.test.ts",
+        "src/lib/carson-facts.test.ts",
+        "src/lib/carson-persistent-memory.test.ts",
+        "src/lib/carson-memory-freshness.test.ts",
+        "api/_carson-agent-turn.memory.test.js"
       ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "low — read/summarize-only, no external delivery or task/message state change on a defect",
-      "verification_status": "PARTIALLY TESTED, UNPROTECTED — carson-summarize.test.ts exists and exercises carson-summarize.ts, but is not wired into the required test:carson-protected CI gate (confirmed by reading package.json's test:carson-protected script directly — it is absent from that file list). carson-fact-extract.ts has zero test coverage anywhere. Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299; no coverage invented.",
+      "verification_status": "TESTED, NOT IN THE REQUIRED PROTECTED GATE — memory retrieval, correction, tenant isolation, failure safety and WhatsApp recap columns are covered by the focused tests listed (run by Impact-Aware CI whenever a mapped file changes). carson-fact-extract.ts prompt construction is exercised indirectly; the live model's compliance with 'reuse the same key' is UNVERIFIED (no live provider calls). PARTIALLY TESTED, UNPROTECTED — carson-summarize.test.ts exists and exercises carson-summarize.ts, but is not wired into the required test:carson-protected CI gate (confirmed by reading package.json's test:carson-protected script directly — it is absent from that file list). carson-fact-extract.ts has zero test coverage anywhere. Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299; no coverage invented.",
       "unresolved": [
         "carson-summarize.test.ts exists but is not part of the required test:carson-protected gate — wiring it in is real follow-up work, not done here to avoid unrelated CI-configuration scope creep in PR #299.",
         "carson-fact-extract.ts has no dedicated test file at all. Follow-up hardening should add one before (or as part of) wiring this capability into the protected gate.",
-        "No contract test proves isSummaryWorthSaving's quality gate or MIN_USER_TURNS threshold against the registered contract text above — only implied by carson-summarize.test.ts's existing assertions, not confirmed read here."
+        "No contract test proves isSummaryWorthSaving's quality gate or MIN_USER_TURNS threshold against the registered contract text above — only implied by carson-summarize.test.ts's existing assertions, not confirmed read here.",
+        "Not yet wired into test:carson-protected: that script is a single package.json line also edited by open PR #466; adding these tests there is deferred until #466 lands to avoid a guaranteed merge conflict.",
+        "Subject matching for corrections is lexical: a pronoun-only correction (\"he now wants them by 3\") or a contradiction with no shared topic words is not auto-resolved; both stay and the instruction block tells Carson the newer one wins.",
+        "Superseded carson_persistent_memory rows remain stored (no update RLS policy; no destructive delete was added). Owner review/removal UI is in paused draft PR #464.",
+        "Mid-conversation memory lookup is not available: memory is selected at session start (voice/typed) or per message (WhatsApp). A tool for mid-call recall would need an ElevenLabs agent configuration change."
       ]
     },
     {
@@ -1106,13 +1128,16 @@
     },
     {
       "id": "people_behavioral_insights",
-      "contract": "Behavioral insights about staff/people (produced via the Anthropic proxy from historical task/communication data) reflect the owner's actual data and do not fabricate behavior patterns, incidents, or characterizations of a real named person that did not actually occur.",
+      "contract": "Behavioral insights about staff/people (produced via the Anthropic proxy from historical task/communication data) reflect the owner's actual data and do not fabricate behavior patterns, incidents, or characterizations of a real named person that did not actually occur. Memory repair (2026-10-17): learned person memories merged into people.notes replace the sentence they correct, never truncate or flatten existing (including owner-written) notes, and Carson's context shows the newest note lines within its budget.",
       "business_importance": "medium-high — a fabricated behavioral characterization of a real named staff member is a more sensitive failure mode than a generic wrong-fact bug (reputational/interpersonal risk to a real person), but still performs no WhatsApp send, task creation, or other external state change on its own.",
       "production_entry_points": [
         "src/lib/people-behavior.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"
       ],
       "files_functions": [
-        "src/lib/people-behavior.ts"
+        "src/lib/people-behavior.ts",
+        "src/lib/person-memory.ts",
+        "shared/carson-memory-selection.js:mergePersonMemoryNotes",
+        "src/lib/carson-context.ts (notes rendering)"
       ],
       "shared_dependencies": [
         "api/anthropic.js",
@@ -1128,13 +1153,17 @@
       "external_boundaries": [
         "Anthropic API (via api/anthropic.js)"
       ],
-      "focused_tests": [],
+      "focused_tests": [
+        "src/lib/person-memory.test.ts",
+        "src/lib/carson-memory-selection.test.ts",
+        "src/lib/carson-context.test.ts"
+      ],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "low — no external delivery or task/message state change on a defect, though see business_importance for the reputational-risk nuance",
-      "verification_status": "UNTESTED, UNPROTECTED — people-behavior.ts has zero dedicated test coverage anywhere in the repository (confirmed by directory listing; no people-behavior.test.ts exists). Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299. No coverage invented; this is the most honestly-uncovered of the four newly registered capabilities.",
+      "verification_status": "PARTIALLY TESTED — notes merging, correction replacement, no-truncation and newest-first rendering are covered by the focused tests listed (2026-10-17). The Anthropic-generated behavioral insight text itself remains untested. UNTESTED, UNPROTECTED — people-behavior.ts has zero dedicated test coverage anywhere in the repository (confirmed by directory listing; no people-behavior.test.ts exists). Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299. No coverage invented; this is the most honestly-uncovered of the four newly registered capabilities.",
       "unresolved": [
         "Zero test coverage of any kind. Given the reputational-risk nuance noted in business_importance (fabricated claims about a real named person), this is flagged as a candidate for earlier follow-up attention than its 'medium' external-blast-radius alone would suggest — but ranked below talk_compound_instruction_execution's Component B, which has a strictly larger blast radius (real message/task state change vs. read-only insight generation).",
         "The exact production caller(s) of people-behavior.ts were not traced in this pass."

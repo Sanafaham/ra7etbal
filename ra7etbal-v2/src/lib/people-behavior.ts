@@ -19,20 +19,22 @@ import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import { usePeopleStore } from "../stores/people";
 import { callAnthropicProxy } from "./anthropic-client";
+import { mergePersonMemoryNotes } from "../../shared/carson-memory-selection.js";
 
 // ── Shared notes helpers (also imported by ElevenLabsAgentWidget) ─────────────
 
+/**
+ * Merge a learned memory into a person's notes. A correction replaces the
+ * line it corrects; existing text and line breaks are kept and never
+ * truncated. (Previously this flattened every line break and sliced to the
+ * first 1,000 characters, which dropped new corrections and cut longer
+ * owner-written notes.)
+ */
 export function mergePersonNotes(
   existing: string | null | undefined,
   addition: string,
 ): string {
-  const existingText = (existing ?? "").trim().replace(/\s+/g, " ");
-  const additionText = addition.trim().replace(/\s+/g, " ");
-  if (!existingText) return additionText;
-  if (existingText.toLowerCase().includes(additionText.toLowerCase())) {
-    return existingText;
-  }
-  return `${existingText}\n${additionText}`.slice(0, 1_000);
+  return mergePersonMemoryNotes(existing, addition).notes;
 }
 
 /**
@@ -51,8 +53,8 @@ export function replaceBehaviorLine(
     .filter((line) => !line.trim().startsWith("[Behavior:"))
     .join("\n")
     .trim();
-  const final = stripped ? `${stripped}\n${newBehaviorLine}` : newBehaviorLine;
-  return final.slice(0, 1_000);
+  // No truncation: slicing here cut owner-written notes longer than the cap.
+  return stripped ? `${stripped}\n${newBehaviorLine}` : newBehaviorLine;
 }
 
 // ── Behavior computation ──────────────────────────────────────────────────────

@@ -1,17 +1,19 @@
-import { isSessionRecapOld } from "./carson-epistemic-gate";
+import { SESSION_STALE_THRESHOLD_DAYS } from "./carson-epistemic-gate";
+import {
+  RECAP_PREFIX,
+  SESSION_HISTORY_HEADER,
+  isRecapRow as sharedIsRecapRow,
+  formatSessionRecaps,
+} from "../../shared/carson-memory-selection.js";
 
-/** Prefix marking a row as a session recap (the ACTUAL last conversation). */
-export const RECAP_PREFIX = "• Session recap:";
-
-export const SESSION_HISTORY_HEADER = [
-  "SESSION HISTORY ONLY:",
-  "For questions about last or previous sessions, use only these recaps.",
-  "Never use durable memory, saved notes, people, tasks, routines, or completions as session history.",
-].join("\n");
+// Recap formatting is shared with WhatsApp Carson (api/_carson-agent-turn.js)
+// through shared/carson-memory-selection.js so both channels read the same
+// carson_memory columns (created_at, summary) the same way.
+export { RECAP_PREFIX, SESSION_HISTORY_HEADER };
 
 /** True when a summary row is a session recap rather than a durable fact. */
 export function isRecapRow(summary: string): boolean {
-  return summary.trimStart().startsWith(RECAP_PREFIX);
+  return sharedIsRecapRow(summary);
 }
 
 export interface CarsonMemoryRow {
@@ -30,34 +32,5 @@ export interface CarsonMemoryRow {
  * Returns the routing header plus "No previous sessions." when no recaps exist.
  */
 export function formatRecentMemory(rows: CarsonMemoryRow[]): string {
-  const recaps = (rows ?? []).filter((row) => isRecapRow(row.summary));
-  if (recaps.length === 0) {
-    return `${SESSION_HISTORY_HEADER}\n\nNo previous sessions.`;
-  }
-
-  // newest-first input → the first recap row is the true latest session.
-  const newestRecapAt = recaps[0].created_at;
-
-  const labeled = recaps.map((row) => {
-    // Local date AND time so Carson can answer "what time was that session?".
-    const when = new Date(row.created_at).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-    const isNewest = row.created_at === newestRecapAt;
-    const isOld = !isNewest && isSessionRecapOld(row.created_at);
-    const label = isNewest
-      ? `[Most recent session — ${when}]`
-      : isOld
-        ? `[Older context — ${when} — treat as background only]`
-        : `[Earlier session — ${when}]`;
-    return `${label}\n${summary}`;
-  });
-
-  // Reverse so Carson reads chronologically (oldest first); the explicit
-  // "Most recent session" label still identifies the latest conversation.
-  return `${SESSION_HISTORY_HEADER}\n\n${labeled.reverse().join("\n\n")}`;
+  return formatSessionRecaps(rows, { staleDays: SESSION_STALE_THRESHOLD_DAYS });
 }

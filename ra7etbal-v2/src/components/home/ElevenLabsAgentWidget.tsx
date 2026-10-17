@@ -13,8 +13,8 @@ import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
 import { callAnthropicProxy } from "../../lib/anthropic-client";
 import { saveTaskAttachments } from "../../lib/save";
-import { extractDurableFacts } from "../../lib/carson-fact-extract";
-import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
+import { learnFactsFromTranscript } from "../../lib/carson-facts";
+import { loadCarsonMemoryContext } from "../../lib/carson-memory-context";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import {
@@ -143,6 +143,7 @@ import {
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
+import { extractDurablePersonMemories, foldPersonMemoryUpdates } from "../../lib/person-memory";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -769,99 +770,8 @@ function normalizeReminderKey(description: string, dueAt: string): string {
   return `${description.toLowerCase().replace(/\s+/g, " ").trim()}|${new Date(dueAt).toISOString()}`;
 }
 
-function splitIntoSentences(value: string): string[] {
-  return value
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map(normalizeMemoryText)
-    .filter(Boolean);
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function isLikelyDurablePersonContext(sentence: string): boolean {
-  const lower = sentence.toLowerCase();
-  const durableSignals = [
-    "often",
-    "usually",
-    "always",
-    "tends to",
-    "needs",
-    "prefers",
-    "reliable",
-    "responsible",
-    "punctual",
-    "helpful",
-    "proactive",
-    "strong",
-    "protective",
-    "bodyguard",
-    "bossy",
-    "controlling",
-    "clear instructions",
-    "follow-up",
-    "follow up",
-  ];
-  const temporarySignals = [
-    "today",
-    "tonight",
-    "tomorrow",
-    "guests",
-    "dinner",
-    "flowers",
-    "cars",
-    "kitchen",
-    "gets home",
-    "arrive",
-    "arrives",
-    " at 7",
-    " at 9",
-  ];
-
-  return (
-    durableSignals.some((signal) => lower.includes(signal)) &&
-    !temporarySignals.some((signal) => lower.includes(signal))
-  );
-}
-
-function extractDurablePersonMemories(
-  transcript: TranscriptMessage[],
-  people: Person[],
-): Array<{ person: Person; memory: string }> {
-  const userText = transcript
-    .filter((entry) => entry.role === "user")
-    .map((entry) => entry.message)
-    .join("\n");
-  if (!userText.trim() || people.length === 0) return [];
-
-  const sentences = splitIntoSentences(userText);
-  const updates: Array<{ person: Person; memory: string }> = [];
-
-  for (const person of people) {
-    const name = person.name.trim();
-    if (!name) continue;
-    const namePattern = new RegExp(`\\b${escapeRegex(name)}\\b`, "i");
-    const matchingSentences = sentences.filter(
-      (sentence) =>
-        namePattern.test(sentence) && isLikelyDurablePersonContext(sentence),
-    );
-    if (matchingSentences.length === 0) continue;
-
-    const memory = matchingSentences
-      .map((sentence) =>
-        normalizeMemoryText(sentence.replace(namePattern, "").replace(/^[:,\-\s]+/, "")),
-      )
-      .filter(Boolean)
-      .join(" ");
-
-    if (memory) updates.push({ person, memory });
-  }
-
-  return updates;
-}
-
-// mergePersonNotes is imported from ../../lib/people-behavior
+// Person-memory extraction lives in ../../lib/person-memory; notes merging
+// lives in shared/carson-memory-selection.js (via ../../lib/people-behavior).
 
 // ---------------------------------------------------------------------------
 // Smart follow-up helpers
@@ -1912,11 +1822,15 @@ export default function ElevenLabsAgentWidget({
       );
       if (updates.length === 0) return;
 
-      for (const { person, memory } of updates) {
+      // One write per person with every memory folded in spoken order, so a
+      // correction replaces what it corrects. A failed write leaves the
+      // previous notes untouched.
+      for (const { person, notes } of foldPersonMemoryUpdates(
+        updates,
+        (existing, memory) => mergePersonNotes(existing, normalizeMemoryText(memory)),
+      )) {
         try {
-          await usePeopleStore.getState().update(person.id, {
-            notes: mergePersonNotes(person.notes, memory),
-          });
+          await usePeopleStore.getState().update(person.id, { notes });
         } catch (err) {
           console.error("[people_memory] save failed", person.id, err);
         }
@@ -5782,8 +5696,7 @@ export default function ElevenLabsAgentWidget({
           const tasksNow = useTasksStore.getState().items;
           updatePeopleInsightsFromTasks(transcriptText, peopleNow, tasksNow).catch(() => {});
           try {
-            const facts = await extractDurableFacts(transcript);
-            await upsertUserFacts(userId, facts);
+            await learnFactsFromTranscript(userId, transcript, usePeopleStore.getState().items);
           } catch (err) {
             console.error(
               "[carson-facts] voice fact extraction failed",
@@ -6198,28 +6111,15 @@ export default function ElevenLabsAgentWidget({
     if (!isCurrentSession()) return;
 
     // Load structured user memory and recent session summaries before opening
-    // the ElevenLabs connection. Failures are non-fatal.
-    let userMemory = "";
-    try {
-      userMemory = await loadUserMemory(50);
-    } catch {
-      // Non-fatal — Carson simply starts without structured memory.
-    }
-    if (!isCurrentSession()) return;
-
+    // the ElevenLabs connection. Recaps load here; structured memory and
+    // standing instructions load below, once the live state is known, so
+    // relevance can use the people and work in front of Carson. Failures are
+    // non-fatal.
     let recentMemory = "No previous sessions.";
     try {
       recentMemory = await loadRecentMemory(20);
     } catch {
       // Non-fatal — Carson simply starts without prior memory.
-    }
-    if (!isCurrentSession()) return;
-
-    let persistentInstructions = "";
-    try {
-      persistentInstructions = await loadPersistentMemory();
-    } catch {
-      // Non-fatal — Carson starts without persistent instructions.
     }
     if (!isCurrentSession()) return;
 
@@ -6267,6 +6167,33 @@ export default function ElevenLabsAgentWidget({
     // that path also has no materialItems, so the key choice is inert there.
     const liveBriefKind = freshVars?.briefKind ?? "morning";
     const liveMaterialItems = freshVars?.materialItems ?? [];
+
+    // Structured memory + standing instructions through the one shared
+    // builder (same decision WhatsApp Carson makes): corrections resolved,
+    // facts ranked by the people/topics in the live state and recent typed
+    // turns instead of the first 50 rows alphabetically. Non-fatal.
+    let userMemory = "";
+    let persistentInstructions = "";
+    try {
+      // People are normally already loaded by Home. Never block session start
+      // on them: if not loaded yet, start the load and rank without names.
+      const memoryOwnerId = useAuthStore.getState().user?.id;
+      if (memoryOwnerId && usePeopleStore.getState().status === "idle") {
+        void usePeopleStore.getState().loadFor(memoryOwnerId).catch(() => {});
+      }
+      const memoryContext = await loadCarsonMemoryContext({
+        contextText: [
+          liveBriefStateText,
+          ...restoredTypedMessages.slice(-12).map((m) => m.content),
+        ].join("\n"),
+        people: usePeopleStore.getState().items,
+      });
+      userMemory = memoryContext.userMemory;
+      persistentInstructions = memoryContext.persistentInstructions;
+    } catch {
+      // Non-fatal — Carson starts without structured memory/instructions.
+    }
+    if (!isCurrentSession()) return;
 
     // Compute opening_line — proactive brief on first session of the day,
     // short status line plus any new/changed material item on subsequent

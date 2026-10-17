@@ -2,7 +2,7 @@ import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { Message } from "../types/message";
 import type { ExtractedItem, ExtractionResult } from "../types/extraction";
-import { upsertUserFacts } from "./carson-facts";
+import { learnFactsFromTranscript } from "./carson-facts";
 import { saveSessionMemory } from "./carson-memory";
 import { extractItems } from "./ai/extract";
 import { savePending, saveTaskAttachments } from "./save";
@@ -13,7 +13,6 @@ import { shouldForwardAttachedImage } from "./image-forwarding-guard";
 import { sendDirectMessageRecord } from "./direct-messages";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
-import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
 import { sanitizeCarsonReplyText } from "./carson-social";
 import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
@@ -488,9 +487,7 @@ export async function executeDelegationFromText(
   summarizeConversation(memoryTranscript)
     .then((sessionSummary) => { if (sessionSummary) return saveSessionMemory(sessionSummary); })
     .catch(() => {});
-  extractDurableFacts(memoryTranscript)
-    .then((facts) => { if (facts.length > 0) return upsertUserFacts(context.userId!, facts); })
-    .catch(() => {});
+  learnFactsFromTranscript(context.userId!, memoryTranscript, context.people).catch(() => {});
   // Behavioral insight: update people.notes for anyone mentioned in the input
   // based on their observed task-completion history. Requires ≥3 completed tasks.
   updatePeopleInsightsFromTasks(input, context.people, context.tasks).catch(() => {});
