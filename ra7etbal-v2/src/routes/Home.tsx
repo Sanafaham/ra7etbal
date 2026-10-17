@@ -7,6 +7,11 @@ import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
 import { useRecurringSourceIndexes } from "../hooks/useRecurringSourceIndexes";
 import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
+import {
+  buildEscalatedWaitingSentence,
+  countEscalatedWaiting,
+  ESCALATED_WAITING_HEADLINE,
+} from "../lib/home-escalation-copy";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
 import { useTasksStore } from "../stores/tasks";
@@ -90,8 +95,18 @@ export default function Home() {
   }, [totalNeedsAttention, urgentCount]);
 
   const greeting = useMemo(() => buildGreeting(now, displayName), [now, displayName]);
-  const premiumStatus = buildPremiumStatus(statusTone);
-  const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
+  // Escalated, unanswered delegations stay in Waiting (not Needs You), but
+  // Home must not call that an all-clear.
+  const escalatedWaitingCount = useMemo(() => countEscalatedWaiting(brief.waitingOnOthers), [brief.waitingOnOthers]);
+  const premiumStatus =
+    statusTone === "clear" && escalatedWaitingCount > 0 ? ESCALATED_WAITING_HEADLINE : buildPremiumStatus(statusTone);
+  const briefSentence = useMemo(
+    () =>
+      statusTone === "clear" && escalatedWaitingCount > 0
+        ? buildEscalatedWaitingSentence(brief.waitingOnOthers.length, escalatedWaitingCount)
+        : buildBriefSentence(brief, now),
+    [brief, escalatedWaitingCount, now, statusTone],
+  );
   const openCarson = useCarsonStore((s) => s.setOpen);
 
   return (

@@ -50,7 +50,9 @@ Found during the PR #458 Christopher test (salmon task `335ef5db`, escalated 20:
 - Defect 1 (UI freshness): the Alerts list and bell badge loaded once per app session and refreshed only when the service worker relayed a push. With no push on the device, they stayed frozen. Fix: same refresh signals as tasks (visibility, push, 60s poll while visible) and a forced reload when Alerts opens.
 - Defect 2 (routing): escalation links pointed to Needs You, where the task never is. Fix: new escalations link to Waiting, and What's Happening moves any task deep link to the tab that actually holds the task (covers rows already stored).
 - Defect 3 (push evidence): escalation pushes recorded nothing, so delivery could not be diagnosed. Fix: provider attempted/accepted/rejected rows in `reminder_delivery_events` (`metadata.kind = escalation_push`), non-fatal. This proves provider acceptance only, not that a banner showed.
-- NOT fixed / OPEN: why no banner appeared on the iPhone is UNVERIFIED (no Vercel log access; `reminder_delivery_events` has no rows since 2026-09-25). Owner product question: should Home's headline stay "Everything is under control" while a Waiting item is escalated?
+- Owner decision (2026-10-17): keep Waiting vs Needs You; Home must acknowledge escalated, unanswered tasks without implying the owner must intervene. Implemented: when nothing needs the owner and a Waiting task is escalated, Home's headline reads "Carson is following up." and the line under it says how many items haven't been confirmed yet. Status dot, Needs You count, Waiting summary and layout are unchanged.
+- Dismissed-alert race fixed: a reload already in flight can no longer bring back an alert just dismissed or marked read (confirmed mutations are re-applied until the server agrees; cleared on sign-out).
+- NOT fixed / OPEN: why no banner appeared on the iPhone is UNVERIFIED (no Vercel log access; `reminder_delivery_events` has no rows since 2026-09-25). Next: after approval and deployment, owner verifies alert behavior on iPhone, then PR #458 Step 3 resumes.
 
 ### P3 staff-reply clarification (PR #458) — supervised Christopher test PAUSED at Step 2 (2026-10-15)
 

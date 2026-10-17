@@ -25,6 +25,21 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
   let activeUserId: string | null = null;
   let sessionGeneration = 0;
   let loadGeneration = 0;
+  // Reads and dismissals that already succeeded on the server. A reload that
+  // was in flight when they happened can return the row as it was before, so
+  // they are re-applied to every load result until the server agrees.
+  let confirmedReads = new Map<string, string>();
+  let confirmedDismissals = new Set<string>();
+
+  function applyConfirmedMutations(items: OwnerNotification[]): OwnerNotification[] {
+    const seen = new Set(items.map((row) => row.id));
+    for (const id of confirmedDismissals) if (!seen.has(id)) confirmedDismissals.delete(id);
+    for (const row of items) if (row.read_at) confirmedReads.delete(row.id);
+    for (const id of confirmedReads.keys()) if (!seen.has(id)) confirmedReads.delete(id);
+    return items
+      .filter((row) => !confirmedDismissals.has(row.id))
+      .map((row) => (confirmedReads.has(row.id) ? { ...row, read_at: confirmedReads.get(row.id) ?? null } : row));
+  }
 
   return {
     status: "idle",
@@ -37,6 +52,8 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       if (activeUserId !== userId) {
         activeUserId = userId;
         sessionGeneration += 1;
+        confirmedReads = new Map();
+        confirmedDismissals = new Set();
       }
       const expectedSession = sessionGeneration;
       const expectedLoad = ++loadGeneration;
@@ -44,7 +61,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       try {
         const items = await listOwnerNotifications();
         if (expectedSession !== sessionGeneration || expectedLoad !== loadGeneration) return;
-        set({ status: "ready", items, error: null, loadedForUserId: userId });
+        set({ status: "ready", items: applyConfirmedMutations(items), error: null, loadedForUserId: userId });
       } catch (error) {
         if (expectedSession !== sessionGeneration || expectedLoad !== loadGeneration) return;
         set({
@@ -62,6 +79,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       const readAt = new Date().toISOString();
       await markOwnerNotificationRead(id, readAt);
       if (expectedSession !== sessionGeneration) return;
+      confirmedReads.set(id, readAt);
       set((state) => ({
         items: state.items.map((row) => row.id === id ? { ...row, read_at: readAt } : row),
       }));
@@ -71,8 +89,10 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       if (!get().items.some((row) => !row.read_at)) return;
       const expectedSession = sessionGeneration;
       const readAt = new Date().toISOString();
+      const unreadIds = get().items.filter((row) => !row.read_at).map((row) => row.id);
       await markAllOwnerNotificationsRead(readAt);
       if (expectedSession !== sessionGeneration) return;
+      for (const unreadId of unreadIds) confirmedReads.set(unreadId, readAt);
       set((state) => ({
         items: state.items.map((row) => row.read_at ? row : { ...row, read_at: readAt }),
       }));
@@ -84,11 +104,14 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       const expectedSession = sessionGeneration;
       await dismissOwnerNotification(id, new Date().toISOString());
       if (expectedSession !== sessionGeneration) return;
+      confirmedDismissals.add(id);
       set((state) => ({ items: state.items.filter((row) => row.id !== id) }));
     },
 
     reset: () => {
       activeUserId = null;
+      confirmedReads = new Map();
+      confirmedDismissals = new Set();
       sessionGeneration += 1;
       loadGeneration += 1;
       set({ status: "idle", items: [], error: null, loadedForUserId: null });
